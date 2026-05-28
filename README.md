@@ -93,6 +93,10 @@ The first implemented slice generates and executes four metadata trust tests:
 The validator supports `ZERO_ROWS` and `NON_EMPTY` expectations, records pass/fail/error
 evidence, and returns a non-zero exit code when any generated test fails.
 
+The first free-text validation primitive is also in place. It detects known retired aliases and
+typo suspects such as `v_relationship_paths` and `v_relationship_patsh`, and can apply safe
+deterministic replacements to metadata text when a migration rule allows it.
+
 ## Repository Status
 
 This repository is currently in early implementation. The first working slice generates metadata
