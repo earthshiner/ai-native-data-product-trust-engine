@@ -111,7 +111,9 @@ metadata references native VECTOR behaviour while the product only has fallback 
 Repair proposal mode generates Markdown and SQL repair artifacts beside the validation report. Safe
 auto mode applies only deterministic repairs that do not require steward approval, such as known
 free-text alias replacements, and reports permission failures without hiding the remaining
-validation evidence.
+validation evidence. For temporal metadata tables such as `Query_Cookbook`, generated repairs
+expire the current row and insert a corrected successor row rather than mutating the current record
+in place.
 
 ## Repository Status
 

@@ -32,15 +32,11 @@ def test_generate_repair_candidates_creates_safe_text_update():
 
     assert len(candidates) == 1
     assert candidates[0].requires_approval is False
-    assert candidates[0].sql == (
-        "UPDATE CallCentre_MEM_STD_V.Query_Cookbook\n"
-        "SET recipe_description = CAST(\n"
-        "    OREPLACE(CAST(recipe_description AS VARCHAR(32000)), 'v_relationship_paths', "
-        "'relationship_paths')\n"
-        "    AS CLOB(32000)\n"
-        ")\n"
-        "WHERE recipe_id = 'QC-DOMAIN-002';"
-    )
+    assert "UPDATE CallCentre_MEM_STD_T.Query_Cookbook" in candidates[0].sql
+    assert "SET is_active = 0" in candidates[0].sql
+    assert "INSERT INTO CallCentre_MEM_STD_T.Query_Cookbook" in candidates[0].sql
+    assert "OREPLACE(CAST(recipe_description AS VARCHAR(32000))" in candidates[0].sql
+    assert "CURRENT_DATE AS valid_from" in candidates[0].sql
 
 
 def test_write_repair_reports_outputs_safe_sql(tmp_path):

@@ -114,11 +114,11 @@ def _is_safe_text_alias(sample_row: dict[str, object]) -> bool:
 def _safe_text_alias_candidate(test_id: str, sample_row: dict[str, object]) -> RepairCandidate:
     token = str(sample_row["token"])
     replacement = str(sample_row["replacement"])
-    sql = _safe_text_update_sql(sample_row)
+    sql = _safe_text_repair_sql(sample_row)
     return RepairCandidate(
         candidate_id=_candidate_id(test_id, "STALE_OBJECT_NAME", sample_row),
         issue_code="STALE_OBJECT_NAME",
-        summary=f"Replace {token} with {replacement} in {sample_row['database_name']}.{sample_row['table_name']}.{sample_row['column_name']}.",
+        summary=f"Replace {token} with {replacement} in {sample_row['database_name']}.{sample_row['table_name']}.{sample_row['column_name']} using a temporal successor row.",
         mode=RepairMode.SAFE_AUTO,
         sql=sql,
         requires_approval=False,
@@ -127,8 +127,18 @@ def _safe_text_alias_candidate(test_id: str, sample_row: dict[str, object]) -> R
     )
 
 
-def _safe_text_update_sql(sample_row: dict[str, object]) -> str:
+def _safe_text_repair_sql(sample_row: dict[str, object]) -> str:
     database_name = _identifier(str(sample_row["database_name"]))
+    table_name = _identifier(str(sample_row["table_name"]))
+    column_name = _identifier(str(sample_row["column_name"]))
+    if table_name == "Query_Cookbook":
+        return _query_cookbook_temporal_repair_sql(sample_row)
+
+    return _safe_text_update_sql(sample_row)
+
+
+def _query_cookbook_temporal_repair_sql(sample_row: dict[str, object]) -> str:
+    database_name = _repair_database_name(str(sample_row["database_name"]))
     table_name = _identifier(str(sample_row["table_name"]))
     column_name = _identifier(str(sample_row["column_name"]))
     token = _sql_string(str(sample_row["token"]))
@@ -137,17 +147,91 @@ def _safe_text_update_sql(sample_row: dict[str, object]) -> str:
     if not isinstance(key_values, dict):
         msg = "[ADPTrust.InvalidRepairEvidence] key_values must be present for safe text repair."
         raise ValueError(msg)
-    where_clause = " AND ".join(
+    where_clause = _where_clause(key_values)
+    repaired_expression = _clob_safe_replace_expression(column_name, token, replacement)
+    return f"""
+UPDATE {database_name}.{table_name}
+SET is_active = 0
+   ,valid_to = CURRENT_DATE - 1
+   ,updated_timestamp = CURRENT_TIMESTAMP
+WHERE {where_clause}
+  AND is_active = 1;
+
+INSERT INTO {database_name}.{table_name}
+(
+    recipe_key
+   ,recipe_id
+   ,recipe_title
+   ,recipe_description
+   ,use_case
+   ,target_module
+   ,sql_template
+   ,parameter_descriptions
+   ,performance_notes
+   ,complexity
+   ,source_module
+   ,module_version
+   ,is_active
+   ,valid_from
+   ,valid_to
+   ,created_timestamp
+   ,updated_timestamp
+)
+SELECT
+    (SELECT COALESCE(MAX(recipe_key), 0) + 1 FROM {database_name}.{table_name}) AS recipe_key
+   ,recipe_id
+   ,recipe_title
+   ,{repaired_expression if column_name == "recipe_description" else "recipe_description"} AS recipe_description
+   ,use_case
+   ,target_module
+   ,sql_template
+   ,parameter_descriptions
+   ,{repaired_expression if column_name == "performance_notes" else "performance_notes"} AS performance_notes
+   ,complexity
+   ,source_module
+   ,module_version
+   ,1 AS is_active
+   ,CURRENT_DATE AS valid_from
+   ,CAST(NULL AS DATE) AS valid_to
+   ,CURRENT_TIMESTAMP AS created_timestamp
+   ,CURRENT_TIMESTAMP AS updated_timestamp
+FROM {database_name}.{table_name}
+WHERE {where_clause}
+  AND valid_to = CURRENT_DATE - 1;
+""".strip()
+
+
+def _safe_text_update_sql(sample_row: dict[str, object]) -> str:
+    database_name = _repair_database_name(str(sample_row["database_name"]))
+    table_name = _identifier(str(sample_row["table_name"]))
+    column_name = _identifier(str(sample_row["column_name"]))
+    token = _sql_string(str(sample_row["token"]))
+    replacement = _sql_string(str(sample_row["replacement"]))
+    key_values = sample_row["key_values"]
+    if not isinstance(key_values, dict):
+        msg = "[ADPTrust.InvalidRepairEvidence] key_values must be present for safe text repair."
+        raise ValueError(msg)
+    where_clause = _where_clause(key_values)
+    return (
+        f"UPDATE {database_name}.{table_name}\n"
+        f"SET {column_name} = {_clob_safe_replace_expression(column_name, token, replacement)}\n"
+        f"WHERE {where_clause};"
+    )
+
+
+def _where_clause(key_values: dict[str, object]) -> str:
+    return " AND ".join(
         f"{_identifier(str(column_name))} = {_sql_literal(value)}"
         for column_name, value in key_values.items()
     )
+
+
+def _clob_safe_replace_expression(column_name: str, token: str, replacement: str) -> str:
     return (
-        f"UPDATE {database_name}.{table_name}\n"
-        f"SET {column_name} = CAST(\n"
-        f"    OREPLACE(CAST({column_name} AS VARCHAR(32000)), {token}, {replacement})\n"
-        f"    AS CLOB(32000)\n"
-        f")\n"
-        f"WHERE {where_clause};"
+        "CAST(\n"
+        f"        OREPLACE(CAST({column_name} AS VARCHAR(32000)), {token}, {replacement})\n"
+        "        AS CLOB(32000)\n"
+        "    )"
     )
 
 
@@ -204,6 +288,12 @@ def _identifier(value: str) -> str:
         msg = f"[ADPTrust.InvalidIdentifier] Unsafe SQL identifier {value}."
         raise ValueError(msg)
     return value
+
+
+def _repair_database_name(database_name: str) -> str:
+    if database_name.endswith("_STD_V"):
+        return _identifier(database_name.removesuffix("_STD_V") + "_STD_T")
+    return _identifier(database_name)
 
 
 def _sql_string(value: str) -> str:
