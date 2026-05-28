@@ -12,6 +12,7 @@ from ai_native_data_product_trust_engine.reports import write_json_report
 from ai_native_data_product_trust_engine.test_generation import generate_metadata_tests
 from ai_native_data_product_trust_engine.text_references import text_reference_test_cases
 from ai_native_data_product_trust_engine.validators import run_validation
+from ai_native_data_product_trust_engine.view_contracts import view_contract_test_cases
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -54,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
             *capability_test_cases(args.prefix),
             *query_template_test_cases(args.prefix),
             *text_reference_test_cases(args.prefix),
+            *view_contract_test_cases(args.prefix),
         ]
         for test in tests:
             print(f"{test.test_id}\t{test.category.value}\t{test.name}")

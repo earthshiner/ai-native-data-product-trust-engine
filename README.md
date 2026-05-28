@@ -104,6 +104,11 @@ classes include missing columns, missing objects, unsupported functions, unsuppo
 capabilities and syntax errors. Query failures include extracted object/column/function names where
 available plus a first repair hint.
 
+View contract validation discovers deployed product views from `DBC.TablesV` and runs `HELP COLUMN`
+against a zero-row subquery for each view. Teradata resolves the view and returns authoritative
+output-column metadata, validating that source objects, projected columns, join columns, aliases and
+predicates still compile without scanning business data.
+
 The first capability registry primitive discovers native VECTOR and fallback embedding evidence
 from deployed objects. It reports capability inventory and fails alignment when active cookbook
 metadata references native VECTOR behaviour while the product only has fallback embedding evidence.
