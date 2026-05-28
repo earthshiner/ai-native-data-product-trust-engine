@@ -16,6 +16,7 @@ from ai_native_data_product_trust_engine.models import (
     TestStatus,
     ValidationRun,
 )
+from ai_native_data_product_trust_engine.query_templates import run_query_template_validations
 from ai_native_data_product_trust_engine.text_references import run_text_reference_validations
 
 
@@ -48,10 +49,13 @@ def run_validation(
     prefix: str,
     adapter: DatabaseAdapter,
     tests: list[TestCase],
+    include_query_template_scans: bool = True,
     include_text_reference_scans: bool = True,
 ) -> ValidationRun:
     started_at = _utc_now()
     results = [run_test_case(adapter, test_case) for test_case in tests]
+    if include_query_template_scans:
+        results.extend(run_query_template_validations(prefix, adapter))
     if include_text_reference_scans:
         results.extend(run_text_reference_validations(prefix, adapter))
     completed_at = _utc_now()

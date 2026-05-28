@@ -98,6 +98,10 @@ relationship, cookbook and glossary metadata text for known retired aliases and 
 as `v_relationship_paths` and `v_relationship_patsh`, then reports table, column, row key, token,
 replacement and safe-auto eligibility.
 
+Query template validation now fetches active `Query_Cookbook` rows, binds named parameters with
+deterministic validation literals, runs `EXPLAIN`, and reports one result per recipe. Initial failure
+classes include missing columns, missing objects, unsupported functions and syntax errors.
+
 ## Repository Status
 
 This repository is currently in early implementation. The first working slice generates metadata
