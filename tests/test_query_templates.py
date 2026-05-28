@@ -1,6 +1,7 @@
 from ai_native_data_product_trust_engine.query_templates import (
     bind_sql_template,
     classify_sql_error,
+    extract_sql_error_evidence,
     run_query_template_validations,
 )
 
@@ -25,6 +26,35 @@ def test_classify_sql_error_detects_missing_column():
     )
 
 
+def test_extract_sql_error_evidence_returns_missing_object_name():
+    evidence = extract_sql_error_evidence(
+        "Object 'CallCentre_DOM_BUS_V.Call_H' does not exist."
+    )
+
+    assert evidence == {
+        "issue_code": "MISSING_OBJECT",
+        "repair_hint": (
+            "Update the SQL template to a deployed object, create the missing view, or quarantine "
+            "the recipe."
+        ),
+        "missing_object": "CallCentre_DOM_BUS_V.Call_H",
+    }
+
+
+def test_extract_sql_error_evidence_marks_native_vector_capability():
+    evidence = extract_sql_error_evidence(
+        "Object 'CallCentre_SCH_STD_V.call_embedding' does not exist.",
+        "SELECT * FROM TD_VECTORDISTANCE(ON t AS TargetTable)",
+    )
+
+    assert evidence == {
+        "issue_code": "UNSUPPORTED_CAPABILITY",
+        "repair_hint": "Use a capability-compatible recipe variant or mark the native capability unavailable.",
+        "capability": "NATIVE_VECTOR",
+        "unsupported_feature": "TD_VECTORDISTANCE",
+    }
+
+
 def test_run_query_template_validations_reports_recipe_failures():
     adapter = StubAdapter(
         recipe_rows=[
@@ -42,6 +72,7 @@ def test_run_query_template_validations_reports_recipe_failures():
     assert len(results) == 1
     assert results[0].status.value == "FAILED"
     assert results[0].sample_rows[0]["issue_code"] == "MISSING_COLUMN"
+    assert results[0].sample_rows[0]["missing_column"] == "missing_column"
     assert results[0].sample_rows[0]["parameters"] == ["call_id"]
 
 

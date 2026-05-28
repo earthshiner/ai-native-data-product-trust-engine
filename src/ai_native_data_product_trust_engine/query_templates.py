@@ -15,6 +15,18 @@ from ai_native_data_product_trust_engine.models import (
 )
 
 PARAMETER_PATTERN = re.compile(r"(?<!:):([A-Za-z][A-Za-z0-9_]*)")
+MISSING_COLUMN_PATTERNS = (
+    re.compile(r"Column/Parameter '([^']+)' does not exist", re.I),
+    re.compile(r"Column ([A-Za-z0-9_.$]+) not found", re.I),
+)
+MISSING_OBJECT_PATTERNS = (
+    re.compile(r"Object '([^']+)' does not exist", re.I),
+    re.compile(r"Table/View '([^']+)' does not exist", re.I),
+)
+MISSING_FUNCTION_PATTERNS = (
+    re.compile(r"Function '([^']+)' does not exist", re.I),
+    re.compile(r"Function ([A-Za-z0-9_.$]+) does not exist", re.I),
+)
 
 
 @dataclass(frozen=True)
@@ -40,8 +52,10 @@ def bind_sql_template(sql_template: str) -> BoundSqlTemplate:
     )
 
 
-def classify_sql_error(message: str) -> str:
+def classify_sql_error(message: str, sql_template: str = "") -> str:
     lower_message = message.lower()
+    if _uses_native_vector_feature(sql_template):
+        return "UNSUPPORTED_CAPABILITY"
     if "column" in lower_message and "not found" in lower_message:
         return "MISSING_COLUMN"
     if "column/parameter" in lower_message and "does not exist" in lower_message:
@@ -55,6 +69,37 @@ def classify_sql_error(message: str) -> str:
     if "syntax error" in lower_message:
         return "SQL_SYNTAX_ERROR"
     return "SQL_VALIDATION_ERROR"
+
+
+def extract_sql_error_evidence(
+    message: str,
+    sql_template: str = "",
+) -> dict[str, object]:
+    issue_code = classify_sql_error(message, sql_template)
+    evidence: dict[str, object] = {
+        "issue_code": issue_code,
+        "repair_hint": _repair_hint(issue_code),
+    }
+    if issue_code == "MISSING_COLUMN":
+        missing_column = _first_pattern_match(MISSING_COLUMN_PATTERNS, message)
+        if missing_column:
+            evidence["missing_column"] = missing_column
+    elif issue_code == "MISSING_OBJECT":
+        missing_object = _first_pattern_match(MISSING_OBJECT_PATTERNS, message)
+        if missing_object:
+            evidence["missing_object"] = missing_object
+    elif issue_code in {"UNSUPPORTED_FUNCTION", "UNSUPPORTED_CAPABILITY"}:
+        missing_function = _first_pattern_match(MISSING_FUNCTION_PATTERNS, message)
+        if missing_function:
+            evidence["missing_function"] = missing_function
+        if _uses_native_vector_feature(sql_template):
+            evidence["capability"] = "NATIVE_VECTOR"
+            evidence["unsupported_feature"] = "TD_VECTORDISTANCE"
+    elif issue_code == "SQL_SYNTAX_ERROR":
+        syntax_fragment = _syntax_fragment(message)
+        if syntax_fragment:
+            evidence["syntax_fragment"] = syntax_fragment
+    return evidence
 
 
 def query_template_test_cases(prefix: str) -> list[TestCase]:
@@ -94,12 +139,12 @@ def _run_recipe_validation(prefix: str, adapter, row: dict[str, object]) -> Test
     try:
         adapter.fetch_all(f"EXPLAIN {bound_template.sql}")
     except Exception as exc:  # noqa: BLE001 - backend errors are classified for evidence.
-        issue_code = classify_sql_error(str(exc))
+        evidence = extract_sql_error_evidence(str(exc), sql_template)
         return _failed_result(
             test_case,
             recipe_id,
             recipe_title,
-            issue_code,
+            evidence,
             error_message=str(exc),
             parameters=bound_template.parameters,
         )
@@ -123,22 +168,23 @@ def _failed_result(
     test_case: TestCase,
     recipe_id: str,
     recipe_title: str,
-    issue_code: str,
+    evidence: str | dict[str, object],
     error_message: str | None = None,
     parameters: tuple[str, ...] = (),
 ) -> TestResult:
+    if isinstance(evidence, str):
+        evidence = {"issue_code": evidence}
+    sample_row = {
+        "recipe_id": recipe_id,
+        "recipe_title": recipe_title,
+        "parameters": list(parameters),
+        **evidence,
+    }
     return TestResult(
         test_case=test_case,
         status=TestStatus.FAILED,
         row_count=1,
-        sample_rows=[
-            {
-                "recipe_id": recipe_id,
-                "recipe_title": recipe_title,
-                "issue_code": issue_code,
-                "parameters": list(parameters),
-            }
-        ],
+        sample_rows=[sample_row],
         error_message=error_message,
     )
 
@@ -172,3 +218,34 @@ def _literal_for_parameter(parameter_name: str) -> str:
     if lowered.endswith("_id") or lowered in {"query_call_id", "call_id"}:
         return "'__ADP_TRUST_SAMPLE_ID__'"
     return "'__ADP_TRUST_VALUE__'"
+
+
+def _first_pattern_match(patterns: tuple[re.Pattern[str], ...], message: str) -> str | None:
+    for pattern in patterns:
+        match = pattern.search(message)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _syntax_fragment(message: str) -> str | None:
+    match = re.search(r"Syntax error: ([^.]+)", message, re.I)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def _uses_native_vector_feature(sql_template: str) -> bool:
+    return bool(re.search(r"\b(TD_VECTORDISTANCE|VECTOR)\b", sql_template, re.I))
+
+
+def _repair_hint(issue_code: str) -> str:
+    hints = {
+        "MISSING_COLUMN": "Update the SQL template or refresh the view/column metadata so the referenced column exists.",
+        "MISSING_OBJECT": "Update the SQL template to a deployed object, create the missing view, or quarantine the recipe.",
+        "UNSUPPORTED_FUNCTION": "Replace the function with a supported implementation or mark the required capability unavailable.",
+        "UNSUPPORTED_CAPABILITY": "Use a capability-compatible recipe variant or mark the native capability unavailable.",
+        "SQL_SYNTAX_ERROR": "Repair the SQL template syntax before publishing the recipe.",
+        "SQL_VALIDATION_ERROR": "Inspect the backend error and add a specific classifier if the pattern is repeatable.",
+    }
+    return hints.get(issue_code, "Review the SQL template and metadata contract.")

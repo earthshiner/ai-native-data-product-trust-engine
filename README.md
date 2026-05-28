@@ -100,7 +100,9 @@ replacement and safe-auto eligibility.
 
 Query template validation now fetches active `Query_Cookbook` rows, binds named parameters with
 deterministic validation literals, runs `EXPLAIN`, and reports one result per recipe. Initial failure
-classes include missing columns, missing objects, unsupported functions and syntax errors.
+classes include missing columns, missing objects, unsupported functions, unsupported native
+capabilities and syntax errors. Query failures include extracted object/column/function names where
+available plus a first repair hint.
 
 ## Repository Status
 
