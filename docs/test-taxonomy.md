@@ -31,10 +31,13 @@
 - Fallback embedding capability is present when native VECTOR is absent.
 - JSON, geospatial, temporal and ML features are validated before use.
 
-## Data Quality Tests
+## Evidence Checks
 
-- Required row counts are non-zero.
-- Primary business keys are unique.
+Evidence checks use narrow data observations to validate metadata claims. They are not a general
+data quality scoring system.
+
+- Required reference populations are non-zero where metadata claims they exist.
+- Primary business keys are unique where metadata marks them as keys.
 - Mandatory relationships do not orphan above tolerance.
 - Current-record filters return one current row per key.
-- Allowed categorical values are respected.
+- Allowed categorical values are respected where metadata declares allowed values.

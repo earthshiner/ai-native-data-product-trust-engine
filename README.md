@@ -4,6 +4,34 @@ A validation and self-healing engine for AI-native Data Products on Teradata.
 
 The Trust Engine turns product metadata into an executable trust contract. It discovers deployed data product modules, generates validation tests, classifies failures, proposes deterministic repairs, and records validation evidence so agents, cookbooks, notebooks, and applications can rely on metadata with confidence.
 
+## Mandate
+
+The Trust Engine scores and improves **metadata trust**, not the intrinsic trustworthiness of
+raw data values.
+
+Its job is to answer a narrower and more agent-critical question:
+
+> Does this AI-native Data Product's metadata accurately describe the deployed product that
+> agents, cookbooks, notebooks, semantic search, and generated SQL rely on?
+
+In scope:
+
+- Object, view, column, relationship, path, glossary and capability metadata.
+- SQL recipe validity and parameter readiness.
+- Free-text references to objects, retired aliases, capabilities and business terms.
+- View and metadata drift that can make generated assets fail.
+- Deterministic repair proposals and safe self-healing for metadata defects.
+
+Out of scope as a primary objective:
+
+- General data quality scoring.
+- Broad profiling of raw data values.
+- Assessing whether business facts are true in the real world.
+
+The engine may still run small data checks where they prove a metadata claim, such as mandatory
+relationship orphan checks, current-record rules or required reference populations. Those checks are
+evidence for metadata trust, not a replacement for a dedicated data quality platform.
+
 ## Goals
 
 - Prove that semantic metadata matches deployed Teradata objects.
@@ -20,7 +48,8 @@ The engine validates five contract areas:
 2. Semantic contract: entities, column metadata, relationships, paths, glossary and design metadata.
 3. Query contract: parameter binding, SQL parsing, EXPLAIN validation, smoke execution and expected result shape.
 4. Capability contract: VECTOR, JSON, geospatial, ML, fallback patterns and product feature flags.
-5. Data quality contract: row counts, orphan rates, uniqueness, current-record rules, nulls, categories and temporal sanity.
+5. Evidence checks: targeted row-count, orphan, uniqueness, current-record and category checks
+   only where they validate a metadata claim.
 
 ## Self-Healing Levels
 

@@ -21,3 +21,13 @@ Classifies failures into deterministic safe repairs, repair proposals, or manual
 ## Reporting Layer
 
 Publishes trust scores, issue lists, validation evidence and repair history for MCP tools, cookbooks, dashboards and observability modules.
+
+## Scope Boundary
+
+The architecture is centred on metadata trust. The engine validates the contract that AI systems use
+to reason about the data product: deployed objects, semantic metadata, relationships, query recipes,
+capabilities, free-text references and repair history.
+
+It can run targeted data checks when those checks prove a metadata claim, but it should not become a
+general raw data quality platform. If a check cannot be tied back to a metadata contract, it belongs
+outside the core Trust Engine.

@@ -15,7 +15,7 @@ The first metadata extension should live in the Memory and Observability modules
 
 - Trust_Score_History
 - Contract_Drift_Event
-- Data_Quality_Observation
+- Metadata_Evidence_Observation
 
 ## Required Statuses
 
@@ -25,3 +25,10 @@ The first metadata extension should live in the Memory and Observability modules
 - REPAIRED
 - QUARANTINED
 - GENERATED_NOT_VALIDATED
+
+## Scope Note
+
+The metadata model records evidence about the correctness of the data product contract. It should
+avoid broad raw-data profiling tables unless the observations directly support metadata trust, such
+as relationship validity, current-record semantics, allowed values or required reference
+populations.
