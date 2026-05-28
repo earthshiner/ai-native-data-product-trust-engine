@@ -34,8 +34,11 @@ def test_generate_repair_candidates_creates_safe_text_update():
     assert candidates[0].requires_approval is False
     assert candidates[0].sql == (
         "UPDATE CallCentre_MEM_STD_V.Query_Cookbook\n"
-        "SET recipe_description = OREPLACE(recipe_description, 'v_relationship_paths', "
+        "SET recipe_description = CAST(\n"
+        "    OREPLACE(CAST(recipe_description AS VARCHAR(32000)), 'v_relationship_paths', "
         "'relationship_paths')\n"
+        "    AS CLOB(32000)\n"
+        ")\n"
         "WHERE recipe_id = 'QC-DOMAIN-002';"
     )
 

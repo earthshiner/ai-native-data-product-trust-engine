@@ -143,7 +143,10 @@ def _safe_text_update_sql(sample_row: dict[str, object]) -> str:
     )
     return (
         f"UPDATE {database_name}.{table_name}\n"
-        f"SET {column_name} = OREPLACE({column_name}, {token}, {replacement})\n"
+        f"SET {column_name} = CAST(\n"
+        f"    OREPLACE(CAST({column_name} AS VARCHAR(32000)), {token}, {replacement})\n"
+        f"    AS CLOB(32000)\n"
+        f")\n"
         f"WHERE {where_clause};"
     )
 
