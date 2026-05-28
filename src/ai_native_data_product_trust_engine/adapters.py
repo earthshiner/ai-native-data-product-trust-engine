@@ -26,6 +26,20 @@ class SqlAlchemyAdapter:
             rows = connection.execute(text(sql))
             return [dict(row._mapping) for row in rows]
 
+    def execute(self, sql: str) -> None:
+        try:
+            from sqlalchemy import create_engine, text
+        except ImportError as exc:
+            msg = (
+                "[ADPTrust.MissingDependency] SQLAlchemy is required for live repair. "
+                "Suggested action: install the teradata optional dependencies."
+            )
+            raise RuntimeError(msg) from exc
+
+        engine = create_engine(_normalise_database_url(self.database_url))
+        with engine.begin() as connection:
+            connection.execute(text(sql))
+
 
 @dataclass(frozen=True)
 class TeradataSqlAdapter:
@@ -47,6 +61,21 @@ class TeradataSqlAdapter:
                 cursor.execute(sql)
                 columns = [column[0] for column in cursor.description or []]
                 return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
+
+    def execute(self, sql: str) -> None:
+        try:
+            import teradatasql
+        except ImportError as exc:
+            msg = (
+                "[ADPTrust.MissingDependency] teradatasql is required for live repair. "
+                "Suggested action: install the teradata optional dependencies."
+            )
+            raise RuntimeError(msg) from exc
+
+        connection_args = _teradatasql_args_from_url(self.database_url)
+        with teradatasql.connect(**connection_args) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(sql)
 
 
 def adapter_from_environment(database_url: str | None = None):

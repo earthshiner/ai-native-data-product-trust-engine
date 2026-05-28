@@ -108,6 +108,11 @@ The first capability registry primitive discovers native VECTOR and fallback emb
 from deployed objects. It reports capability inventory and fails alignment when active cookbook
 metadata references native VECTOR behaviour while the product only has fallback embedding evidence.
 
+Repair proposal mode generates Markdown and SQL repair artifacts beside the validation report. Safe
+auto mode applies only deterministic repairs that do not require steward approval, such as known
+free-text alias replacements, and reports permission failures without hiding the remaining
+validation evidence.
+
 ## Repository Status
 
 This repository is currently in early implementation. The first working slice generates metadata

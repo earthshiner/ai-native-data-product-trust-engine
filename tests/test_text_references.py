@@ -60,6 +60,7 @@ def test_run_text_reference_validation_reports_source_context():
         "table_name": "Query_Cookbook",
         "column_name": "recipe_description",
         "row_key": "recipe_id=QCB-001",
+        "key_values": {"recipe_id": "QCB-001"},
         "token": "v_relationship_paths",
         "replacement": "relationship_paths",
         "classification": "STALE_ALIAS",
