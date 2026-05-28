@@ -16,6 +16,7 @@ from ai_native_data_product_trust_engine.models import (
     TestStatus,
     ValidationRun,
 )
+from ai_native_data_product_trust_engine.text_references import run_text_reference_validations
 
 
 class DatabaseAdapter(Protocol):
@@ -43,9 +44,16 @@ def run_test_case(adapter: DatabaseAdapter, test_case: TestCase) -> TestResult:
     )
 
 
-def run_validation(prefix: str, adapter: DatabaseAdapter, tests: list[TestCase]) -> ValidationRun:
+def run_validation(
+    prefix: str,
+    adapter: DatabaseAdapter,
+    tests: list[TestCase],
+    include_text_reference_scans: bool = True,
+) -> ValidationRun:
     started_at = _utc_now()
     results = [run_test_case(adapter, test_case) for test_case in tests]
+    if include_text_reference_scans:
+        results.extend(run_text_reference_validations(prefix, adapter))
     completed_at = _utc_now()
     return ValidationRun(
         prefix=prefix,

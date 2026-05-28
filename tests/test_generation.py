@@ -21,6 +21,16 @@ def test_generate_metadata_tests_includes_core_contracts():
     assert tests[-1].expected == ExpectedResult.NON_EMPTY
 
 
+def test_generate_tests_cli_includes_free_text_cases(capsys):
+    exit_code = main(["generate-tests", "--prefix", "CallCentre"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "CALLCENTRE-TEXT-004\tFREE_TEXT\tQuery cookbook free-text references are current" in (
+        captured.out
+    )
+
+
 def test_classify_stale_relationship_path_name():
     candidate = classify_stale_relationship_path_name("v_relationship_patsh")
 
@@ -61,7 +71,7 @@ def test_validate_cli_writes_report(monkeypatch, tmp_path):
 
     assert exit_code == 0
     payload = json.loads(report_path.read_text(encoding="utf-8"))
-    assert payload["summary"]["passed"] == 1
+    assert payload["summary"]["passed"] == 6
 
 
 def test_teradatasql_args_from_url_redacts_nothing_but_parses_components():

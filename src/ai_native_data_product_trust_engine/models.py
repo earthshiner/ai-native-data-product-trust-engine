@@ -14,6 +14,7 @@ class TestCategory(str, Enum):
     QUERY = "QUERY"
     CAPABILITY = "CAPABILITY"
     DATA_QUALITY = "DATA_QUALITY"
+    FREE_TEXT = "FREE_TEXT"
 
 
 class TestSeverity(str, Enum):
