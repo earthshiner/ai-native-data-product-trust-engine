@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from ai_native_data_product_trust_engine.adapters import adapter_from_environment
+from ai_native_data_product_trust_engine.query_templates import query_template_test_cases
 from ai_native_data_product_trust_engine.reports import write_json_report
 from ai_native_data_product_trust_engine.test_generation import generate_metadata_tests
 from ai_native_data_product_trust_engine.text_references import text_reference_test_cases
@@ -47,7 +48,11 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command == "generate-tests":
-        tests = [*generate_metadata_tests(args.prefix), *text_reference_test_cases(args.prefix)]
+        tests = [
+            *generate_metadata_tests(args.prefix),
+            *query_template_test_cases(args.prefix),
+            *text_reference_test_cases(args.prefix),
+        ]
         for test in tests:
             print(f"{test.test_id}\t{test.category.value}\t{test.name}")
         return 0
