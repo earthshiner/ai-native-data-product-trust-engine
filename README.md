@@ -104,6 +104,10 @@ classes include missing columns, missing objects, unsupported functions, unsuppo
 capabilities and syntax errors. Query failures include extracted object/column/function names where
 available plus a first repair hint.
 
+The first capability registry primitive discovers native VECTOR and fallback embedding evidence
+from deployed objects. It reports capability inventory and fails alignment when active cookbook
+metadata references native VECTOR behaviour while the product only has fallback embedding evidence.
+
 ## Repository Status
 
 This repository is currently in early implementation. The first working slice generates metadata
