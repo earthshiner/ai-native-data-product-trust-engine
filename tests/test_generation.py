@@ -71,7 +71,7 @@ def test_validate_cli_writes_report(monkeypatch, tmp_path):
 
     assert exit_code == 0
     payload = json.loads(report_path.read_text(encoding="utf-8"))
-    assert payload["summary"]["passed"] == 6
+    assert payload["summary"]["passed"] == 8
 
 
 def test_teradatasql_args_from_url_redacts_nothing_but_parses_components():
