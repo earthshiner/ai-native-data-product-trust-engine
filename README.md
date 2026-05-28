@@ -41,6 +41,31 @@ python -m ai_native_data_product_trust_engine validate --prefix CallCentre --rep
 python -m ai_native_data_product_trust_engine report --prefix CallCentre
 ```
 
+During local development, run from the repository root with `src` on `PYTHONPATH`:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m ai_native_data_product_trust_engine generate-tests --prefix CallCentre
+python -m ai_native_data_product_trust_engine validate --prefix CallCentre --output reports\callcentre-validation.json
+```
+
+Live validation currently uses `DATABASE_URI` by default and writes JSON validation evidence.
+Generated reports are local artifacts and are not committed.
+
+## First Working Slice
+
+The first implemented slice generates and executes four metadata trust tests:
+
+- Entity metadata references deployed objects.
+- Column metadata references deployed columns.
+- Relationship metadata references deployed join columns.
+- Active cookbook recipes exist for later SQL template validation.
+
+The validator supports `ZERO_ROWS` and `NON_EMPTY` expectations, records pass/fail/error
+evidence, and returns a non-zero exit code when any generated test fails.
+
 ## Repository Status
 
-This repository is currently scaffolded for design and implementation. The first working slice should generate metadata consistency tests from a product prefix and run them against Teradata using an injected database adapter.
+This repository is currently in early implementation. The first working slice generates metadata
+consistency tests from a product prefix and runs them against Teradata using an injected database
+adapter.

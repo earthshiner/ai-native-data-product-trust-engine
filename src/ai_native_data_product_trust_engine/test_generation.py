@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from ai_native_data_product_trust_engine.models import TestCase, TestCategory, TestSeverity
+from ai_native_data_product_trust_engine.models import (
+    ExpectedResult,
+    TestCase,
+    TestCategory,
+    TestSeverity,
+)
 
 
 def semantic_database(prefix: str) -> str:
@@ -44,16 +49,16 @@ WHERE tv.TableName IS NULL
             severity=TestSeverity.CRITICAL,
             sql=f"""
 SELECT
-    cm.database_name
-   ,cm.table_name
-   ,cm.column_name
-FROM {sem_db}.column_metadata cm
-LEFT OUTER JOIN DBC.ColumnsV cv
-    ON cv.DatabaseName = cm.database_name
-   AND cv.TableName = cm.table_name
-   AND cv.ColumnName = cm.column_name
-WHERE cv.ColumnName IS NULL
-  AND COALESCE(cm.is_active, 1) = 1;
+    cmeta.database_name
+   ,cmeta.table_name
+   ,cmeta.column_name
+FROM {sem_db}.column_metadata cmeta
+LEFT OUTER JOIN DBC.ColumnsV colv
+    ON colv.DatabaseName = cmeta.database_name
+   AND colv.TableName = cmeta.table_name
+   AND colv.ColumnName = cmeta.column_name
+WHERE colv.ColumnName IS NULL
+  AND COALESCE(cmeta.is_active, 1) = 1;
 """.strip(),
             expected_result="Returns zero rows.",
             repair_strategy="Refresh column metadata from DBC.ColumnsV or deactivate obsolete metadata rows.",
@@ -101,6 +106,7 @@ FROM {mem_db}.Query_Cookbook
 WHERE COALESCE(is_active, 1) = 1;
 """.strip(),
             expected_result="Returns active recipes; each recipe is later parameter-bound and explained.",
+            expected=ExpectedResult.NON_EMPTY,
             repair_strategy="Flag recipes without SQL templates as metadata defects.",
         ),
     ]
