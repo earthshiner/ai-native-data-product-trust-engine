@@ -85,12 +85,13 @@ reports are local artifacts and are not committed.
 
 ## First Working Slice
 
-The first implemented slice generates and executes four metadata trust tests:
+The first implemented slice generates and executes five metadata trust tests:
 
 - Entity metadata references deployed objects.
 - Column metadata references deployed columns.
 - Relationship metadata references deployed join columns.
 - Active cookbook recipes exist for later SQL template validation.
+- Product tables stay within the initial AMP storage skew warning threshold.
 
 The validator supports `ZERO_ROWS` and `NON_EMPTY` expectations, records pass/fail/error
 evidence, and returns a non-zero exit code when any generated test fails.
@@ -143,6 +144,13 @@ To quarantine a broken recipe, retire the active `Query_Cookbook` row rather tha
 set `is_active = 0`, close `valid_to`, and preserve the row for audit/history. A corrected successor
 recipe can then be inserted when the SQL contract is repaired. Quarantined recipes stay visible in
 history but are excluded from active recipe validation and agent selection.
+
+Table skew validation alerts on product tables whose per-AMP storage distribution is materially
+uneven. The generated check uses `DBC.TableSizeV` per-AMP `CurrentPerm` evidence rather than hashing
+`DBC.TablesV.TableName`, because the latter measures dictionary rows, not the data product table's
+distribution. Initial results use a warning threshold of `skew_percent > 20` so stewards can review
+primary index choice, data distribution and statistics without treating every skewed table as a
+blocking metadata defect.
 
 ## Repository Status
 

@@ -16,9 +16,21 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-SEM-002",
         "CALLCENTRE-SEM-003",
         "CALLCENTRE-QUERY-001",
+        "CALLCENTRE-STRUCT-001",
     ]
-    assert all("CallCentre_" in test.sql for test in tests)
-    assert tests[-1].expected == ExpectedResult.NON_EMPTY
+    assert all("CallCentre" in test.sql for test in tests)
+    assert tests[3].expected == ExpectedResult.NON_EMPTY
+
+
+def test_generate_metadata_tests_includes_table_skew_contract():
+    tests = generate_metadata_tests("CallCentre")
+    table_skew_test = next(test for test in tests if test.test_id == "CALLCENTRE-STRUCT-001")
+
+    assert table_skew_test.test_id == "CALLCENTRE-STRUCT-001"
+    assert table_skew_test.severity == TestSeverity.WARNING
+    assert "FROM DBC.TableSizeV tsv" in table_skew_test.sql
+    assert "HASHROW(Tablename)" not in table_skew_test.sql
+    assert "skew_percent > 20" in table_skew_test.sql
 
 
 def test_generate_tests_cli_includes_free_text_cases(capsys):

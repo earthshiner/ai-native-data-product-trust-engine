@@ -109,4 +109,63 @@ WHERE COALESCE(is_active, 1) = 1;
             expected=ExpectedResult.NON_EMPTY,
             repair_strategy="Flag recipes without SQL templates as metadata defects.",
         ),
+        TestCase(
+            test_id=f"{prefix.upper()}-STRUCT-001",
+            name="Tables have acceptable AMP storage skew",
+            category=TestCategory.STRUCTURAL,
+            severity=TestSeverity.WARNING,
+            sql=f"""
+WITH table_amp_usage AS
+(
+    SELECT
+        TRIM(tsv.DatabaseName) AS database_name
+       ,TRIM(tsv.TableName) AS table_name
+       ,tsv.Vproc AS amp_id
+       ,COALESCE(tsv.CurrentPerm, 0) AS current_perm_bytes
+    FROM DBC.TableSizeV tsv
+    INNER JOIN DBC.TablesV tv
+        ON tv.DatabaseName = tsv.DatabaseName
+       AND tv.TableName = tsv.TableName
+    WHERE tsv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+      AND tv.TableKind = 'T'
+),
+table_skew AS
+(
+    SELECT
+        database_name
+       ,table_name
+       ,COUNT(*) AS amp_count
+       ,SUM(current_perm_bytes) AS total_perm_bytes
+       ,MIN(current_perm_bytes) AS min_amp_perm_bytes
+       ,MAX(current_perm_bytes) AS max_amp_perm_bytes
+       ,AVG(current_perm_bytes) AS avg_amp_perm_bytes
+       ,CASE
+            WHEN MAX(current_perm_bytes) = 0 THEN 0
+            ELSE 100 - ((AVG(current_perm_bytes) / MAX(current_perm_bytes)) * 100)
+        END AS skew_percent
+    FROM table_amp_usage
+    GROUP BY database_name, table_name
+)
+SELECT
+    database_name
+   ,table_name
+   ,amp_count
+   ,total_perm_bytes
+   ,min_amp_perm_bytes
+   ,max_amp_perm_bytes
+   ,avg_amp_perm_bytes
+   ,skew_percent
+   ,'TABLE_AMP_SKEW' AS issue_code
+   ,'Review primary index choice or data distribution for this table.' AS repair_hint
+FROM table_skew
+WHERE total_perm_bytes > 0
+  AND amp_count > 1
+  AND skew_percent > 20
+ORDER BY skew_percent DESC, total_perm_bytes DESC, database_name, table_name;
+""".strip(),
+            expected_result="Returns zero rows for tables above the AMP skew threshold.",
+            repair_strategy=(
+                "Review the table primary index, data distribution, and collected statistics."
+            ),
+        ),
     ]
