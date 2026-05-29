@@ -78,6 +78,11 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "ALTER TABLE CallCentre_DOM_STD_T.Call_H ADD start_ts &lt;data_type&gt;" in html
     assert "Recreate or test these dependent objects first" in html
     assert "CallCentre_DOM_BUS_V.Call_Enriched" in html
+    assert "Root cause groups" in html
+    assert "Missing column: CallCentre_DOM_STD_T.Call_H.start_ts" in html
+    assert "2 downstream failures" in html
+    assert ".root-cause-card p," in html
+    assert "overflow-wrap: anywhere" in html
 
 
 def _result(
