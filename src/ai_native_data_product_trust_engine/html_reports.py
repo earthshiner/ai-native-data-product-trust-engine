@@ -44,6 +44,7 @@ def render_html_report(
     score = _score(results)
     dimension_scores = _dimension_scores(results)
     dependency_index = _dependency_index(results)
+    root_cause_groups = _root_cause_groups(results, dependency_index)
     safe_auto_count = sum(1 for candidate in repair_candidates if not candidate.requires_approval)
     approval_count = sum(1 for candidate in repair_candidates if candidate.requires_approval)
     safe_auto_panel = _repair_panel(
@@ -62,6 +63,7 @@ def render_html_report(
             "repair_candidates": [_repair_to_dict(candidate) for candidate in repair_candidates],
             "score": score,
             "dimension_scores": dimension_scores,
+            "root_cause_groups": root_cause_groups,
         }
     )
 
@@ -256,6 +258,35 @@ def render_html_report(
       gap: 14px;
       margin-top: 18px;
     }}
+    .root-cause-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }}
+    .root-cause-card {{
+      border-left: 5px solid var(--td-orange);
+      min-width: 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }}
+    .root-cause-title {{
+      margin: 0 0 8px;
+      font-size: 18px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }}
+    .impact-list {{
+      margin: 10px 0 0;
+      padding-left: 18px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }}
+    .root-cause-card p,
+    .root-cause-card li {{
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }}
     details {{
       margin-top: 8px;
     }}
@@ -323,6 +354,8 @@ def render_html_report(
       {safe_auto_panel}
       {approval_panel}
     </section>
+
+    {_root_cause_section(root_cause_groups)}
 
     <section class="panel" style="margin-top:18px">
       <h2>Validation results</h2>
@@ -457,6 +490,36 @@ def _repair_panel(title: str, count: int, text: str) -> str:
     </div>"""
 
 
+def _root_cause_section(groups: list[dict[str, object]]) -> str:
+    if not groups:
+        return ""
+    cards = "\n".join(_root_cause_card(group) for group in groups)
+    return f"""<section class="panel" style="margin-top:18px" aria-label="Root cause groups">
+      <h2>Root cause groups</h2>
+      <p>
+        Repeated failures are grouped by the same missing object, missing column, or capability
+        defect so the likely first fix is visible before the detailed validation rows.
+      </p>
+      <div class="root-cause-grid">
+        {cards}
+      </div>
+    </section>"""
+
+
+def _root_cause_card(group: dict[str, object]) -> str:
+    impacts = group.get("impacts")
+    impact_items = ""
+    if isinstance(impacts, list):
+        impact_items = "\n".join(f"<li>{_h(impact)}</li>" for impact in impacts[:6])
+    return f"""<div class="panel root-cause-card">
+      <div class="metric-label">{_h(group.get("issue_code", "ROOT_CAUSE"))}</div>
+      <h3 class="root-cause-title">{_h(group.get("title", "Shared failure"))}</h3>
+      <p><strong>{_h(group.get("impact_count", 0))} downstream failures</strong></p>
+      <p>{_h(group.get("next_step", "Review the grouped validation evidence."))}</p>
+      <ul class="impact-list">{impact_items}</ul>
+    </div>"""
+
+
 def _category_options(results: list[TestResult]) -> str:
     return "\n".join(
         f'<option value="{_h(category)}">{_h(category.title())}</option>'
@@ -568,6 +631,107 @@ def _next_step(
     if issue_code == "STALE_OBJECT_NAME":
         return "Apply the deterministic alias repair or replace the retired object name manually."
     return result.test_case.repair_strategy or "Review the structured evidence and choose a repair."
+
+
+def _root_cause_groups(
+    results: list[TestResult],
+    dependency_index: dict[str, list[str]],
+) -> list[dict[str, object]]:
+    groups: dict[tuple[str, str], dict[str, object]] = {}
+    for result in results:
+        if result.status == TestStatus.PASSED:
+            continue
+        for sample_row in result.sample_rows:
+            root = _root_cause_identity(sample_row)
+            if not root:
+                continue
+            issue_code, root_value = root
+            group = groups.setdefault(
+                root,
+                {
+                    "issue_code": issue_code,
+                    "root_value": root_value,
+                    "title": _root_cause_title(issue_code, root_value),
+                    "next_step": _root_cause_next_step(issue_code, root_value, dependency_index),
+                    "impacts": [],
+                    "impact_count": 0,
+                },
+            )
+            impact = _result_impact_label(result, sample_row)
+            if impact not in group["impacts"]:
+                group["impacts"].append(impact)
+                group["impact_count"] = int(group["impact_count"]) + 1
+
+    repeated_groups = [group for group in groups.values() if int(group["impact_count"]) > 1]
+    return sorted(
+        repeated_groups,
+        key=lambda group: (-int(group["impact_count"]), str(group["title"])),
+    )
+
+
+def _root_cause_identity(sample_row: dict[str, object]) -> tuple[str, str] | None:
+    issue_code = str(sample_row.get("issue_code") or "")
+    if issue_code == "MISSING_COLUMN":
+        missing_column = str(sample_row.get("missing_column") or "")
+        return (issue_code, missing_column) if missing_column else None
+    if issue_code == "MISSING_OBJECT":
+        missing_object = str(sample_row.get("missing_object") or "")
+        return (issue_code, missing_object) if missing_object else None
+    if issue_code == "UNSUPPORTED_CAPABILITY":
+        capability = str(
+            sample_row.get("capability") or sample_row.get("unsupported_feature") or ""
+        )
+        return (issue_code, capability) if capability else None
+    if issue_code == "STALE_OBJECT_NAME":
+        token = str(sample_row.get("token") or sample_row.get("object_name") or "")
+        return (issue_code, token) if token else None
+    return None
+
+
+def _root_cause_title(issue_code: str, root_value: str) -> str:
+    labels = {
+        "MISSING_COLUMN": "Missing column",
+        "MISSING_OBJECT": "Missing object",
+        "UNSUPPORTED_CAPABILITY": "Unsupported capability",
+        "STALE_OBJECT_NAME": "Stale object name",
+    }
+    return f"{labels.get(issue_code, issue_code)}: {root_value}"
+
+
+def _root_cause_next_step(
+    issue_code: str,
+    root_value: str,
+    dependency_index: dict[str, list[str]],
+) -> str:
+    if issue_code == "MISSING_COLUMN":
+        dependent_hint = _dependent_object_hint(root_value, {}, dependency_index)
+        return f"{_missing_column_alter_hint(root_value)}{dependent_hint} Then re-run validation."
+    if issue_code == "MISSING_OBJECT":
+        return (
+            f"Confirm whether {root_value} was renamed, dropped, or never deployed. "
+            "Deploy it, update metadata to the current object, or quarantine dependent recipes."
+        )
+    if issue_code == "UNSUPPORTED_CAPABILITY":
+        return (
+            "Switch impacted recipes to a deployed capability-compatible pattern, or update "
+            "capability metadata only after the feature is genuinely available."
+        )
+    if issue_code == "STALE_OBJECT_NAME":
+        return "Apply the deterministic alias repair or replace the retired object name manually."
+    return "Review the grouped validation evidence and repair the shared upstream contract."
+
+
+def _result_impact_label(result: TestResult, sample_row: dict[str, object]) -> str:
+    recipe_id = sample_row.get("recipe_id")
+    recipe_title = sample_row.get("recipe_title")
+    if recipe_id and recipe_title:
+        return f"{recipe_id}: {recipe_title}"
+    if recipe_id:
+        return str(recipe_id)
+    object_names = _dependent_objects_from_sample(sample_row)
+    if object_names:
+        return ", ".join(object_names)
+    return f"{result.test_case.test_id}: {result.test_case.name}"
 
 
 def _dependency_index(results: list[TestResult]) -> dict[str, list[str]]:
