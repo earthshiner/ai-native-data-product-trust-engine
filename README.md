@@ -85,16 +85,22 @@ reports are local artifacts and are not committed.
 
 ## First Working Slice
 
-The first implemented slice generates and executes five metadata trust tests:
+The first implemented slice generates and executes six metadata trust tests:
 
 - Entity metadata references deployed objects.
 - Column metadata references deployed columns.
 - Relationship metadata references deployed join columns.
+- Same/similar column names have consistent datatype, length, precision and scale.
 - Active cookbook recipes exist for later SQL template validation.
 - Product tables stay within the initial AMP storage skew warning threshold.
 
 The validator supports `ZERO_ROWS` and `NON_EMPTY` expectations, records pass/fail/error
 evidence, and returns a non-zero exit code when any generated test fails.
+
+Column type consistency validation normalises column names by case and underscores, then flags
+normalised names with multiple physical type signatures across the data product. This catches
+join-risk patterns such as the same business key being defined with different datatypes, lengths,
+precision or scale in different modules or views.
 
 The first free-text validation primitive is also in place. It scans entity, column,
 relationship, cookbook and glossary metadata text for known retired aliases and typo suspects such
