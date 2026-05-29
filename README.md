@@ -85,7 +85,7 @@ reports are local artifacts and are not committed.
 
 ## First Working Slice
 
-The first implemented slice generates and executes six metadata trust tests:
+The first implemented slice generates and executes seven metadata trust tests:
 
 - Entity metadata references deployed objects.
 - Column metadata references deployed columns.
@@ -93,6 +93,7 @@ The first implemented slice generates and executes six metadata trust tests:
 - Same/similar column names have consistent datatype, length, precision and scale.
 - Active cookbook recipes exist for later SQL template validation.
 - Product tables stay within the initial AMP storage skew warning threshold.
+- Relationship join columns have valid optimiser statistics.
 
 The validator supports `ZERO_ROWS` and `NON_EMPTY` expectations, records pass/fail/error
 evidence, and returns a non-zero exit code when any generated test fails.
@@ -112,6 +113,11 @@ deterministic validation literals, runs `EXPLAIN`, and reports one result per re
 classes include missing columns, missing objects, unsupported functions, unsupported native
 capabilities and syntax errors. Query failures include extracted object/column/function names where
 available plus a first repair hint.
+
+Statistics coverage validation checks active relationship join columns against `DBC.ColumnStatsV`.
+Missing valid statistics are reported as performance trust warnings with the relationship name,
+join-column usage, issue code and a `COLLECT STATISTICS` repair hint. This keeps the check focused on
+metadata-backed access paths that agents are likely to use for generated joins.
 
 View contract validation discovers deployed product views from `DBC.TablesV` and runs `HELP COLUMN`
 against a zero-row subquery for each view. Teradata resolves the view and returns authoritative
