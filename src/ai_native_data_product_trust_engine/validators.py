@@ -19,6 +19,7 @@ from ai_native_data_product_trust_engine.models import (
 from ai_native_data_product_trust_engine.capabilities import run_capability_validations
 from ai_native_data_product_trust_engine.query_templates import run_query_template_validations
 from ai_native_data_product_trust_engine.text_references import run_text_reference_validations
+from ai_native_data_product_trust_engine.view_contracts import run_view_contract_validations
 
 
 class DatabaseAdapter(Protocol):
@@ -56,6 +57,7 @@ def run_validation(
     include_capability_scans: bool = True,
     include_query_template_scans: bool = True,
     include_text_reference_scans: bool = True,
+    include_view_contract_scans: bool = True,
 ) -> ValidationRun:
     started_at = _utc_now()
     results = [run_test_case(adapter, test_case) for test_case in tests]
@@ -65,6 +67,8 @@ def run_validation(
         results.extend(run_query_template_validations(prefix, adapter))
     if include_text_reference_scans:
         results.extend(run_text_reference_validations(prefix, adapter))
+    if include_view_contract_scans:
+        results.extend(run_view_contract_validations(prefix, adapter))
     completed_at = _utc_now()
     return ValidationRun(
         prefix=prefix,

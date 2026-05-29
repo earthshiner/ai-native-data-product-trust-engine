@@ -60,7 +60,7 @@ def test_validate_cli_writes_report(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         "ai_native_data_product_trust_engine.cli.adapter_from_environment",
-        lambda database_url=None: StubAdapter(rows=[]),
+        lambda database_url=None: ValidationStubAdapter(),
     )
     monkeypatch.setattr(
         "ai_native_data_product_trust_engine.cli.generate_metadata_tests",
@@ -71,7 +71,7 @@ def test_validate_cli_writes_report(monkeypatch, tmp_path):
 
     assert exit_code == 0
     payload = json.loads(report_path.read_text(encoding="utf-8"))
-    assert payload["summary"]["passed"] == 8
+    assert payload["summary"]["passed"] == 9
 
 
 def test_teradatasql_args_from_url_redacts_nothing_but_parses_components():
@@ -97,6 +97,22 @@ class StubAdapter:
 
     def fetch_all(self, sql):
         return self.rows
+
+
+class ValidationStubAdapter:
+    def fetch_all(self, sql):
+        if sql.startswith("EXPLAIN"):
+            return [{"Explain": "ok"}]
+        if sql.startswith("HELP COLUMN"):
+            return [{"Column Name": "call_id"}]
+        if "FROM DBC.TablesV" in sql and "TableKind = 'V'" in sql:
+            return [
+                {
+                    "database_name": "CallCentre_DOM_BUS_V",
+                    "view_name": "Call_Enriched",
+                }
+            ]
+        return []
 
 
 def _test_case(expected: ExpectedResult) -> TestCase:
