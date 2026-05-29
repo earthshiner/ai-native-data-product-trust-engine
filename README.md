@@ -85,15 +85,23 @@ reports are local artifacts and are not committed.
 
 ## First Working Slice
 
-The first implemented slice generates and executes four metadata trust tests:
+The first implemented slice generates and executes seven metadata trust tests:
 
 - Entity metadata references deployed objects.
 - Column metadata references deployed columns.
 - Relationship metadata references deployed join columns.
+- Same/similar column names have consistent datatype, length, precision and scale.
 - Active cookbook recipes exist for later SQL template validation.
+- Product tables stay within the initial AMP storage skew warning threshold.
+- Relationship join columns have valid optimiser statistics.
 
 The validator supports `ZERO_ROWS` and `NON_EMPTY` expectations, records pass/fail/error
 evidence, and returns a non-zero exit code when any generated test fails.
+
+Column type consistency validation normalises column names by case and underscores, then flags
+normalised names with multiple physical type signatures across the data product. This catches
+join-risk patterns such as the same business key being defined with different datatypes, lengths,
+precision or scale in different modules or views.
 
 The first free-text validation primitive is also in place. It scans entity, column,
 relationship, cookbook and glossary metadata text for known retired aliases and typo suspects such
@@ -105,6 +113,11 @@ deterministic validation literals, runs `EXPLAIN`, and reports one result per re
 classes include missing columns, missing objects, unsupported functions, unsupported native
 capabilities and syntax errors. Query failures include extracted object/column/function names where
 available plus a first repair hint.
+
+Statistics coverage validation checks active relationship join columns against `DBC.ColumnStatsV`.
+Missing valid statistics are reported as performance trust warnings with the relationship name,
+join-column usage, issue code and a `COLLECT STATISTICS` repair hint. This keeps the check focused on
+metadata-backed access paths that agents are likely to use for generated joins.
 
 View contract validation discovers deployed product views from `DBC.TablesV` and runs `HELP COLUMN`
 against a zero-row subquery for each view. Teradata resolves the view and returns authoritative
@@ -143,6 +156,13 @@ To quarantine a broken recipe, retire the active `Query_Cookbook` row rather tha
 set `is_active = 0`, close `valid_to`, and preserve the row for audit/history. A corrected successor
 recipe can then be inserted when the SQL contract is repaired. Quarantined recipes stay visible in
 history but are excluded from active recipe validation and agent selection.
+
+Table skew validation alerts on product tables whose per-AMP storage distribution is materially
+uneven. The generated check uses `DBC.TableSizeV` per-AMP `CurrentPerm` evidence rather than hashing
+`DBC.TablesV.TableName`, because the latter measures dictionary rows, not the data product table's
+distribution. Initial results use a warning threshold of `skew_percent > 20` so stewards can review
+primary index choice, data distribution and statistics without treating every skewed table as a
+blocking metadata defect.
 
 ## Repository Status
 
