@@ -1,7 +1,7 @@
 import json
 
 from ai_native_data_product_trust_engine.adapters import _teradatasql_args_from_url
-from ai_native_data_product_trust_engine.cli import main
+from ai_native_data_product_trust_engine.cli import _summarise_error, main
 from ai_native_data_product_trust_engine.models import ExpectedResult, TestCase, TestCategory, TestSeverity
 from ai_native_data_product_trust_engine.repairs import classify_stale_relationship_path_name
 from ai_native_data_product_trust_engine.test_generation import generate_metadata_tests
@@ -85,6 +85,10 @@ def test_teradatasql_args_from_url_redacts_nothing_but_parses_components():
         "database": "db",
         "logmech": "LDAP",
     }
+
+
+def test_summarise_error_removes_driver_stack():
+    assert _summarise_error("Teradata error.\n at driver stack") == "Teradata error."
 
 
 class StubAdapter:

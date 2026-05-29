@@ -25,6 +25,9 @@ class DatabaseAdapter(Protocol):
     def fetch_all(self, sql: str) -> list[dict[str, object]]:
         """Run SQL and return rows as dictionaries."""
 
+    def execute(self, sql: str) -> None:
+        """Execute a non-query SQL statement."""
+
 
 def run_test_case(adapter: DatabaseAdapter, test_case: TestCase) -> TestResult:
     try:

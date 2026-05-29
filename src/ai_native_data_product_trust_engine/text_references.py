@@ -218,7 +218,8 @@ def _find_source_issues(
 ) -> list[dict[str, object]]:
     findings: list[dict[str, object]] = []
     for row in rows:
-        row_key = _row_key(source, row)
+        key_values = _key_values(source, row)
+        row_key = _row_key(key_values)
         for column_name in source.text_columns:
             value = row.get(column_name)
             if value is None:
@@ -230,6 +231,7 @@ def _find_source_issues(
                         "table_name": source.table_name,
                         "column_name": column_name,
                         "row_key": row_key,
+                        "key_values": key_values,
                         "token": issue.token,
                         "replacement": issue.replacement,
                         "classification": issue.classification.value,
@@ -239,10 +241,12 @@ def _find_source_issues(
     return findings
 
 
-def _row_key(source: TextMetadataSource, row: dict[str, object]) -> str:
+def _key_values(source: TextMetadataSource, row: dict[str, object]) -> dict[str, object]:
+    return {column_name: row[column_name] for column_name in source.key_columns if row.get(column_name) is not None}
+
+
+def _row_key(key_values: dict[str, object]) -> str:
     parts = []
-    for column_name in source.key_columns:
-        value = row.get(column_name)
-        if value is not None:
-            parts.append(f"{column_name}={value}")
+    for column_name, value in key_values.items():
+        parts.append(f"{column_name}={value}")
     return "; ".join(parts)

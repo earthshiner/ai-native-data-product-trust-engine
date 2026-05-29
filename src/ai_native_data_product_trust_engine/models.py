@@ -38,6 +38,8 @@ class ExpectedResult(str, Enum):
 
 
 class TestStatus(str, Enum):
+    __test__ = False
+
     PASSED = "PASSED"
     FAILED = "FAILED"
     ERROR = "ERROR"
