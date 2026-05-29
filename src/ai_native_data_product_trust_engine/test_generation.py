@@ -109,4 +109,87 @@ WHERE COALESCE(is_active, 1) = 1;
             expected=ExpectedResult.NON_EMPTY,
             repair_strategy="Flag recipes without SQL templates as metadata defects.",
         ),
+        TestCase(
+            test_id=f"{prefix.upper()}-PERF-001",
+            name="Relationship join columns have valid optimiser statistics",
+            category=TestCategory.PERFORMANCE,
+            severity=TestSeverity.WARNING,
+            sql=f"""
+WITH required_stats AS
+(
+    SELECT DISTINCT
+        tr.source_database AS database_name
+       ,tr.source_table AS table_name
+       ,tr.source_column AS column_name
+       ,tr.relationship_name
+       ,'RELATIONSHIP_SOURCE_JOIN' AS usage_type
+    FROM {sem_db}.table_relationship tr
+    WHERE COALESCE(tr.is_active, 1) = 1
+      AND tr.source_database IS NOT NULL
+      AND tr.source_table IS NOT NULL
+      AND tr.source_column IS NOT NULL
+    UNION
+    SELECT DISTINCT
+        tr.target_database AS database_name
+       ,tr.target_table AS table_name
+       ,tr.target_column AS column_name
+       ,tr.relationship_name
+       ,'RELATIONSHIP_TARGET_JOIN' AS usage_type
+    FROM {sem_db}.table_relationship tr
+    WHERE COALESCE(tr.is_active, 1) = 1
+      AND tr.target_database IS NOT NULL
+      AND tr.target_table IS NOT NULL
+      AND tr.target_column IS NOT NULL
+),
+deployed_columns AS
+(
+    SELECT
+        rs.database_name
+       ,rs.table_name
+       ,rs.column_name
+       ,rs.relationship_name
+       ,rs.usage_type
+    FROM required_stats rs
+    INNER JOIN DBC.ColumnsV colv
+        ON colv.DatabaseName = rs.database_name
+       AND colv.TableName = rs.table_name
+       AND colv.ColumnName = rs.column_name
+),
+valid_column_stats AS
+(
+    SELECT
+        statv.DatabaseName AS database_name
+       ,statv.TableName AS table_name
+       ,statv.ColumnName AS stats_columns
+       ,statv.LastCollectTimeStamp AS last_collect_timestamp
+    FROM DBC.ColumnStatsV statv
+    WHERE statv.ValidStats = 'Y'
+)
+SELECT
+    dc.database_name
+   ,dc.table_name
+   ,dc.column_name
+   ,dc.relationship_name
+   ,dc.usage_type
+   ,'MISSING_JOIN_COLUMN_STATS' AS issue_code
+   ,'COLLECT STATISTICS COLUMN (' || dc.column_name || ') ON '
+        || dc.database_name || '.' || dc.table_name || ';' AS repair_hint
+FROM deployed_columns dc
+LEFT OUTER JOIN valid_column_stats vcs
+    ON vcs.database_name = dc.database_name
+   AND vcs.table_name = dc.table_name
+   AND POSITION(
+        ',' || UPPER(TRIM(dc.column_name)) || ','
+        IN ',' || UPPER(
+            OREPLACE(OREPLACE(OREPLACE(vcs.stats_columns, ' ', ''), '(', ''), ')', '')
+        ) || ','
+   ) > 0
+WHERE vcs.stats_columns IS NULL
+ORDER BY dc.database_name, dc.table_name, dc.column_name, dc.relationship_name;
+""".strip(),
+            expected_result="Returns zero rows for relationship join columns without valid statistics.",
+            repair_strategy=(
+                "Collect or refresh optimiser statistics on relationship join columns."
+            ),
+        ),
     ]

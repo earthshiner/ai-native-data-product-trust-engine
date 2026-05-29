@@ -16,9 +16,22 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-SEM-002",
         "CALLCENTRE-SEM-003",
         "CALLCENTRE-QUERY-001",
+        "CALLCENTRE-PERF-001",
     ]
     assert all("CallCentre_" in test.sql for test in tests)
-    assert tests[-1].expected == ExpectedResult.NON_EMPTY
+    assert tests[3].expected == ExpectedResult.NON_EMPTY
+
+
+def test_generate_metadata_tests_includes_statistics_coverage_contract():
+    tests = generate_metadata_tests("CallCentre")
+    stats_test = next(test for test in tests if test.test_id == "CALLCENTRE-PERF-001")
+
+    assert stats_test.category == TestCategory.PERFORMANCE
+    assert stats_test.severity == TestSeverity.WARNING
+    assert "FROM DBC.ColumnStatsV statv" in stats_test.sql
+    assert "DBC.ColumnStatsV cs" not in stats_test.sql
+    assert "MISSING_JOIN_COLUMN_STATS" in stats_test.sql
+    assert "COLLECT STATISTICS COLUMN" in stats_test.sql
 
 
 def test_generate_tests_cli_includes_free_text_cases(capsys):
