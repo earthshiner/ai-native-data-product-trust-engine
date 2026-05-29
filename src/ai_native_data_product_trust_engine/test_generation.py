@@ -93,6 +93,66 @@ WHERE COALESCE(tr.is_active, 1) = 1
             repair_strategy="Repair or deactivate invalid relationship rows before generating joins.",
         ),
         TestCase(
+            test_id=f"{prefix.upper()}-STRUCT-001",
+            name="Similar column names use consistent datatypes",
+            category=TestCategory.STRUCTURAL,
+            severity=TestSeverity.WARNING,
+            sql=f"""
+WITH product_columns AS
+(
+    SELECT
+        UPPER(OREPLACE(TRIM(colv.ColumnName), '_', '')) AS normalised_column_name
+       ,TRIM(colv.DatabaseName) AS database_name
+       ,TRIM(colv.TableName) AS table_name
+       ,TRIM(colv.ColumnName) AS column_name
+       ,TRIM(colv.ColumnType) AS column_type
+       ,colv.ColumnLength AS column_length
+       ,colv.DecimalTotalDigits AS decimal_total_digits
+       ,colv.DecimalFractionalDigits AS decimal_fractional_digits
+       ,TRIM(colv.ColumnType)
+            || ':' || CAST(COALESCE(colv.ColumnLength, 0) AS VARCHAR(20))
+            || ':' || CAST(COALESCE(colv.DecimalTotalDigits, 0) AS VARCHAR(20))
+            || ':' || CAST(COALESCE(colv.DecimalFractionalDigits, 0) AS VARCHAR(20))
+            AS type_signature
+    FROM DBC.ColumnsV colv
+    INNER JOIN DBC.TablesV tv
+        ON tv.DatabaseName = colv.DatabaseName
+       AND tv.TableName = colv.TableName
+    WHERE colv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+      AND tv.TableKind IN ('T', 'V')
+),
+drifted_names AS
+(
+    SELECT
+        normalised_column_name
+    FROM product_columns
+    GROUP BY normalised_column_name
+    HAVING COUNT(DISTINCT type_signature) > 1
+)
+SELECT
+    pc.normalised_column_name
+   ,pc.database_name
+   ,pc.table_name
+   ,pc.column_name
+   ,pc.column_type
+   ,pc.column_length
+   ,pc.decimal_total_digits
+   ,pc.decimal_fractional_digits
+   ,pc.type_signature
+   ,'COLUMN_TYPE_DRIFT' AS issue_code
+   ,'Align datatype, length, precision and scale for same/similar columns.' AS repair_hint
+FROM product_columns pc
+INNER JOIN drifted_names dn
+    ON dn.normalised_column_name = pc.normalised_column_name
+ORDER BY pc.normalised_column_name, pc.column_name, pc.database_name, pc.table_name;
+""".strip(),
+            expected_result="Returns zero rows.",
+            repair_strategy=(
+                "Review same/similar column names with different physical type signatures. "
+                "Align datatypes where they participate in joins, filters or generated SQL."
+            ),
+        ),
+        TestCase(
             test_id=f"{prefix.upper()}-QUERY-001",
             name="Active cookbook recipes exist and are ready for SQL validation",
             category=TestCategory.QUERY,

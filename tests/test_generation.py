@@ -15,10 +15,12 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-SEM-001",
         "CALLCENTRE-SEM-002",
         "CALLCENTRE-SEM-003",
+        "CALLCENTRE-STRUCT-001",
         "CALLCENTRE-QUERY-001",
     ]
-    assert all("CallCentre_" in test.sql for test in tests)
+    assert all("CallCentre" in test.sql for test in tests)
     assert tests[-1].expected == ExpectedResult.NON_EMPTY
+    assert "COUNT(DISTINCT type_signature) > 1" in tests[3].sql
 
 
 def test_generate_tests_cli_includes_free_text_cases(capsys):
