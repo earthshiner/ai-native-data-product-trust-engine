@@ -17,10 +17,22 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-SEM-003",
         "CALLCENTRE-STRUCT-001",
         "CALLCENTRE-QUERY-001",
+        "CALLCENTRE-STRUCT-002",
     ]
     assert all("CallCentre" in test.sql for test in tests)
-    assert tests[-1].expected == ExpectedResult.NON_EMPTY
+    assert tests[4].expected == ExpectedResult.NON_EMPTY
     assert "COUNT(DISTINCT type_signature) > 1" in tests[3].sql
+
+
+def test_generate_metadata_tests_includes_table_skew_contract():
+    tests = generate_metadata_tests("CallCentre")
+    table_skew_test = next(test for test in tests if test.test_id == "CALLCENTRE-STRUCT-002")
+
+    assert table_skew_test.test_id == "CALLCENTRE-STRUCT-002"
+    assert table_skew_test.severity == TestSeverity.WARNING
+    assert "FROM DBC.TableSizeV tsv" in table_skew_test.sql
+    assert "HASHROW(Tablename)" not in table_skew_test.sql
+    assert "skew_percent > 20" in table_skew_test.sql
 
 
 def test_generate_tests_cli_includes_free_text_cases(capsys):
