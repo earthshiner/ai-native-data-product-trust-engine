@@ -1,4 +1,4 @@
-"""Validate deployed view contracts through Teradata-resolved column metadata."""
+"""Validate deployed view contracts through Teradata-resolved metadata."""
 
 from __future__ import annotations
 
@@ -27,7 +27,38 @@ def view_contract_test_cases(prefix: str) -> list[TestCase]:
                 "Repair the view definition, refresh dependent source objects, or update stale "
                 "view metadata before publishing the data product."
             ),
-        )
+        ),
+        TestCase(
+            test_id=f"{prefix.upper()}-STD-VIEW-1TO1",
+            name="Standard views are thin 1:1 table contracts",
+            category=TestCategory.STRUCTURAL,
+            severity=TestSeverity.CRITICAL,
+            sql=_standard_view_inventory_sql(prefix),
+            expected_result=(
+                "Every %_STD_V view is a LOCKING ROW FOR ACCESS 1:1 projection over its "
+                "matching %_STD_T table."
+            ),
+            expected=ExpectedResult.NON_EMPTY,
+            repair_strategy=(
+                "Move predicates and transformations to the business view layer. Keep %_STD_V "
+                "views as explicit column-list 1:1 projections over the matching table."
+            ),
+        ),
+        TestCase(
+            test_id=f"{prefix.upper()}-BUS-VIEW-SOURCES",
+            name="Business views select from standard views",
+            category=TestCategory.STRUCTURAL,
+            severity=TestSeverity.CRITICAL,
+            sql=_business_view_inventory_sql(prefix),
+            expected_result=(
+                "Every %_BUS_V view selects from %_STD_V views, not directly from tables."
+            ),
+            expected=ExpectedResult.NON_EMPTY,
+            repair_strategy=(
+                "Change %_BUS_V views to select from the corresponding %_STD_V access view "
+                "instead of selecting directly from %_STD_T tables."
+            ),
+        ),
     ]
 
 
@@ -35,7 +66,20 @@ def run_view_contract_validations(prefix: str, adapter) -> list[TestResult]:
     view_rows = adapter.fetch_all(_product_views_sql(prefix))
     if not view_rows:
         return [_missing_inventory_result(prefix)]
-    return [_run_view_validation(prefix, adapter, row) for row in view_rows]
+    results = [_run_view_validation(prefix, adapter, row) for row in view_rows]
+    results.extend(_run_standard_view_contract_validations(prefix, adapter))
+    results.extend(_run_business_view_source_validations(prefix, adapter))
+    return results
+
+
+def _run_standard_view_contract_validations(prefix: str, adapter) -> list[TestResult]:
+    view_rows = adapter.fetch_all(_standard_view_inventory_sql(prefix))
+    return [_run_standard_view_contract_validation(prefix, adapter, row) for row in view_rows]
+
+
+def _run_business_view_source_validations(prefix: str, adapter) -> list[TestResult]:
+    view_rows = adapter.fetch_all(_business_view_inventory_sql(prefix))
+    return [_run_business_view_source_validation(prefix, row) for row in view_rows]
 
 
 def _run_view_validation(prefix: str, adapter, row: dict[str, object]) -> TestResult:
@@ -54,7 +98,8 @@ def _run_view_validation(prefix: str, adapter, row: dict[str, object]) -> TestRe
             "and predicates."
         ),
         repair_strategy=(
-            "Repair the view DDL or dependent object contract, then re-run view contract validation."
+            "Repair the view DDL or dependent object contract, then re-run view contract "
+            "validation."
         ),
     )
 
@@ -92,6 +137,103 @@ def _run_view_validation(prefix: str, adapter, row: dict[str, object]) -> TestRe
     )
 
 
+def _run_standard_view_contract_validation(
+    prefix: str,
+    adapter,
+    row: dict[str, object],
+) -> TestResult:
+    database_name = str(row.get("database_name") or row.get("DatabaseName") or "").strip()
+    view_name = str(row.get("view_name") or row.get("TableName") or "").strip()
+    view_text = str(row.get("view_text") or row.get("RequestText") or "")
+    base_database_name = database_name.removesuffix("_STD_V") + "_STD_T"
+    violations = _standard_view_text_violations(database_name, view_name, view_text)
+    violations.extend(
+        _standard_view_column_violations(
+            adapter,
+            database_name,
+            view_name,
+            base_database_name,
+        )
+    )
+    test_case = TestCase(
+        test_id=f"{prefix.upper()}-STD-VIEW-1TO1-{database_name}.{view_name}",
+        name=f"Standard view is 1:1: {database_name}.{view_name}",
+        category=TestCategory.STRUCTURAL,
+        severity=TestSeverity.CRITICAL,
+        sql=view_text,
+        expected_result=(
+            "Standard view has an explicit column list, LOCKING ROW FOR ACCESS, no business "
+            "logic, and columns matching the source table ColumnId order."
+        ),
+        repair_strategy=(
+            "Keep the %_STD_V object as a 1:1 access view over the table. Move predicates or "
+            "transformations to a %_BUS_V view that selects from the %_STD_V view."
+        ),
+    )
+    if violations:
+        return TestResult(
+            test_case=test_case,
+            status=TestStatus.FAILED,
+            row_count=len(violations),
+            sample_rows=violations[:10],
+        )
+    return TestResult(
+        test_case=test_case,
+        status=TestStatus.PASSED,
+        row_count=0,
+        sample_rows=[
+            {
+                "database_name": database_name,
+                "view_name": view_name,
+                "base_database_name": base_database_name,
+                "base_table_name": view_name,
+                "validation_mode": "STD_VIEW_1TO1",
+            }
+        ],
+    )
+
+
+def _run_business_view_source_validation(
+    prefix: str,
+    row: dict[str, object],
+) -> TestResult:
+    database_name = str(row.get("database_name") or row.get("DatabaseName") or "").strip()
+    view_name = str(row.get("view_name") or row.get("TableName") or "").strip()
+    view_text = str(row.get("view_text") or row.get("RequestText") or "")
+    violations = _business_view_source_violations(database_name, view_name, view_text)
+    test_case = TestCase(
+        test_id=f"{prefix.upper()}-BUS-VIEW-SOURCES-{database_name}.{view_name}",
+        name=f"Business view sources are standard views: {database_name}.{view_name}",
+        category=TestCategory.STRUCTURAL,
+        severity=TestSeverity.CRITICAL,
+        sql=view_text,
+        expected_result="Business views select from %_STD_V access views, not %_STD_T tables.",
+        repair_strategy=(
+            "Change the business view to select from the corresponding %_STD_V view. Keep "
+            "business predicates and transformations in %_BUS_V."
+        ),
+    )
+    if violations:
+        return TestResult(
+            test_case=test_case,
+            status=TestStatus.FAILED,
+            row_count=len(violations),
+            sample_rows=violations[:10],
+        )
+    return TestResult(
+        test_case=test_case,
+        status=TestStatus.PASSED,
+        row_count=0,
+        sample_rows=[
+            {
+                "database_name": database_name,
+                "view_name": view_name,
+                "validation_mode": "BUS_VIEW_SOURCES",
+            }
+        ],
+    )
+
+
 def _missing_inventory_result(prefix: str) -> TestResult:
     test_case = view_contract_test_cases(prefix)[0]
     return TestResult(
@@ -123,6 +265,182 @@ ORDER BY DatabaseName, TableName
 """.strip()
 
 
+def _standard_view_inventory_sql(prefix: str) -> str:
+    escaped_prefix = prefix.replace("'", "''")
+    return f"""
+SELECT
+    TRIM(DatabaseName) AS database_name
+   ,TRIM(TableName) AS view_name
+   ,COALESCE(RequestText, '') AS view_text
+FROM DBC.TablesV
+WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_STD\\_V' ESCAPE '\\'
+  AND TableKind = 'V'
+ORDER BY DatabaseName, TableName
+""".strip()
+
+
+def _business_view_inventory_sql(prefix: str) -> str:
+    escaped_prefix = prefix.replace("'", "''")
+    return f"""
+SELECT
+    TRIM(DatabaseName) AS database_name
+   ,TRIM(TableName) AS view_name
+   ,COALESCE(RequestText, '') AS view_text
+FROM DBC.TablesV
+WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_BUS\\_V' ESCAPE '\\'
+  AND TableKind = 'V'
+ORDER BY DatabaseName, TableName
+""".strip()
+
+
+def _standard_view_column_contract_sql(
+    view_database_name: str,
+    view_name: str,
+    base_database_name: str,
+) -> str:
+    return f"""
+WITH view_cols AS
+(
+    SELECT
+        ColumnId AS column_id
+       ,TRIM(ColumnName) AS column_name
+    FROM DBC.ColumnsV
+    WHERE DatabaseName = '{_sql_string_value(view_database_name)}'
+      AND TableName = '{_sql_string_value(view_name)}'
+),
+table_cols AS
+(
+    SELECT
+        ColumnId AS column_id
+       ,TRIM(ColumnName) AS column_name
+    FROM DBC.ColumnsV
+    WHERE DatabaseName = '{_sql_string_value(base_database_name)}'
+      AND TableName = '{_sql_string_value(view_name)}'
+)
+SELECT
+    COALESCE(vc.column_id, tc.column_id) AS column_id
+   ,vc.column_name AS view_column_name
+   ,tc.column_name AS table_column_name
+FROM view_cols vc
+FULL OUTER JOIN table_cols tc
+    ON tc.column_id = vc.column_id
+WHERE vc.column_name IS NULL
+   OR tc.column_name IS NULL
+   OR vc.column_name <> tc.column_name
+ORDER BY 1
+""".strip()
+
+
+def _standard_view_text_violations(
+    database_name: str,
+    view_name: str,
+    view_text: str,
+) -> list[dict[str, object]]:
+    normalised = " ".join(view_text.upper().split())
+    violations: list[dict[str, object]] = []
+    if "LOCKING ROW FOR ACCESS" not in normalised:
+        violations.append(_standard_view_violation(database_name, view_name, "MISSING_LOCKING_ROW"))
+    if "SELECT *" in normalised:
+        violations.append(_standard_view_violation(database_name, view_name, "SELECT_STAR"))
+    if not _has_explicit_view_column_list(normalised):
+        violations.append(
+            _standard_view_violation(database_name, view_name, "MISSING_VIEW_COLUMN_LIST")
+        )
+    for token in _BUSINESS_LAYER_TOKENS:
+        if token in normalised:
+            violations.append(
+                _standard_view_violation(
+                    database_name,
+                    view_name,
+                    "BUSINESS_LOGIC_IN_STD_VIEW",
+                    token,
+                )
+            )
+    return violations
+
+
+def _standard_view_column_violations(
+    adapter,
+    database_name: str,
+    view_name: str,
+    base_database_name: str,
+) -> list[dict[str, object]]:
+    rows = adapter.fetch_all(
+        _standard_view_column_contract_sql(database_name, view_name, base_database_name)
+    )
+    return [
+        {
+            "issue_code": "STD_VIEW_COLUMN_ORDER_MISMATCH",
+            "repair_hint": (
+                "Recreate the %_STD_V view with an explicit column list and SELECT columns in "
+                "the same ColumnId order as the matching %_STD_T table."
+            ),
+            "database_name": database_name,
+            "view_name": view_name,
+            "base_database_name": base_database_name,
+            "base_table_name": view_name,
+            "column_id": row.get("column_id"),
+            "view_column_name": row.get("view_column_name"),
+            "table_column_name": row.get("table_column_name"),
+        }
+        for row in rows
+    ]
+
+
+def _standard_view_violation(
+    database_name: str,
+    view_name: str,
+    issue_code: str,
+    evidence: str | None = None,
+) -> dict[str, object]:
+    row = {
+        "issue_code": issue_code,
+        "repair_hint": _standard_view_repair_hint(issue_code),
+        "database_name": database_name,
+        "view_name": view_name,
+    }
+    if evidence:
+        row["evidence"] = evidence
+    return row
+
+
+def _business_view_source_violations(
+    database_name: str,
+    view_name: str,
+    view_text: str,
+) -> list[dict[str, object]]:
+    normalised = " ".join(view_text.upper().split())
+    if "_STD_T" not in normalised:
+        return []
+    return [
+        {
+            "issue_code": "BUS_VIEW_SELECTS_TABLE_DIRECTLY",
+            "repair_hint": (
+                "Change the %_BUS_V view to select from the corresponding %_STD_V access view "
+                "instead of selecting directly from a %_STD_T table."
+            ),
+            "database_name": database_name,
+            "view_name": view_name,
+            "evidence": "_STD_T",
+        }
+    ]
+
+
+def _standard_view_repair_hint(issue_code: str) -> str:
+    hints = {
+        "MISSING_LOCKING_ROW": "Add LOCKING ROW FOR ACCESS to the 1:1 access view.",
+        "SELECT_STAR": (
+            "Replace SELECT * with an explicit column projection in table ColumnId order."
+        ),
+        "MISSING_VIEW_COLUMN_LIST": "Declare the view column list before AS as the agent contract.",
+        "BUSINESS_LOGIC_IN_STD_VIEW": (
+            "Move predicates or transformations to a %_BUS_V view that selects from the %_STD_V "
+            "view."
+        ),
+    }
+    return hints.get(issue_code, "Recreate the view as a thin 1:1 access view.")
+
+
 def _qualified_name(database_name: str, object_name: str) -> str:
     return f"{_quote_identifier(database_name)}.{_quote_identifier(object_name)}"
 
@@ -139,3 +457,37 @@ HELP COLUMN dt.* FROM (
 
 def _quote_identifier(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
+
+
+def _sql_string_value(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def _has_explicit_view_column_list(normalised_view_text: str) -> bool:
+    before_as = normalised_view_text.split(" AS ", maxsplit=1)[0]
+    return "(" in before_as and ")" in before_as
+
+
+_BUSINESS_LAYER_TOKENS = (
+    " WHERE ",
+    " JOIN ",
+    " GROUP BY ",
+    " HAVING ",
+    " QUALIFY ",
+    " ORDER BY ",
+    " UNION ",
+    " INTERSECT ",
+    " EXCEPT ",
+    " MINUS ",
+    " CASE ",
+    " CAST(",
+    " COALESCE(",
+    " OREPLACE(",
+    " TRIM(",
+    " SUBSTR(",
+    " SUM(",
+    " COUNT(",
+    " AVG(",
+    " MIN(",
+    " MAX(",
+)
