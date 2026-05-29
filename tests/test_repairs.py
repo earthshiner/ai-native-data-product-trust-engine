@@ -39,6 +39,30 @@ def test_generate_repair_candidates_creates_safe_text_update():
     assert "CURRENT_DATE AS valid_from" in candidates[0].sql
 
 
+def test_generate_repair_candidates_creates_safe_data_product_map_insert():
+    run = _run_with_sample(
+        {
+            "module_name": "Memory",
+            "database_pattern": "CallCentre_MEM_%",
+            "representative_database_name": "CallCentre_MEM_STD_V",
+            "semantic_database_name": "CallCentre_SEM_STD_V",
+            "issue_code": "MISSING_DATA_PRODUCT_MAP_MODULE",
+            "safe_auto_apply": True,
+        },
+        test_id="CALLCENTRE-SEM-004",
+    )
+
+    candidates = generate_repair_candidates(run)
+
+    assert len(candidates) == 1
+    assert candidates[0].requires_approval is False
+    assert candidates[0].issue_code == "MISSING_DATA_PRODUCT_MAP_MODULE"
+    assert "INSERT INTO CallCentre_SEM_STD_T.data_product_map" in candidates[0].sql
+    assert "'Memory' AS module_name" in candidates[0].sql
+    assert "'CallCentre_MEM_STD_V' AS database_name" in candidates[0].sql
+    assert "WHERE NOT EXISTS" in candidates[0].sql
+
+
 def test_write_repair_reports_outputs_safe_sql(tmp_path):
     candidates = generate_repair_candidates(
         _run_with_sample(
@@ -120,7 +144,7 @@ class StubAdapter:
         self.executed_sql.append(sql)
 
 
-def _run_with_sample(sample):
+def _run_with_sample(sample, test_id="CALLCENTRE-TEXT-004"):
     return ValidationRun(
         prefix="CallCentre",
         started_at="2026-01-01T00:00:00+00:00",
@@ -128,7 +152,7 @@ def _run_with_sample(sample):
         results=[
             TestResult(
                 test_case=TestCase(
-                    test_id="CALLCENTRE-TEXT-004",
+                    test_id=test_id,
                     name="Query cookbook free-text references are current",
                     category=TestCategory.FREE_TEXT,
                     severity=TestSeverity.WARNING,

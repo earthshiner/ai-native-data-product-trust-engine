@@ -93,6 +93,62 @@ WHERE COALESCE(tr.is_active, 1) = 1
             repair_strategy="Repair or deactivate invalid relationship rows before generating joins.",
         ),
         TestCase(
+            test_id=f"{prefix.upper()}-SEM-004",
+            name="Deployed modules are registered in data_product_map",
+            category=TestCategory.SEMANTIC,
+            severity=TestSeverity.CRITICAL,
+            sql=f"""
+WITH deployed_modules AS
+(
+    SELECT
+        CASE
+            WHEN tv.DatabaseName LIKE '{prefix}_DOM\\_%' ESCAPE '\\' THEN 'Domain'
+            WHEN tv.DatabaseName LIKE '{prefix}_SEM\\_%' ESCAPE '\\' THEN 'Semantic'
+            WHEN tv.DatabaseName LIKE '{prefix}_SCH\\_%' ESCAPE '\\' THEN 'Search'
+            WHEN tv.DatabaseName LIKE '{prefix}_PRE\\_%' ESCAPE '\\' THEN 'Prediction'
+            WHEN tv.DatabaseName LIKE '{prefix}_MEM\\_%' ESCAPE '\\' THEN 'Memory'
+            WHEN tv.DatabaseName LIKE '{prefix}_OBS\\_%' ESCAPE '\\' THEN 'Observability'
+            ELSE NULL
+        END AS module_name
+       ,CASE
+            WHEN tv.DatabaseName LIKE '{prefix}_DOM\\_%' ESCAPE '\\' THEN '{prefix}_DOM_%'
+            WHEN tv.DatabaseName LIKE '{prefix}_SEM\\_%' ESCAPE '\\' THEN '{prefix}_SEM_%'
+            WHEN tv.DatabaseName LIKE '{prefix}_SCH\\_%' ESCAPE '\\' THEN '{prefix}_SCH_%'
+            WHEN tv.DatabaseName LIKE '{prefix}_PRE\\_%' ESCAPE '\\' THEN '{prefix}_PRE_%'
+            WHEN tv.DatabaseName LIKE '{prefix}_MEM\\_%' ESCAPE '\\' THEN '{prefix}_MEM_%'
+            WHEN tv.DatabaseName LIKE '{prefix}_OBS\\_%' ESCAPE '\\' THEN '{prefix}_OBS_%'
+            ELSE NULL
+        END AS database_pattern
+       ,MIN(tv.DatabaseName) AS representative_database_name
+       ,COUNT(DISTINCT tv.DatabaseName) AS deployed_database_count
+    FROM DBC.TablesV tv
+    WHERE tv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+      AND tv.TableKind IN ('T', 'V')
+    GROUP BY 1, 2
+)
+SELECT
+    dm.module_name
+   ,dm.database_pattern
+   ,dm.representative_database_name
+   ,dm.deployed_database_count
+   ,'{prefix}_SEM_STD_V' AS semantic_database_name
+   ,'MISSING_DATA_PRODUCT_MAP_MODULE' AS issue_code
+   ,'Insert an active data_product_map row for the deployed module.' AS repair_hint
+   ,1 AS safe_auto_apply
+FROM deployed_modules dm
+LEFT OUTER JOIN {sem_db}.data_product_map dpm
+    ON COALESCE(dpm.is_active, 1) = 1
+   AND (
+        UPPER(dpm.module_name) = UPPER(dm.module_name)
+        OR dpm.database_name LIKE dm.database_pattern
+   )
+WHERE dm.module_name IS NOT NULL
+  AND dpm.module_name IS NULL;
+""".strip(),
+            expected_result="Returns zero rows.",
+            repair_strategy="Insert a missing active data_product_map row for deterministically inferred deployed modules.",
+        ),
+        TestCase(
             test_id=f"{prefix.upper()}-QUERY-001",
             name="Active cookbook recipes exist and are ready for SQL validation",
             category=TestCategory.QUERY,
