@@ -57,6 +57,7 @@ def test_run_test_case_fails_non_empty_expectation():
 
 def test_validate_cli_writes_report(monkeypatch, tmp_path):
     report_path = tmp_path / "report.json"
+    html_path = tmp_path / "report.html"
 
     monkeypatch.setattr(
         "ai_native_data_product_trust_engine.cli.adapter_from_environment",
@@ -67,11 +68,22 @@ def test_validate_cli_writes_report(monkeypatch, tmp_path):
         lambda prefix: [_test_case(ExpectedResult.ZERO_ROWS)],
     )
 
-    exit_code = main(["validate", "--prefix", "CallCentre", "--output", str(report_path)])
+    exit_code = main(
+        [
+            "validate",
+            "--prefix",
+            "CallCentre",
+            "--output",
+            str(report_path),
+            "--html-output",
+            str(html_path),
+        ]
+    )
 
     assert exit_code == 0
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload["summary"]["passed"] == 9
+    assert "CallCentre trust report" in html_path.read_text(encoding="utf-8")
 
 
 def test_teradatasql_args_from_url_redacts_nothing_but_parses_components():
