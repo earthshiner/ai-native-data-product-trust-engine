@@ -76,10 +76,12 @@ During local development, run from the repository root with `src` on `PYTHONPATH
 $env:PYTHONPATH='src'
 python -m ai_native_data_product_trust_engine generate-tests --prefix CallCentre
 python -m ai_native_data_product_trust_engine validate --prefix CallCentre --output reports\callcentre-validation.json
+python -m ai_native_data_product_trust_engine validate --prefix CallCentre --output reports\callcentre-validation.json --html-output reports\callcentre-validation.html
 ```
 
-Live validation currently uses `DATABASE_URI` by default and writes JSON validation evidence.
-Generated reports are local artifacts and are not committed.
+Live validation currently uses `DATABASE_URI` by default and writes JSON validation evidence. Use
+`--html-output` to also create a standalone interactive HTML report for human review. Generated
+reports are local artifacts and are not committed.
 
 ## First Working Slice
 
@@ -119,6 +121,21 @@ free-text alias replacements, and reports permission failures without hiding the
 validation evidence. For temporal metadata tables such as `Query_Cookbook`, generated repairs
 expire the current row and insert a corrected successor row rather than mutating the current record
 in place.
+
+The optional HTML report is the human-facing companion to the JSON evidence. It uses Teradata brand
+colours, concise scorecards, filterable validation results, repair posture summaries and embedded
+structured evidence so users can scan the current trust position and decide what to fix next.
+Failure rows show a concise backend error and a suggested next step first; raw stack traces remain in
+the structured JSON evidence for agents and deeper diagnostics.
+When multiple validation failures share the same missing column, the report correlates them and
+lists the affected product views or other dependent objects to recreate/test first. This lets users
+move from a broken recipe to the likely impacted view-layer contract without reading raw SQL or
+driver stack traces.
+
+To quarantine a broken recipe, retire the active `Query_Cookbook` row rather than deleting it:
+set `is_active = 0`, close `valid_to`, and preserve the row for audit/history. A corrected successor
+recipe can then be inserted when the SQL contract is repaired. Quarantined recipes stay visible in
+history but are excluded from active recipe validation and agent selection.
 
 ## Repository Status
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ai_native_data_product_trust_engine.adapters import adapter_from_environment
 from ai_native_data_product_trust_engine.capabilities import capability_test_cases
+from ai_native_data_product_trust_engine.html_reports import write_html_report
 from ai_native_data_product_trust_engine.query_templates import query_template_test_cases
 from ai_native_data_product_trust_engine.reports import write_json_report
 from ai_native_data_product_trust_engine.repairs import (
@@ -40,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
                 type=Path,
                 default=Path("trust-report.json"),
                 help="Path for JSON validation evidence.",
+            )
+            subparser.add_argument(
+                "--html-output",
+                type=Path,
+                help="Optional path for a standalone interactive HTML report.",
             )
             subparser.add_argument(
                 "--repair-mode",
@@ -87,6 +93,9 @@ def main(argv: list[str] | None = None) -> int:
                         f"[ADPTrust.RepairApplyFailed] {application.candidate.candidate_id}. "
                         f"{_summarise_error(application.error_message)}"
                     )
+        if args.html_output:
+            write_html_report(run, args.html_output, repair_candidates)
+            print(f"HTML report: {args.html_output}")
         print(
             f"Validation complete: {run.passed_count} passed, "
             f"{run.failed_count} failed, {run.error_count} errors. "
