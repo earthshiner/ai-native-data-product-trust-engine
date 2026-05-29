@@ -111,6 +111,13 @@ against a zero-row subquery for each view. Teradata resolves the view and return
 output-column metadata, validating that source objects, projected columns, join columns, aliases and
 predicates still compile without scanning business data.
 
+Standard view-layer validation enforces `%_STD_V` as a thin 1:1 agent contract over `%_STD_T`
+tables. A standard view must declare its view column list before `AS`, use `LOCKING ROW FOR ACCESS`,
+avoid `SELECT *`, avoid predicates, joins, aggregations and transformations, and project columns in
+the same `ColumnId` order as the matching table. Business logic belongs in `%_BUS_V` views, and
+those business views must select from `%_STD_V` access views rather than directly from `%_STD_T`
+tables.
+
 The first capability registry primitive discovers native VECTOR and fallback embedding evidence
 from deployed objects. It reports capability inventory and fails alignment when active cookbook
 metadata references native VECTOR behaviour while the product only has fallback embedding evidence.

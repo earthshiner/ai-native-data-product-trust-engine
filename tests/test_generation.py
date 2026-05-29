@@ -117,6 +117,8 @@ class ValidationStubAdapter:
             return [{"Explain": "ok"}]
         if sql.startswith("HELP COLUMN"):
             return [{"Column Name": "call_id"}]
+        if "COALESCE(RequestText" in sql:
+            return []
         if "FROM DBC.TablesV" in sql and "TableKind = 'V'" in sql:
             return [
                 {
