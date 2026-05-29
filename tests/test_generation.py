@@ -15,6 +15,7 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-SEM-001",
         "CALLCENTRE-SEM-002",
         "CALLCENTRE-SEM-003",
+        "CALLCENTRE-SEM-004",
         "CALLCENTRE-QUERY-001",
     ]
     assert all("CallCentre_" in test.sql for test in tests)

@@ -7,6 +7,33 @@ from pathlib import Path
 
 from ai_native_data_product_trust_engine.models import RepairMode, TestStatus, ValidationRun
 
+_MODULE_METADATA = {
+    "Domain": {
+        "description": "Core business entities and source of truth.",
+        "purpose": "Business entity storage.",
+    },
+    "Semantic": {
+        "description": "Schema metadata, relationships, and discovery contracts.",
+        "purpose": "Schema knowledge layer.",
+    },
+    "Search": {
+        "description": "Search indexes, embeddings, and similarity retrieval artefacts.",
+        "purpose": "Semantic search and retrieval.",
+    },
+    "Prediction": {
+        "description": "Feature store, model inputs, and prediction outputs.",
+        "purpose": "Predictive feature and inference storage.",
+    },
+    "Memory": {
+        "description": "Agent state, learning, and design memory.",
+        "purpose": "Agent memory and data product documentation.",
+    },
+    "Observability": {
+        "description": "Feedback, events, lineage, and operational monitoring.",
+        "purpose": "Data product observability and feedback.",
+    },
+}
+
 
 @dataclass(frozen=True)
 class RepairCandidate:
@@ -84,6 +111,8 @@ def write_repair_reports(candidates: list[RepairCandidate], output_path: Path) -
 def _candidate_from_sample(test_id: str, sample_row: dict[str, object]) -> RepairCandidate | None:
     if _is_safe_text_alias(sample_row):
         return _safe_text_alias_candidate(test_id, sample_row)
+    if _is_safe_data_product_map_module(sample_row):
+        return _safe_data_product_map_candidate(test_id, sample_row)
 
     issue_code = str(sample_row.get("issue_code") or test_id)
     repair_hint = str(sample_row.get("repair_hint") or "Review the metadata contract and decide the repair.")
@@ -125,6 +154,90 @@ def _safe_text_alias_candidate(test_id: str, sample_row: dict[str, object]) -> R
         test_id=test_id,
         evidence=sample_row,
     )
+
+
+def _is_safe_data_product_map_module(sample_row: dict[str, object]) -> bool:
+    return bool(
+        sample_row.get("safe_auto_apply")
+        and sample_row.get("issue_code") == "MISSING_DATA_PRODUCT_MAP_MODULE"
+        and sample_row.get("module_name") in _MODULE_METADATA
+        and sample_row.get("database_pattern")
+        and sample_row.get("representative_database_name")
+        and sample_row.get("semantic_database_name")
+    )
+
+
+def _safe_data_product_map_candidate(
+    test_id: str,
+    sample_row: dict[str, object],
+) -> RepairCandidate:
+    module_name = str(sample_row["module_name"])
+    sql = _data_product_map_insert_sql(sample_row)
+    return RepairCandidate(
+        candidate_id=_candidate_id(test_id, "MISSING_DATA_PRODUCT_MAP_MODULE", sample_row),
+        issue_code="MISSING_DATA_PRODUCT_MAP_MODULE",
+        summary=(
+            f"Insert active data_product_map entry for deployed {module_name} module "
+            f"({sample_row['database_pattern']})."
+        ),
+        mode=RepairMode.SAFE_AUTO,
+        sql=sql,
+        requires_approval=False,
+        test_id=test_id,
+        evidence=sample_row,
+    )
+
+
+def _data_product_map_insert_sql(sample_row: dict[str, object]) -> str:
+    semantic_database_name = _repair_database_name(str(sample_row["semantic_database_name"]))
+    module_name = str(sample_row["module_name"])
+    module_metadata = _MODULE_METADATA[module_name]
+    database_name = str(sample_row["representative_database_name"])
+    database_pattern = str(sample_row["database_pattern"])
+    return f"""
+INSERT INTO {semantic_database_name}.data_product_map
+(
+    module_name
+   ,module_description
+   ,module_purpose
+   ,database_name
+   ,naming_pattern
+   ,table_prefix
+   ,primary_tables
+   ,primary_views
+   ,module_version
+   ,deployment_status
+   ,deployed_dts
+   ,is_active
+   ,created_at
+   ,updated_at
+)
+SELECT
+    {_sql_string(module_name)} AS module_name
+   ,{_sql_string(module_metadata["description"])} AS module_description
+   ,{_sql_string(module_metadata["purpose"])} AS module_purpose
+   ,{_sql_string(database_name)} AS database_name
+   ,'SEPARATE_DB' AS naming_pattern
+   ,CAST(NULL AS VARCHAR(10)) AS table_prefix
+   ,CAST(NULL AS VARCHAR(500)) AS primary_tables
+   ,CAST(NULL AS VARCHAR(500)) AS primary_views
+   ,CAST(NULL AS VARCHAR(20)) AS module_version
+   ,'DEPLOYED' AS deployment_status
+   ,CURRENT_TIMESTAMP(6) AS deployed_dts
+   ,1 AS is_active
+   ,CURRENT_TIMESTAMP(6) AS created_at
+   ,CURRENT_TIMESTAMP(6) AS updated_at
+WHERE NOT EXISTS
+(
+    SELECT 1
+    FROM {semantic_database_name}.data_product_map dpm
+    WHERE COALESCE(dpm.is_active, 1) = 1
+      AND (
+            UPPER(dpm.module_name) = UPPER({_sql_string(module_name)})
+            OR dpm.database_name LIKE {_sql_string(database_pattern)}
+      )
+);
+""".strip()
 
 
 def _safe_text_repair_sql(sample_row: dict[str, object]) -> str:
@@ -277,6 +390,7 @@ def _candidate_id(test_id: str, issue_code: str, sample_row: dict[str, object]) 
         or sample_row.get("row_key")
         or sample_row.get("missing_object")
         or sample_row.get("missing_column")
+        or sample_row.get("module_name")
         or "metadata"
     )
     raw = f"{test_id}-{issue_code}-{row_id}"

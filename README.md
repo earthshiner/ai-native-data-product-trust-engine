@@ -83,11 +83,12 @@ Generated reports are local artifacts and are not committed.
 
 ## First Working Slice
 
-The first implemented slice generates and executes four metadata trust tests:
+The first implemented slice generates and executes five metadata trust tests:
 
 - Entity metadata references deployed objects.
 - Column metadata references deployed columns.
 - Relationship metadata references deployed join columns.
+- Deployed module databases are registered in `data_product_map`.
 - Active cookbook recipes exist for later SQL template validation.
 
 The validator supports `ZERO_ROWS` and `NON_EMPTY` expectations, records pass/fail/error
@@ -114,6 +115,11 @@ free-text alias replacements, and reports permission failures without hiding the
 validation evidence. For temporal metadata tables such as `Query_Cookbook`, generated repairs
 expire the current row and insert a corrected successor row rather than mutating the current record
 in place.
+
+Missing `data_product_map` entries are safe-auto eligible when the deployed module can be inferred
+from a standard product database pattern such as `{Product}_MEM_%`. The generated repair inserts an
+active module discovery row only when no active row already exists for that module or database
+pattern.
 
 ## Repository Status
 
