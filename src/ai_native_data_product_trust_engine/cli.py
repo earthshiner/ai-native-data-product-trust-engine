@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from ai_native_data_product_trust_engine.adapters import adapter_from_environment
@@ -58,6 +59,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except Exception as exc:  # noqa: BLE001 - CLI boundary must never leak driver stacks.
+        print(_friendly_cli_error(exc), file=sys.stderr)
+        return 2
+
+
+def _main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command == "generate-tests":
@@ -112,6 +121,18 @@ def main(argv: list[str] | None = None) -> int:
 
 def _summarise_error(error_message: str) -> str:
     return error_message.split("\n at ", maxsplit=1)[0].strip()
+
+
+def _friendly_cli_error(exc: Exception) -> str:
+    message = _summarise_error(str(exc))
+    if message.startswith("[ADPTrust."):
+        return message
+    return (
+        "[ADPTrust.ValidationFailed] Validation could not complete. "
+        f"{message} "
+        "Suggested action: check DATABASE_URI, network/VPN access, credentials, and Teradata "
+        "service availability, then rerun validate."
+    )
 
 
 if __name__ == "__main__":

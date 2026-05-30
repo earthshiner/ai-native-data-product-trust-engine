@@ -38,7 +38,8 @@ evidence for metadata trust, not a replacement for a dedicated data quality plat
 - Validate cookbook SQL, join paths, glossary references, capabilities, and view contracts.
 - Detect drift between tables, views, metadata, generated recipes, and product capabilities.
 - Apply safe deterministic repairs, and produce steward-approved repair proposals for everything else.
-- Publish a trust score that can be consumed by agents and user-facing assets.
+- Publish separate trust, performance readiness and operational readiness scores that can be
+  consumed by agents and user-facing assets.
 
 ## Trust Model
 
@@ -50,6 +51,19 @@ The engine validates five contract areas:
 4. Capability contract: VECTOR, JSON, geospatial, ML, fallback patterns and product feature flags.
 5. Evidence checks: targeted row-count, orphan, uniqueness, current-record and category checks
    only where they validate a metadata claim.
+
+The report separates related but different readiness signals:
+
+- **Data product trust score**: whether the product is correctly described, governed, aligned to
+  deployed objects, and safe for agents to use.
+- **Performance readiness score**: whether expected access paths are likely to run efficiently,
+  including skew, statistics, expensive joins, bounded recipes and execution-plan risk.
+- **Operational readiness score**: whether run-state signals such as freshness, observability,
+  monitoring, SLA metadata and pipeline health are current.
+
+Performance and operational checks remain visible in the same report, but they do not dilute the
+data product trust score. A product can be trustworthy but slow, fast but untrustworthy, or
+semantically sound while missing operational evidence.
 
 ## Self-Healing Levels
 
@@ -85,12 +99,14 @@ reports are local artifacts and are not committed.
 
 ## First Working Slice
 
-The first implemented slice generates and executes seven metadata trust tests:
+The first implemented slice generates and executes nine metadata trust tests:
 
 - Entity metadata references deployed objects.
 - Column metadata references deployed columns.
 - Relationship metadata references deployed join columns.
 - Same/similar column names have consistent datatype, length, precision and scale.
+- `governance.data_product_registry` exists for product-first MCP discovery.
+- Data product registry and orientation manifest match deployed metadata.
 - Active cookbook recipes exist for later SQL template validation.
 - Product tables stay within the initial AMP storage skew warning threshold.
 - Relationship join columns have valid optimiser statistics.
@@ -115,7 +131,7 @@ capabilities and syntax errors. Query failures include extracted object/column/f
 available plus a first repair hint.
 
 Statistics coverage validation checks active relationship join columns against `DBC.ColumnStatsV`.
-Missing valid statistics are reported as performance trust warnings with the relationship name,
+Missing valid statistics are reported as performance readiness warnings with the relationship name,
 join-column usage, issue code and a `COLLECT STATISTICS` repair hint. This keeps the check focused on
 metadata-backed access paths that agents are likely to use for generated joins.
 
@@ -148,8 +164,10 @@ expire the current row and insert a corrected successor row rather than mutating
 in place.
 
 The optional HTML report is the human-facing companion to the JSON evidence. It uses Teradata brand
-colours, concise scorecards, filterable validation results, repair posture summaries and embedded
-structured evidence so users can scan the current trust position and decide what to fix next.
+colours, separate data product trust, performance readiness and operational readiness scorecards,
+filterable validation results, repair posture summaries and embedded structured evidence so users can
+scan the current trust position and decide what to fix next. Hover text and the glossary explain terms
+such as structural, semantic, query, capability, free-text, performance, operational and repairs.
 Failure rows show a concise backend error and a suggested next step first; raw stack traces remain in
 the structured JSON evidence for agents and deeper diagnostics.
 When multiple validation failures share the same missing column, the report correlates them and

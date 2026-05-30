@@ -7,6 +7,10 @@ from dataclasses import asdict
 from pathlib import Path
 
 from ai_native_data_product_trust_engine.models import TestResult, ValidationRun
+from ai_native_data_product_trust_engine.scoring import (
+    dimension_scores,
+    scorecards,
+)
 
 
 def validation_run_to_dict(run: ValidationRun) -> dict[str, object]:
@@ -20,6 +24,8 @@ def validation_run_to_dict(run: ValidationRun) -> dict[str, object]:
             "failed": run.failed_count,
             "errors": run.error_count,
         },
+        "scores": scorecards(run.results),
+        "dimension_scores": dimension_scores(run.results),
         "results": [_result_to_dict(result) for result in run.results],
     }
 
