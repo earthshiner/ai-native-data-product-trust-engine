@@ -7,12 +7,13 @@ from ai_native_data_product_trust_engine.view_contracts import (
 def test_view_contract_test_cases_include_inventory_sql():
     tests = view_contract_test_cases("CallCentre")
 
-    assert len(tests) == 3
+    assert len(tests) == 4
     assert tests[0].test_id == "CALLCENTRE-VIEW-COLUMNS"
     assert "DBC.TablesV" in tests[0].sql
     assert "TableKind = 'V'" in tests[0].sql
     assert tests[1].test_id == "CALLCENTRE-STD-VIEW-1TO1"
     assert tests[2].test_id == "CALLCENTRE-BUS-VIEW-SOURCES"
+    assert tests[3].test_id == "CALLCENTRE-VIEW-TABLE-LOCKING"
 
 
 def test_run_view_contract_validations_resolves_each_product_view():
@@ -25,6 +26,7 @@ def test_run_view_contract_validations_resolves_each_product_view():
         ],
         std_view_rows=[],
         bus_view_rows=[],
+        locking_view_rows=[],
     )
 
     results = run_view_contract_validations("CallCentre", adapter)
@@ -60,6 +62,7 @@ def test_run_view_contract_validations_checks_std_view_contract():
         ],
         bus_view_rows=[],
         column_contract_rows=[],
+        locking_view_rows=[],
     )
 
     results = adapter.run_std_only()
@@ -90,6 +93,7 @@ def test_run_view_contract_validations_reports_std_view_logic():
                 "table_column_name": "start_ts",
             }
         ],
+        locking_view_rows=[],
     )
 
     results = adapter.run_std_only()
@@ -126,6 +130,63 @@ def test_run_view_contract_validations_reports_bus_view_selecting_table():
     assert results[0].sample_rows[0]["issue_code"] == "BUS_VIEW_SELECTS_TABLE_DIRECTLY"
 
 
+def test_run_view_contract_validations_reports_direct_table_view_without_locking():
+    adapter = StubAdapter(
+        view_rows=[],
+        std_view_rows=[],
+        bus_view_rows=[],
+        locking_view_rows=[
+            {
+                "database_name": "CallCentre_DOM_BUS_V",
+                "view_name": "Call_Enriched",
+                "view_text": (
+                    "CREATE VIEW CallCentre_DOM_BUS_V.Call_Enriched AS "
+                    "SELECT call_id FROM CallCentre_DOM_STD_T.Call_H;"
+                ),
+            }
+        ],
+    )
+
+    results = adapter.run_locking_only()
+
+    assert len(results) == 1
+    assert results[0].status.value == "FAILED"
+    assert results[0].sample_rows[0]["issue_code"] == "DIRECT_TABLE_VIEW_MISSING_LOCK"
+    assert results[0].sample_rows[0]["referenced_table"] == "CALLCENTRE_DOM_STD_T.CALL_H"
+
+
+def test_run_view_contract_validations_accepts_direct_table_view_with_locking():
+    adapter = StubAdapter(
+        view_rows=[],
+        std_view_rows=[],
+        bus_view_rows=[],
+        locking_view_rows=[
+            {
+                "database_name": "CallCentre_DOM_STD_V",
+                "view_name": "Call_H",
+                "view_text": (
+                    "CREATE VIEW CallCentre_DOM_STD_V.Call_H AS "
+                    "LOCKING ROW FOR ACCESS "
+                    "SELECT call_id FROM CallCentre_DOM_STD_T.Call_H;"
+                ),
+            },
+            {
+                "database_name": "CallCentre_DOM_BUS_V",
+                "view_name": "Call_Enriched",
+                "view_text": (
+                    "CREATE VIEW CallCentre_DOM_BUS_V.Call_Enriched AS "
+                    "LOCKING TABLE CallCentre_DOM_STD_T.Call_H FOR ACCESS "
+                    "SELECT call_id FROM CallCentre_DOM_STD_T.Call_H;"
+                ),
+            },
+        ],
+    )
+
+    results = adapter.run_locking_only()
+
+    assert [result.status.value for result in results] == ["PASSED", "PASSED"]
+
+
 def test_run_view_contract_validations_reports_compile_failures():
     adapter = StubAdapter(
         view_rows=[
@@ -136,6 +197,7 @@ def test_run_view_contract_validations_reports_compile_failures():
         ],
         std_view_rows=[],
         bus_view_rows=[],
+        locking_view_rows=[],
         explain_error=RuntimeError("Column overall_quality_score not found in db.table"),
     )
 
@@ -150,7 +212,7 @@ def test_run_view_contract_validations_reports_compile_failures():
 def test_run_view_contract_validations_reports_missing_view_inventory():
     results = run_view_contract_validations(
         "CallCentre",
-        StubAdapter(view_rows=[], std_view_rows=[], bus_view_rows=[]),
+        StubAdapter(view_rows=[], std_view_rows=[], bus_view_rows=[], locking_view_rows=[]),
     )
 
     assert len(results) == 1
@@ -165,11 +227,13 @@ class StubAdapter:
         std_view_rows=None,
         bus_view_rows=None,
         column_contract_rows=None,
+        locking_view_rows=None,
         explain_error=None,
     ):
         self.view_rows = view_rows
         self.std_view_rows = std_view_rows or []
         self.bus_view_rows = bus_view_rows or []
+        self.locking_view_rows = locking_view_rows or []
         self.column_contract_rows = column_contract_rows or []
         self.explain_error = explain_error
         self.help_column_sql = []
@@ -189,6 +253,13 @@ class StubAdapter:
 
         return _run_business_view_source_validations("CallCentre", self)
 
+    def run_locking_only(self):
+        from ai_native_data_product_trust_engine.view_contracts import (
+            _run_view_table_locking_validations,
+        )
+
+        return _run_view_table_locking_validations("CallCentre", self)
+
     def fetch_all(self, sql):
         if sql.startswith("HELP COLUMN"):
             self.help_column_sql.append(sql)
@@ -201,5 +272,9 @@ class StubAdapter:
         if "COALESCE(RequestText" in sql:
             if "_BUS\\_V" in sql:
                 return self.bus_view_rows
+            if "_STD\\_V" in sql:
+                return self.std_view_rows
+            if "DatabaseName LIKE 'CallCentre\\_%' ESCAPE '\\'" in sql:
+                return self.locking_view_rows
             return self.std_view_rows
         return self.view_rows

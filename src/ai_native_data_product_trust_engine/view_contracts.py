@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from ai_native_data_product_trust_engine.models import (
     ExpectedResult,
     TestCase,
@@ -59,6 +61,22 @@ def view_contract_test_cases(prefix: str) -> list[TestCase]:
                 "instead of selecting directly from %_STD_T tables."
             ),
         ),
+        TestCase(
+            test_id=f"{prefix.upper()}-VIEW-TABLE-LOCKING",
+            name="Views that query tables directly use access locks",
+            category=TestCategory.STRUCTURAL,
+            severity=TestSeverity.CRITICAL,
+            sql=_view_text_inventory_sql(prefix),
+            expected_result=(
+                "Every product view that directly queries a table includes LOCKING ROW FOR "
+                "ACCESS or a matching LOCKING TABLE <table> FOR ACCESS modifier."
+            ),
+            expected=ExpectedResult.NON_EMPTY,
+            repair_strategy=(
+                "Add LOCKING ROW FOR ACCESS before the SELECT. If LOCKING TABLE is used, "
+                "ensure every directly referenced table has the correct table-level lock."
+            ),
+        ),
     ]
 
 
@@ -69,6 +87,7 @@ def run_view_contract_validations(prefix: str, adapter) -> list[TestResult]:
     results = [_run_view_validation(prefix, adapter, row) for row in view_rows]
     results.extend(_run_standard_view_contract_validations(prefix, adapter))
     results.extend(_run_business_view_source_validations(prefix, adapter))
+    results.extend(_run_view_table_locking_validations(prefix, adapter))
     return results
 
 
@@ -80,6 +99,11 @@ def _run_standard_view_contract_validations(prefix: str, adapter) -> list[TestRe
 def _run_business_view_source_validations(prefix: str, adapter) -> list[TestResult]:
     view_rows = adapter.fetch_all(_business_view_inventory_sql(prefix))
     return [_run_business_view_source_validation(prefix, row) for row in view_rows]
+
+
+def _run_view_table_locking_validations(prefix: str, adapter) -> list[TestResult]:
+    view_rows = adapter.fetch_all(_view_text_inventory_sql(prefix))
+    return [_run_view_table_locking_validation(prefix, row) for row in view_rows]
 
 
 def _run_view_validation(prefix: str, adapter, row: dict[str, object]) -> TestResult:
@@ -234,6 +258,47 @@ def _run_business_view_source_validation(
     )
 
 
+def _run_view_table_locking_validation(
+    prefix: str,
+    row: dict[str, object],
+) -> TestResult:
+    database_name = str(row.get("database_name") or row.get("DatabaseName") or "").strip()
+    view_name = str(row.get("view_name") or row.get("TableName") or "").strip()
+    view_text = str(row.get("view_text") or row.get("RequestText") or "")
+    violations = _view_table_locking_violations(database_name, view_name, view_text)
+    test_case = TestCase(
+        test_id=f"{prefix.upper()}-VIEW-TABLE-LOCKING-{database_name}.{view_name}",
+        name=f"Direct table view has access locks: {database_name}.{view_name}",
+        category=TestCategory.STRUCTURAL,
+        severity=TestSeverity.CRITICAL,
+        sql=view_text,
+        expected_result="Direct table access in views is protected by access locking.",
+        repair_strategy=(
+            "Prefer LOCKING ROW FOR ACCESS. If using LOCKING TABLE, specify every directly "
+            "referenced table exactly."
+        ),
+    )
+    if violations:
+        return TestResult(
+            test_case=test_case,
+            status=TestStatus.FAILED,
+            row_count=len(violations),
+            sample_rows=violations[:10],
+        )
+    return TestResult(
+        test_case=test_case,
+        status=TestStatus.PASSED,
+        row_count=0,
+        sample_rows=[
+            {
+                "database_name": database_name,
+                "view_name": view_name,
+                "validation_mode": "VIEW_TABLE_LOCKING",
+            }
+        ],
+    )
+
+
 def _missing_inventory_result(prefix: str) -> TestResult:
     test_case = view_contract_test_cases(prefix)[0]
     return TestResult(
@@ -288,6 +353,20 @@ SELECT
    ,COALESCE(RequestText, '') AS view_text
 FROM DBC.TablesV
 WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_BUS\\_V' ESCAPE '\\'
+  AND TableKind = 'V'
+ORDER BY DatabaseName, TableName
+""".strip()
+
+
+def _view_text_inventory_sql(prefix: str) -> str:
+    escaped_prefix = prefix.replace("'", "''")
+    return f"""
+SELECT
+    TRIM(DatabaseName) AS database_name
+   ,TRIM(TableName) AS view_name
+   ,COALESCE(RequestText, '') AS view_text
+FROM DBC.TablesV
+WHERE DatabaseName LIKE '{escaped_prefix}\\_%' ESCAPE '\\'
   AND TableKind = 'V'
 ORDER BY DatabaseName, TableName
 """.strip()
@@ -424,6 +503,50 @@ def _business_view_source_violations(
             "evidence": "_STD_T",
         }
     ]
+
+
+def _view_table_locking_violations(
+    database_name: str,
+    view_name: str,
+    view_text: str,
+) -> list[dict[str, object]]:
+    normalised = " ".join(view_text.upper().split())
+    direct_tables = _direct_table_references(normalised)
+    if not direct_tables:
+        return []
+    if "LOCKING ROW FOR ACCESS" in normalised:
+        return []
+    return [
+        {
+            "issue_code": "DIRECT_TABLE_VIEW_MISSING_LOCK",
+            "repair_hint": (
+                "Add LOCKING ROW FOR ACCESS before the SELECT. LOCKING TABLE is acceptable "
+                "only when it names every directly referenced table correctly."
+            ),
+            "database_name": database_name,
+            "view_name": view_name,
+            "referenced_table": referenced_table,
+        }
+        for referenced_table in direct_tables
+        if not _has_locking_table_for_reference(normalised, referenced_table)
+    ]
+
+
+def _direct_table_references(normalised_view_text: str) -> list[str]:
+    table_names = []
+    table_pattern = r"\b(?:FROM|JOIN)\s+([A-Z0-9_]+_T)\.([A-Z0-9_]+)\b"
+    for match in re.finditer(table_pattern, normalised_view_text):
+        table_names.append(f"{match.group(1)}.{match.group(2)}")
+    return list(dict.fromkeys(table_names))
+
+
+def _has_locking_table_for_reference(normalised_view_text: str, referenced_table: str) -> bool:
+    database_name, table_name = referenced_table.split(".", maxsplit=1)
+    accepted_locks = (
+        f"LOCKING TABLE {database_name}.{table_name} FOR ACCESS",
+        f"LOCKING TABLE {table_name} FOR ACCESS",
+    )
+    return any(lock in normalised_view_text for lock in accepted_locks)
 
 
 def _standard_view_repair_hint(issue_code: str) -> str:
