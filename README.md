@@ -131,6 +131,11 @@ the same `ColumnId` order as the matching table. Business logic belongs in `%_BU
 those business views must select from `%_STD_V` access views rather than directly from `%_STD_T`
 tables.
 
+View locking validation checks every product view that directly queries a table, even outside the
+preferred layer architecture. `LOCKING ROW FOR ACCESS` is preferred. `LOCKING TABLE <table> FOR
+ACCESS` is accepted when it names the directly referenced table, but is treated as more fragile
+because every source table must be named correctly.
+
 The first capability registry primitive discovers native VECTOR and fallback embedding evidence
 from deployed objects. It reports capability inventory and fails alignment when active cookbook
 metadata references native VECTOR behaviour while the product only has fallback embedding evidence.
