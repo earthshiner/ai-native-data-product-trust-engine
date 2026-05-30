@@ -16,13 +16,42 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-SEM-002",
         "CALLCENTRE-SEM-003",
         "CALLCENTRE-STRUCT-001",
+        "CALLCENTRE-DISCOVERY-001",
+        "CALLCENTRE-DISCOVERY-002",
         "CALLCENTRE-QUERY-001",
         "CALLCENTRE-STRUCT-002",
         "CALLCENTRE-PERF-001",
     ]
-    assert all("CallCentre" in test.sql for test in tests)
-    assert tests[4].expected == ExpectedResult.NON_EMPTY
+    assert all("CallCentre" in test.sql for test in tests if test.test_id != "CALLCENTRE-DISCOVERY-001")
+    assert tests[6].expected == ExpectedResult.NON_EMPTY
     assert "COUNT(DISTINCT type_signature) > 1" in tests[3].sql
+
+
+def test_generate_metadata_tests_includes_data_product_registry_table_contract():
+    tests = generate_metadata_tests("CallCentre")
+    registry_table_test = next(test for test in tests if test.test_id == "CALLCENTRE-DISCOVERY-001")
+
+    assert registry_table_test.category == TestCategory.SEMANTIC
+    assert registry_table_test.severity == TestSeverity.CRITICAL
+    assert "FROM DBC.TablesV tv" in registry_table_test.sql
+    assert "governance.data_product_registry" in registry_table_test.sql
+    assert "MISSING_DATA_PRODUCT_REGISTRY_TABLE" in registry_table_test.sql
+    assert "TableKind = 'T'" in registry_table_test.sql
+
+
+def test_generate_metadata_tests_includes_data_product_registry_contract():
+    tests = generate_metadata_tests("CallCentre")
+    registry_test = next(test for test in tests if test.test_id == "CALLCENTRE-DISCOVERY-002")
+
+    assert registry_test.category == TestCategory.SEMANTIC
+    assert registry_test.severity == TestSeverity.CRITICAL
+    assert "FROM governance.data_product_registry" in registry_test.sql
+    assert "manifest_json" in registry_test.sql
+    assert "MISSING_PRODUCT_REGISTRY_ROW" in registry_test.sql
+    assert "SEMANTIC_DATABASE_NOT_IN_MODULE_MAP" in registry_test.sql
+    assert "MEMORY_DATABASE_NOT_IN_MODULE_MAP" in registry_test.sql
+    assert "approved_entrypoint" in registry_test.sql
+    assert "manifest_json" in registry_test.repair_strategy
 
 
 def test_generate_metadata_tests_includes_statistics_coverage_contract():
@@ -111,6 +140,34 @@ def test_validate_cli_writes_report(monkeypatch, tmp_path):
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload["summary"]["passed"] == 9
     assert "CallCentre trust report" in html_path.read_text(encoding="utf-8")
+
+
+def test_validate_cli_traps_uncaught_backend_errors(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "ai_native_data_product_trust_engine.cli.adapter_from_environment",
+        lambda database_url=None: ValidationStubAdapter(),
+    )
+    monkeypatch.setattr(
+        "ai_native_data_product_trust_engine.cli.generate_metadata_tests",
+        lambda prefix: [_test_case(ExpectedResult.ZERO_ROWS)],
+    )
+
+    def fail_validation(prefix, adapter, tests):
+        raise RuntimeError(
+            "[Version 20.0.0.56] [Session 0] [Teradata SQL Driver] "
+            "Failed to connect to example.teradata.com\n at gosqldriver/stack"
+        )
+
+    monkeypatch.setattr("ai_native_data_product_trust_engine.cli.run_validation", fail_validation)
+
+    exit_code = main(["validate", "--prefix", "CallCentre"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "[ADPTrust.ValidationFailed]" in captured.err
+    assert "Failed to connect to example.teradata.com" in captured.err
+    assert "gosqldriver/stack" not in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_teradatasql_args_from_url_redacts_nothing_but_parses_components():

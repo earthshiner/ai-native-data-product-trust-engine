@@ -15,12 +15,57 @@ from ai_native_data_product_trust_engine.models import (
 )
 from ai_native_data_product_trust_engine.repairs import RepairCandidate
 from ai_native_data_product_trust_engine.reports import validation_run_to_dict
+from ai_native_data_product_trust_engine.scoring import (
+    dimension_scores as calculate_dimension_scores,
+    scorecards as calculate_scorecards,
+)
 
-_SEVERITY_WEIGHTS = {
-    TestSeverity.CRITICAL: 40,
-    TestSeverity.ERROR: 25,
-    TestSeverity.WARNING: 10,
-    TestSeverity.INFO: 5,
+_TERM_DEFINITIONS = {
+    "CAPABILITY": (
+        "Checks whether metadata and recipes only claim platform features that the deployed "
+        "product actually supports."
+    ),
+    "DATA_QUALITY": (
+        "Targeted evidence checks that prove declared data-product metadata claims, not broad "
+        "raw data profiling."
+    ),
+    "FREE_TEXT": (
+        "Checks descriptions, glossary text and cookbook notes for stale object names, typos "
+        "and unsupported capability references."
+    ),
+    "OPERATIONAL": (
+        "Checks freshness, observability, monitoring, SLA and pipeline-health evidence."
+    ),
+    "PERFORMANCE": (
+        "Checks execution-readiness risks such as skew, missing statistics, expensive joins "
+        "and unbounded recipes."
+    ),
+    "QUERY": (
+        "Checks cookbook SQL templates, parameters, EXPLAIN validation and expected result "
+        "shape."
+    ),
+    "SEMANTIC": (
+        "Checks product meaning: entities, columns, relationships, paths, glossary, policy "
+        "and design metadata."
+    ),
+    "STRUCTURAL": (
+        "Checks deployed databases, tables, views, columns, datatypes and view contracts."
+    ),
+    "REPAIRS": (
+        "Metadata repair candidates generated from failed checks. Safe-auto repairs are "
+        "deterministic; approval-required repairs need steward judgement."
+    ),
+    "DATA_PRODUCT_TRUST": (
+        "A score for whether the product is correctly described, governed and safe for "
+        "agents to use."
+    ),
+    "PERFORMANCE_READINESS": (
+        "A separate score for whether expected access paths are likely to run efficiently."
+    ),
+    "OPERATIONAL_READINESS": (
+        "A separate score for whether run-state signals such as freshness and monitoring "
+        "are healthy."
+    ),
 }
 
 
@@ -41,8 +86,8 @@ def render_html_report(
     repair_candidates: list[RepairCandidate],
 ) -> str:
     results = sorted(run.results, key=_result_sort_key)
-    score = _score(results)
-    dimension_scores = _dimension_scores(results)
+    scorecards = calculate_scorecards(results)
+    dimension_scores = calculate_dimension_scores(results)
     dependency_index = _dependency_index(results)
     root_cause_groups = _root_cause_groups(results, dependency_index)
     safe_auto_count = sum(1 for candidate in repair_candidates if not candidate.requires_approval)
@@ -61,7 +106,7 @@ def render_html_report(
         {
             "validation": validation_run_to_dict(run),
             "repair_candidates": [_repair_to_dict(candidate) for candidate in repair_candidates],
-            "score": score,
+            "scores": scorecards,
             "dimension_scores": dimension_scores,
             "root_cause_groups": root_cause_groups,
         }
@@ -130,9 +175,15 @@ def render_html_report(
       margin: 0 auto;
       padding: 28px 24px 48px;
     }}
+    .score-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }}
     .summary-grid {{
       display: grid;
-      grid-template-columns: 1.25fr repeat(4, minmax(120px, 1fr));
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
       gap: 14px;
       margin-bottom: 18px;
     }}
@@ -155,10 +206,17 @@ def render_html_report(
       display: grid;
       place-items: center;
       color: var(--td-white);
-      background: conic-gradient(var(--td-orange) {score}%, #D9E2EA {score}%);
+      background: #D9E2EA;
       position: relative;
       font-size: 28px;
       font-weight: 700;
+    }}
+    .score-value.not-assessed {{
+      background: #D9E2EA;
+      color: var(--td-navy);
+      font-size: 15px;
+      text-align: center;
+      line-height: 1.1;
     }}
     .score-value::after {{
       content: "";
@@ -179,6 +237,11 @@ def render_html_report(
       margin-top: 6px;
       font-size: 30px;
       font-weight: 700;
+    }}
+    .term {{
+      cursor: help;
+      text-decoration: underline dotted;
+      text-underline-offset: 3px;
     }}
     .dimension-grid {{
       display: grid;
@@ -258,6 +321,16 @@ def render_html_report(
       gap: 14px;
       margin-top: 18px;
     }}
+    .glossary-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }}
+    .glossary-item {{
+      border-top: 3px solid var(--td-orange);
+      padding-top: 10px;
+    }}
     .root-cause-grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -326,20 +399,35 @@ def render_html_report(
     </div>
     <h1>{_h(run.prefix)} trust report</h1>
     <p>
-      Human-readable view of the metadata contract that agents, cookbooks, notebooks
-      and applications depend on. JSON remains the source evidence; this report helps
-      people see what is healthy, what is broken, and what to fix next.
+      Human-readable view of the product trust, performance readiness, and operational
+      readiness signals that agents, cookbooks, notebooks and applications depend on.
+      JSON remains the source evidence; this report helps people see what is healthy,
+      what is broken, and what to fix next.
     </p>
   </header>
   <main>
+    <section class="score-grid" aria-label="Readiness scores">
+      {_score_card(
+          "Data product trust score",
+          "DATA_PRODUCT_TRUST",
+          scorecards["data_product_trust"],
+          "Measures metadata, semantics, contracts, access safety and data-trust evidence.",
+      )}
+      {_score_card(
+          "Performance readiness score",
+          "PERFORMANCE_READINESS",
+          scorecards["performance_readiness"],
+          "Measures execution risk such as skew, statistics, expensive joins and recipe bounds.",
+      )}
+      {_score_card(
+          "Operational readiness score",
+          "OPERATIONAL_READINESS",
+          scorecards["operational_readiness"],
+          "Measures freshness, observability, monitoring, SLA and pipeline health signals.",
+      )}
+    </section>
+
     <section class="summary-grid" aria-label="Validation summary">
-      <div class="panel score">
-        <div class="score-value" aria-label="Overall score {score}"><span>{score}</span></div>
-        <div>
-          <div class="metric-label">Overall metadata trust score</div>
-          <p>{_h(_score_message(score))}</p>
-        </div>
-      </div>
       {_metric("Passed", run.passed_count)}
       {_metric("Failed", run.failed_count)}
       {_metric("Errors", run.error_count)}
@@ -349,6 +437,8 @@ def render_html_report(
     <section class="dimension-grid" aria-label="Dimension scores">
       {_dimension_cards(dimension_scores)}
     </section>
+
+    {_glossary_section()}
 
     <section class="repairs" aria-label="Repair posture">
       {safe_auto_panel}
@@ -421,28 +511,6 @@ def render_html_report(
 """
 
 
-def _score(results: list[TestResult]) -> int:
-    if not results:
-        return 100
-    total = sum(_weight(result) for result in results)
-    earned = sum(_weight(result) for result in results if result.status == TestStatus.PASSED)
-    return round((earned / total) * 100) if total else 100
-
-
-def _dimension_scores(results: list[TestResult]) -> dict[str, int]:
-    categories = sorted({result.test_case.category.value for result in results})
-    return {
-        category: _score(
-            [result for result in results if result.test_case.category.value == category]
-        )
-        for category in categories
-    }
-
-
-def _weight(result: TestResult) -> int:
-    return _SEVERITY_WEIGHTS.get(result.test_case.severity, 5)
-
-
 def _result_sort_key(result: TestResult) -> tuple[int, int, str]:
     status_rank = {TestStatus.ERROR: 0, TestStatus.FAILED: 1, TestStatus.PASSED: 2}
     severity_rank = {
@@ -466,15 +534,47 @@ def _repair_to_dict(candidate: RepairCandidate) -> dict[str, object]:
 
 def _metric(label: str, value: int) -> str:
     return f"""<div class="panel">
-      <div class="metric-label">{_h(label)}</div>
+      <div class="metric-label">{_term(label.upper(), label)}</div>
       <div class="metric-value">{value}</div>
+    </div>"""
+
+
+def _score_card(
+    label: str,
+    term_key: str,
+    score_summary: dict[str, object],
+    description: str,
+) -> str:
+    assessed = bool(score_summary.get("assessed"))
+    score = score_summary.get("score")
+    message = str(score_summary.get("message") or "")
+    test_count = int(score_summary.get("test_count") or 0)
+    if assessed and isinstance(score, int):
+        score_html = (
+            f"""<div class="score-value" style="background: conic-gradient(var(--td-orange) """
+            f"""{score}%, #D9E2EA {score}%);" aria-label="{_h(label)} {score}">"""
+            f"""<span>{score}</span></div>"""
+        )
+    else:
+        score_html = (
+            f"""<div class="score-value not-assessed" aria-label="{_h(label)} not assessed">"""
+            """<span>Not<br>assessed</span></div>"""
+        )
+    return f"""<div class="panel score">
+      {score_html}
+      <div>
+        <div class="metric-label">{_term(term_key, label)}</div>
+        <p>{_h(description)}</p>
+        <p>{_h(message)}</p>
+        <p><strong>{test_count}</strong> checks in this score.</p>
+      </div>
     </div>"""
 
 
 def _dimension_cards(dimension_scores: dict[str, int]) -> str:
     return "\n".join(
         f"""<div class="panel">
-          <div class="metric-label">{_h(category)}</div>
+          <div class="metric-label">{_term(category, category)}</div>
           <div class="metric-value">{score}</div>
           <div class="bar" aria-hidden="true"><span style="width:{score}%"></span></div>
         </div>"""
@@ -484,10 +584,40 @@ def _dimension_cards(dimension_scores: dict[str, int]) -> str:
 
 def _repair_panel(title: str, count: int, text: str) -> str:
     return f"""<div class="panel">
-      <div class="metric-label">{_h(title)}</div>
+      <div class="metric-label">{_term("REPAIRS", title)}</div>
       <div class="metric-value">{count}</div>
       <p>{_h(text)}</p>
     </div>"""
+
+
+def _glossary_section() -> str:
+    terms = (
+        "DATA_PRODUCT_TRUST",
+        "PERFORMANCE_READINESS",
+        "OPERATIONAL_READINESS",
+        "STRUCTURAL",
+        "SEMANTIC",
+        "QUERY",
+        "CAPABILITY",
+        "FREE_TEXT",
+        "DATA_QUALITY",
+        "PERFORMANCE",
+        "OPERATIONAL",
+        "REPAIRS",
+    )
+    cards = "\n".join(
+        f"""<div class="glossary-item">
+          <div class="metric-label">{_h(term.replace("_", " ").title())}</div>
+          <p>{_h(_TERM_DEFINITIONS[term])}</p>
+        </div>"""
+        for term in terms
+    )
+    return f"""<section class="panel" aria-label="Glossary">
+      <h2>Glossary</h2>
+      <div class="glossary-grid">
+        {cards}
+      </div>
+    </section>"""
 
 
 def _root_cause_section(groups: list[dict[str, object]]) -> str:
@@ -568,7 +698,7 @@ def _result_row(
         <strong>{_h(result.test_case.name)}</strong><br>
         <code>{_h(result.test_case.test_id)}</code>
       </td>
-      <td>{_h(result.test_case.category.value)}</td>
+      <td>{_term(result.test_case.category.value, result.test_case.category.value)}</td>
       <td>{_h(result.test_case.severity.value)}</td>
       <td>
         <p>{_h(evidence)}</p>
@@ -824,22 +954,15 @@ def _concise_backend_error(error_message: str) -> str:
     return message.rstrip(".") + "."
 
 
-def _score_message(score: int) -> str:
-    if score >= 90:
-        return "Metadata contract is healthy. Review remaining warnings and keep evidence current."
-    if score >= 70:
-        return (
-            "Metadata is usable with targeted fixes. Resolve critical failures before broad agent "
-            "use."
-        )
-    return (
-        "Metadata trust is low. Prioritise critical failures and safe repairs before relying on "
-        "generated SQL."
-    )
-
-
 def _json_for_html(payload: dict[str, object]) -> str:
     return _h(json.dumps(payload, sort_keys=True, default=str))
+
+
+def _term(term_key: str, label: str) -> str:
+    definition = _TERM_DEFINITIONS.get(term_key)
+    if not definition:
+        return _h(label)
+    return f"""<span class="term" title="{_h(definition)}">{_h(label)}</span>"""
 
 
 def _h(value: object) -> str:

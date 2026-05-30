@@ -10,6 +10,8 @@ from ai_native_data_product_trust_engine.models import (
     ValidationRun,
 )
 from ai_native_data_product_trust_engine.repairs import RepairCandidate
+from ai_native_data_product_trust_engine.reports import validation_run_to_dict
+from ai_native_data_product_trust_engine.scoring import scorecards
 
 
 def test_write_html_report_creates_branded_interactive_report(tmp_path):
@@ -20,6 +22,11 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
         completed_at="2026-05-29T00:00:01+00:00",
         results=[
             _result("CALLCENTRE-SEM-001", TestStatus.PASSED),
+            _result(
+                "CALLCENTRE-PERF-001",
+                TestStatus.FAILED,
+                category=TestCategory.PERFORMANCE,
+            ),
             _result(
                 "CALLCENTRE-QUERY-EXPLAIN-QC-001",
                 TestStatus.FAILED,
@@ -64,6 +71,12 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
 
     html = output_path.read_text(encoding="utf-8")
     assert "CallCentre trust report" in html
+    assert "Data product trust score" in html
+    assert "Performance readiness score" in html
+    assert "Operational readiness score" in html
+    assert "Glossary" in html
+    assert "title=\"Checks product meaning" in html
+    assert "Free Text" in html
     assert "#FF5F02" in html
     assert "#00233C" in html
     assert "trust-report-data" in html
@@ -85,9 +98,54 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "overflow-wrap: anywhere" in html
 
 
+def test_scorecards_keep_trust_performance_and_operational_separate():
+    results = [
+        _result("CALLCENTRE-SEM-001", TestStatus.PASSED, category=TestCategory.SEMANTIC),
+        _result(
+            "CALLCENTRE-PERF-001",
+            TestStatus.FAILED,
+            category=TestCategory.PERFORMANCE,
+        ),
+        _result(
+            "CALLCENTRE-OPS-001",
+            TestStatus.ERROR,
+            category=TestCategory.OPERATIONAL,
+        ),
+    ]
+
+    scores = scorecards(results)
+
+    assert scores["data_product_trust"]["score"] == 100
+    assert scores["performance_readiness"]["score"] == 0
+    assert scores["operational_readiness"]["score"] == 0
+
+
+def test_json_report_includes_separate_score_families():
+    run = ValidationRun(
+        prefix="CallCentre",
+        started_at="2026-05-29T00:00:00+00:00",
+        completed_at="2026-05-29T00:00:01+00:00",
+        results=[
+            _result("CALLCENTRE-SEM-001", TestStatus.PASSED, category=TestCategory.SEMANTIC),
+            _result(
+                "CALLCENTRE-PERF-001",
+                TestStatus.FAILED,
+                category=TestCategory.PERFORMANCE,
+            ),
+        ],
+    )
+
+    report = validation_run_to_dict(run)
+
+    assert report["scores"]["data_product_trust"]["score"] == 100
+    assert report["scores"]["performance_readiness"]["score"] == 0
+    assert report["scores"]["operational_readiness"]["assessed"] is False
+
+
 def _result(
     test_id: str,
     status: TestStatus,
+    category: TestCategory = TestCategory.SEMANTIC,
     sample_rows: list[dict[str, object]] | None = None,
     error_message: str | None = None,
 ) -> TestResult:
@@ -95,7 +153,7 @@ def _result(
         test_case=TestCase(
             test_id=test_id,
             name=f"Test {test_id}",
-            category=TestCategory.SEMANTIC,
+            category=category,
             severity=TestSeverity.CRITICAL,
             sql="SELECT 1;",
             expected_result="Returns zero rows.",
