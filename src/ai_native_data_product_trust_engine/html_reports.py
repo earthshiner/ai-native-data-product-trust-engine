@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import html
 import json
 from dataclasses import asdict
+from importlib import resources
 from pathlib import Path
 
 from ai_native_data_product_trust_engine.models import (
@@ -68,6 +70,9 @@ _TERM_DEFINITIONS = {
     ),
 }
 
+_HEADER_IMAGE_PACKAGE = "ai_native_data_product_trust_engine.assets"
+_HEADER_IMAGE_NAME = "orange_blue_gradient.png"
+
 
 def write_html_report(
     run: ValidationRun,
@@ -111,6 +116,7 @@ def render_html_report(
             "root_cause_groups": root_cause_groups,
         }
     )
+    header_image = _header_image_data_uri()
 
     return f"""<!doctype html>
 <html lang="en">
@@ -139,9 +145,12 @@ def render_html_report(
       line-height: 1.45;
     }}
     header {{
-      background: var(--td-navy);
+      background-color: var(--td-navy);
+      background-image: linear-gradient(90deg, rgba(0, 35, 60, 0.90), rgba(0, 35, 60, 0.54)), url("{header_image}");
+      background-position: center;
+      background-size: cover;
       color: var(--td-white);
-      padding: 28px 32px;
+      padding: 34px 32px 42px;
       border-bottom: 6px solid var(--td-orange);
     }}
     header .brand {{
@@ -213,8 +222,8 @@ def render_html_report(
     }}
     .score-value.not-assessed {{
       background: #D9E2EA;
-      color: var(--td-navy);
-      font-size: 15px;
+      color: var(--td-white);
+      font-size: 24px;
       text-align: center;
       line-height: 1.1;
     }}
@@ -227,6 +236,9 @@ def render_html_report(
       z-index: 0;
     }}
     .score-value span {{ position: relative; z-index: 1; }}
+    .score-body {{
+      min-width: 0;
+    }}
     .metric-label {{
       color: var(--td-muted);
       font-size: 12px;
@@ -558,11 +570,11 @@ def _score_card(
     else:
         score_html = (
             f"""<div class="score-value not-assessed" aria-label="{_h(label)} not assessed">"""
-            """<span>Not<br>assessed</span></div>"""
+            """<span>N/A</span></div>"""
         )
     return f"""<div class="panel score">
       {score_html}
-      <div>
+      <div class="score-body">
         <div class="metric-label">{_term(term_key, label)}</div>
         <p>{_h(description)}</p>
         <p>{_h(message)}</p>
@@ -956,6 +968,12 @@ def _concise_backend_error(error_message: str) -> str:
 
 def _json_for_html(payload: dict[str, object]) -> str:
     return _h(json.dumps(payload, sort_keys=True, default=str))
+
+
+def _header_image_data_uri() -> str:
+    image = resources.files(_HEADER_IMAGE_PACKAGE).joinpath(_HEADER_IMAGE_NAME).read_bytes()
+    encoded = base64.b64encode(image).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
 def _term(term_key: str, label: str) -> str:
