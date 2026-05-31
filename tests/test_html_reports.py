@@ -102,11 +102,19 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "trust-report-data" in html
     assert "Duration" in html
     assert '<div class="metric-value">1s</div>' in html
+    assert "Total checks" in html
+    assert "1 passed + 3 failed + 0 errors = 4 total checks" in html
+    assert "Repair candidates are separate" in html
     assert "CALLCENTRE-SEM-001" in html
     assert "Returns zero rows." in html
     assert "statusFilter" in html
     assert "MISSING_COLUMN" in html
     assert "Approval required" in html
+    assert "Repair candidates" in html
+    assert "REPAIR-001" in html
+    assert ".repairs.md" in html
+    assert ".repairs.sql" in html
+    assert "Repair details" in html
     assert "Backend error" in html
     assert "Potential consequence" in html
     assert "Generated SQL, views or recipes that depend on this column may fail at runtime." in html
