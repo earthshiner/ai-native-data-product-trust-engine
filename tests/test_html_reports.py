@@ -229,6 +229,19 @@ def test_scorecards_keep_trust_performance_and_operational_separate():
     assert scores["operational_readiness"]["score"] == 0
 
 
+def test_scorecards_assess_operational_readiness_when_operational_checks_run():
+    results = [
+        _result("CALLCENTRE-OPS-001", TestStatus.PASSED, category=TestCategory.OPERATIONAL),
+        _result("CALLCENTRE-OPS-002", TestStatus.PASSED, category=TestCategory.OPERATIONAL),
+    ]
+
+    scores = scorecards(results)
+
+    assert scores["operational_readiness"]["assessed"] is True
+    assert scores["operational_readiness"]["score"] == 100
+    assert scores["operational_readiness"]["test_count"] == 2
+
+
 def test_json_report_includes_separate_score_families():
     run = ValidationRun(
         prefix="CallCentre",
