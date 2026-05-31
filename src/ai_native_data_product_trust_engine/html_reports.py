@@ -186,6 +186,20 @@ _ISSUE_CONSEQUENCES = {
     "OBSERVABILITY_DATABASE_NOT_IN_MODULE_MAP": (
         "Agents may miss lineage, quality or usage evidence when assessing operational readiness."
     ),
+    "PRIMARY_INDEX_LOW_CARDINALITY_SUSPECT": (
+        "Rows may concentrate on a small number of AMPs if the primary index has few distinct "
+        "values."
+    ),
+    "PRIMARY_INDEX_NOT_DEFINED": (
+        "The table may rely on NoPI behaviour, making load/query distribution risk harder for "
+        "agents to reason about unless it is intentional and documented."
+    ),
+    "PRIMARY_INDEX_NULLABLE_COLUMN": (
+        "NULL-heavy primary index values may concentrate rows and increase redistribution risk."
+    ),
+    "PRIMARY_INDEX_SKEW_HIGH": (
+        "The observed distribution suggests the primary index may be creating uneven AMP storage."
+    ),
     "SELECT_STAR": (
         "Column order and shape may change when source tables evolve, breaking generated SQL "
         "contracts."

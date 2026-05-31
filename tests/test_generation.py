@@ -21,6 +21,7 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-DISCOVERY-002",
         "CALLCENTRE-QUERY-001",
         "CALLCENTRE-STRUCT-002",
+        "CALLCENTRE-STRUCT-003",
         "CALLCENTRE-PERF-001",
     ]
     assert all("CallCentre" in test.sql for test in tests)
@@ -96,6 +97,23 @@ def test_generate_metadata_tests_includes_table_skew_contract():
     assert "FROM DBC.TableSizeV tsv" in table_skew_test.sql
     assert "HASHROW(Tablename)" not in table_skew_test.sql
     assert "skew_percent > 20" in table_skew_test.sql
+
+
+def test_generate_metadata_tests_includes_primary_index_health_contract():
+    tests = generate_metadata_tests("CallCentre")
+    pi_test = next(test for test in tests if test.test_id == "CALLCENTRE-STRUCT-003")
+
+    assert pi_test.category == TestCategory.STRUCTURAL
+    assert pi_test.severity == TestSeverity.WARNING
+    assert "FROM DBC.IndicesV iv" in pi_test.sql
+    assert "iv.IndexNumber = 1" in pi_test.sql
+    assert "iv.IndexType IN ('P', 'Q', 'A', 'K')" in pi_test.sql
+    assert "PRIMARY_INDEX_NOT_DEFINED" in pi_test.sql
+    assert "PRIMARY_INDEX_NULLABLE_COLUMN" in pi_test.sql
+    assert "PRIMARY_INDEX_LOW_CARDINALITY_SUSPECT" in pi_test.sql
+    assert "PRIMARY_INDEX_SKEW_HIGH" in pi_test.sql
+    assert "primary_index_columns" in pi_test.sql
+    assert "intentional designs" in pi_test.repair_strategy
 
 
 def test_generate_tests_cli_includes_free_text_cases(capsys):
@@ -226,6 +244,8 @@ class ValidationStubAdapter:
         if sql.startswith("HELP COLUMN"):
             return [{"Column Name": "call_id"}]
         if "COALESCE(RequestText" in sql:
+            return []
+        if "primary_index_issues AS" in sql:
             return []
         if "standard_tables AS" in sql:
             return []

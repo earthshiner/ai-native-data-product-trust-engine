@@ -151,6 +151,12 @@ Missing valid statistics are reported as performance readiness warnings with the
 join-column usage, issue code and a `COLLECT STATISTICS` repair hint. This keeps the check focused on
 metadata-backed access paths that agents are likely to use for generated joins.
 
+Primary index health validation checks product tables for missing primary index definitions, nullable
+PI columns, low-cardinality-looking PI column names and observed high AMP storage skew. These are
+warning-level structural findings because some NoPI or skewed designs can be intentional, but the
+report includes table size, skew, PI columns and repair guidance so agents can distinguish documented
+design choices from likely distribution defects.
+
 View contract validation discovers deployed product views from `DBC.TablesV` and runs `HELP COLUMN`
 against a zero-row subquery for each view. Teradata resolves the view and returns authoritative
 output-column metadata, validating that source objects, projected columns, join columns, aliases and
