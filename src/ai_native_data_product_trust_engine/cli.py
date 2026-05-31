@@ -58,6 +58,17 @@ def build_parser() -> argparse.ArgumentParser:
                 help="Repair posture for validation failures.",
             )
 
+    mcp_parser = subparsers.add_parser(
+        "mcp-server",
+        help="Serve agent-friendly MCP resources over local Trust Engine reports.",
+    )
+    mcp_parser.add_argument(
+        "--reports-dir",
+        type=Path,
+        default=Path("reports"),
+        help="Directory containing Trust Engine JSON reports.",
+    )
+
     return parser
 
 
@@ -115,6 +126,12 @@ def _main(argv: list[str] | None = None) -> int:
             f"Report: {args.output}"
         )
         return 0 if run.failed_count == 0 and run.error_count == 0 else 1
+
+    if args.command == "mcp-server":
+        from ai_native_data_product_trust_engine.mcp_server import run_mcp_server
+
+        run_mcp_server(args.reports_dir)
+        return 0
 
     print(
         f"[ADPTrust.NotImplemented] {args.command} is scaffolded but not implemented yet. "
