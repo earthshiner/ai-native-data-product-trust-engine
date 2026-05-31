@@ -47,6 +47,22 @@ def view_contract_test_cases(prefix: str) -> list[TestCase]:
             ),
         ),
         TestCase(
+            test_id=f"{prefix.upper()}-STD-TABLE-VIEW-COVERAGE",
+            name="Standard tables have matching locking views",
+            category=TestCategory.STRUCTURAL,
+            severity=TestSeverity.CRITICAL,
+            sql=_standard_table_view_coverage_sql(prefix),
+            expected_result=(
+                "Every %_STD_T table has a same-named %_STD_V access view for governed "
+                "agent and application access."
+            ),
+            expected=ExpectedResult.ZERO_ROWS,
+            repair_strategy=(
+                "Create the matching %_STD_V view with an explicit column list, LOCKING ROW "
+                "FOR ACCESS, and a 1:1 projection over the table."
+            ),
+        ),
+        TestCase(
             test_id=f"{prefix.upper()}-BUS-VIEW-SOURCES",
             name="Business views select from standard views",
             category=TestCategory.STRUCTURAL,
@@ -83,8 +99,12 @@ def view_contract_test_cases(prefix: str) -> list[TestCase]:
 def run_view_contract_validations(prefix: str, adapter) -> list[TestResult]:
     view_rows = adapter.fetch_all(_product_views_sql(prefix))
     if not view_rows:
-        return [_missing_inventory_result(prefix)]
+        return [
+            _missing_inventory_result(prefix),
+            _run_standard_table_view_coverage_validation(prefix, adapter),
+        ]
     results = [_run_view_validation(prefix, adapter, row) for row in view_rows]
+    results.append(_run_standard_table_view_coverage_validation(prefix, adapter))
     results.extend(_run_standard_view_contract_validations(prefix, adapter))
     results.extend(_run_business_view_source_validations(prefix, adapter))
     results.extend(_run_view_table_locking_validations(prefix, adapter))
@@ -99,6 +119,30 @@ def _run_standard_view_contract_validations(prefix: str, adapter) -> list[TestRe
 def _run_business_view_source_validations(prefix: str, adapter) -> list[TestResult]:
     view_rows = adapter.fetch_all(_business_view_inventory_sql(prefix))
     return [_run_business_view_source_validation(prefix, row) for row in view_rows]
+
+
+def _run_standard_table_view_coverage_validation(prefix: str, adapter) -> TestResult:
+    test_case = view_contract_test_cases(prefix)[2]
+    missing_rows = adapter.fetch_all(test_case.sql)
+    if missing_rows:
+        return TestResult(
+            test_case=test_case,
+            status=TestStatus.FAILED,
+            row_count=len(missing_rows),
+            sample_rows=missing_rows[:10],
+        )
+    return TestResult(
+        test_case=test_case,
+        status=TestStatus.PASSED,
+        row_count=0,
+        sample_rows=[
+            {
+                "validation_mode": "STD_TABLE_VIEW_COVERAGE",
+                "issue_code": None,
+                "repair_hint": "All standard tables have matching standard access views.",
+            }
+        ],
+    )
 
 
 def _run_view_table_locking_validations(prefix: str, adapter) -> list[TestResult]:
@@ -355,6 +399,49 @@ FROM DBC.TablesV
 WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_BUS\\_V' ESCAPE '\\'
   AND TableKind = 'V'
 ORDER BY DatabaseName, TableName
+""".strip()
+
+
+def _standard_table_view_coverage_sql(prefix: str) -> str:
+    escaped_prefix = prefix.replace("'", "''")
+    return f"""
+WITH standard_tables AS
+(
+    SELECT
+        TRIM(DatabaseName) AS table_database_name
+       ,TRIM(TableName) AS table_name
+       ,TRIM(SUBSTRING(DatabaseName FROM 1 FOR CHARACTER_LENGTH(DatabaseName) - 6) || '_STD_V')
+            AS expected_view_database_name
+       ,TRIM(TableName) AS expected_view_name
+    FROM DBC.TablesV
+    WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_STD\\_T' ESCAPE '\\'
+      AND TableKind = 'T'
+),
+missing_views AS
+(
+    SELECT
+        st.table_database_name
+       ,st.table_name
+       ,st.expected_view_database_name
+       ,st.expected_view_name
+       ,'MISSING_STANDARD_LOCKING_VIEW' AS issue_code
+       ,'Create a same-named %_STD_V locking 1:1 access view.' AS repair_hint
+    FROM standard_tables st
+    LEFT OUTER JOIN DBC.TablesV tv
+        ON tv.DatabaseName = st.expected_view_database_name
+       AND tv.TableName = st.expected_view_name
+       AND tv.TableKind = 'V'
+    WHERE tv.TableName IS NULL
+)
+SELECT
+    table_database_name
+   ,table_name
+   ,expected_view_database_name
+   ,expected_view_name
+   ,issue_code
+   ,repair_hint
+FROM missing_views
+ORDER BY table_database_name, table_name
 """.strip()
 
 
