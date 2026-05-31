@@ -82,8 +82,11 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "Data product trust score" in html
     assert "Performance readiness score" in html
     assert "Operational readiness score" in html
+    assert "Checks carried out" in html
     assert "Glossary" in html
     assert 'role="tablist"' in html
+    assert 'aria-controls="panel-checks"' in html
+    assert 'id="panel-checks"' in html
     assert 'id="tab-overview"' in html
     assert 'aria-controls="panel-results"' in html
     assert 'id="panel-results"' in html
@@ -99,6 +102,8 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "trust-report-data" in html
     assert "Duration" in html
     assert '<div class="metric-value">1s</div>' in html
+    assert "CALLCENTRE-SEM-001" in html
+    assert "Returns zero rows." in html
     assert "statusFilter" in html
     assert "MISSING_COLUMN" in html
     assert "Approval required" in html

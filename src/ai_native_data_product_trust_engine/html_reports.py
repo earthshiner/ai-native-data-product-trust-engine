@@ -651,6 +651,7 @@ def render_html_report(
   <main>
     <nav class="tabs" role="tablist" aria-label="Report sections">
       {_tab_button("overview", "Overview", True)}
+      {_tab_button("checks", "Checks", False)}
       {_tab_button("root-causes", "Root causes", False)}
       {_tab_button("repairs", "Repairs", False)}
       {_tab_button("glossary", "Glossary", False)}
@@ -694,6 +695,32 @@ def render_html_report(
 
       <section class="dimension-grid" aria-label="Dimension scores">
         {_dimension_cards(dimension_scores)}
+      </section>
+    </section>
+
+    <section
+      id="panel-checks"
+      class="tab-panel"
+      role="tabpanel"
+      aria-labelledby="tab-checks"
+      hidden
+    >
+      <section class="panel">
+        <h2>Checks carried out</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Check</th>
+              <th>Category</th>
+              <th>Severity</th>
+              <th>Status</th>
+              <th>What is tested</th>
+            </tr>
+          </thead>
+          <tbody>
+            {_check_rows(results)}
+          </tbody>
+        </table>
       </section>
     </section>
 
@@ -894,6 +921,28 @@ def _dimension_cards(dimension_scores: dict[str, int]) -> str:
         </div>"""
         for category, score in dimension_scores.items()
     )
+
+
+def _check_rows(results: list[TestResult]) -> str:
+    return "\n".join(_check_row(result) for result in results)
+
+
+def _check_row(result: TestResult) -> str:
+    test_case = result.test_case
+    description_parts = [test_case.expected_result]
+    if test_case.repair_strategy:
+        description_parts.append(f"Repair guidance: {test_case.repair_strategy}")
+    description = " ".join(description_parts)
+    return f"""<tr>
+      <td>
+        <strong>{_h(test_case.name)}</strong><br>
+        <code>{_h(test_case.test_id)}</code>
+      </td>
+      <td>{_term(test_case.category.value, test_case.category.value)}</td>
+      <td>{_h(test_case.severity.value)}</td>
+      <td><span class="status {result.status.value.lower()}">{_h(result.status.value)}</span></td>
+      <td>{_h(description)}</td>
+    </tr>"""
 
 
 def _repair_panel(title: str, count: int, text: str) -> str:
