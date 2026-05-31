@@ -101,6 +101,8 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "MISSING_COLUMN" in html
     assert "Approval required" in html
     assert "Backend error" in html
+    assert "Potential consequence" in html
+    assert "Generated SQL, views or recipes that depend on this column may fail at runtime." in html
     assert (
         "Column/Parameter &#x27;CallCentre_DOM_STD_T.Call_H.start_ts&#x27; does not exist."
         in html
@@ -134,6 +136,8 @@ def test_html_report_never_displays_raw_backend_stack_as_evidence(tmp_path):
 
     html = output_path.read_text(encoding="utf-8")
     assert "Backend error" in html
+    assert "Potential consequence" in html
+    assert "Agents may misunderstand product meaning" in html
     assert "Object &#x27;CallCentre_SEM_STD_T.data_product_registry&#x27; does not exist." in html
     assert "gosqldriver" not in html
     assert "database/sql" not in html

@@ -74,6 +74,136 @@ _TERM_DEFINITIONS = {
 _HEADER_IMAGE_PACKAGE = "ai_native_data_product_trust_engine.assets"
 _HEADER_IMAGE_NAME = "orange_blue_gradient.png"
 
+_ISSUE_CONSEQUENCES = {
+    "BUS_VIEW_SELECTS_TABLE_DIRECTLY": (
+        "Business consumers may bypass the standard access contract, including locking, column "
+        "order and table/view separation guarantees."
+    ),
+    "BUSINESS_LOGIC_IN_STD_VIEW": (
+        "The standard access layer may stop being a predictable 1:1 table contract, making "
+        "generated SQL and downstream view assumptions less reliable."
+    ),
+    "COLUMN_TYPE_DRIFT": (
+        "Generated joins and filters may trigger implicit casts, poor plans or incorrect "
+        "comparisons across similar business keys."
+    ),
+    "DIRECT_TABLE_VIEW_MISSING_LOCK": (
+        "Queries may take stronger locks than intended or interfere with concurrent product "
+        "loads and readers."
+    ),
+    "MEMORY_DATABASE_NOT_DEPLOYED": (
+        "Agents may be unable to read glossary, cookbook or design-memory guidance for the "
+        "product."
+    ),
+    "MEMORY_DATABASE_NOT_IN_MODULE_MAP": (
+        "Agents may miss available Memory metadata or navigate to the wrong module database."
+    ),
+    "MISSING_APPROVED_ENTRYPOINT": (
+        "Agents cannot determine the governed access path and may guess a table or view that "
+        "bypasses policy."
+    ),
+    "MISSING_COLUMN": (
+        "Generated SQL, views or recipes that depend on this column may fail at runtime."
+    ),
+    "MISSING_CONTRACT_URI": (
+        "Clients may query data before understanding the product contract, scope and usage "
+        "rules."
+    ),
+    "MISSING_DATA_PRODUCT_REGISTRY_TABLE": (
+        "MCP clients may not have a product-first discovery anchor and may fall back to guessing "
+        "databases or tables."
+    ),
+    "MISSING_JOIN_COLUMN_STATS": (
+        "Optimizer plans for generated relationship joins may be slower or less stable."
+    ),
+    "MISSING_OBJECT": (
+        "Generated SQL or published views may reference objects that no longer exist."
+    ),
+    "MISSING_ORIENTATION_MANIFEST": (
+        "Agents may not know which metadata, policy, quality and access resources to read before "
+        "querying data."
+    ),
+    "MISSING_POLICY_URI": (
+        "Clients may not see access rules or entitlements before attempting data access."
+    ),
+    "MISSING_PRODUCT_REGISTRY_ROW": (
+        "The product may be invisible to product-first discovery even if its tables and views "
+        "exist."
+    ),
+    "MISSING_SEMANTIC_URI": (
+        "Agents may not be able to locate the semantic model and may generate SQL from physical "
+        "schemas alone."
+    ),
+    "MISSING_STANDARD_LOCKING_VIEW": (
+        "Agents and applications may have to query product tables directly, bypassing the "
+        "standard locking access view."
+    ),
+    "MISSING_VIEW_COLUMN_LIST": (
+        "The view output contract may drift silently if the underlying table changes."
+    ),
+    "NO_PRODUCT_VIEWS_FOUND": (
+        "The product may not expose a usable governed view layer for agents or applications."
+    ),
+    "OBSERVABILITY_DATABASE_NOT_IN_MODULE_MAP": (
+        "Agents may miss lineage, quality or usage evidence when assessing operational readiness."
+    ),
+    "SELECT_STAR": (
+        "Column order and shape may change when source tables evolve, breaking generated SQL "
+        "contracts."
+    ),
+    "SEMANTIC_DATABASE_NOT_DEPLOYED": (
+        "The registry points to a Semantic database that cannot be found, so metadata discovery "
+        "may fail."
+    ),
+    "SEMANTIC_DATABASE_NOT_IN_MODULE_MAP": (
+        "The registry and module map disagree, so agents may navigate inconsistent metadata "
+        "locations."
+    ),
+    "STALE_OBJECT_NAME": (
+        "Agents may copy retired object names into generated SQL or documentation."
+    ),
+    "STD_VIEW_COLUMN_ORDER_MISMATCH": (
+        "The access view may no longer be a faithful 1:1 table projection, which can confuse "
+        "agents and consumers."
+    ),
+    "TABLE_AMP_SKEW": (
+        "Large scans or joins may be uneven across AMPs, increasing runtime and resource pressure."
+    ),
+    "UNSUPPORTED_CAPABILITY": (
+        "Agents may choose recipes or functions that the deployed platform/product cannot run."
+    ),
+}
+
+_CATEGORY_CONSEQUENCES = {
+    "CAPABILITY": (
+        "Agents may select behaviours or recipes that are not supported by the deployed product."
+    ),
+    "DATA_QUALITY": (
+        "Trust evidence for declared data rules may be incomplete or misleading."
+    ),
+    "FREE_TEXT": (
+        "Agents may learn stale names, ambiguous concepts or unsupported patterns from metadata "
+        "descriptions."
+    ),
+    "OPERATIONAL": (
+        "Freshness, monitoring or pipeline health may be unknown when consumers decide whether "
+        "to use the product."
+    ),
+    "PERFORMANCE": (
+        "The product may still be trustworthy, but generated access paths could be slow or "
+        "resource-intensive."
+    ),
+    "QUERY": (
+        "Generated or cookbook SQL may fail, return unexpected shapes or use unsafe access paths."
+    ),
+    "SEMANTIC": (
+        "Agents may misunderstand product meaning, ownership, policies or approved navigation."
+    ),
+    "STRUCTURAL": (
+        "Published objects may not match the contract that agents and applications depend on."
+    ),
+}
+
 
 def write_html_report(
     run: ValidationRun,
@@ -425,6 +555,14 @@ def render_html_report(
     .next-step {{
       background: #F3F8FC;
       border: 1px solid var(--td-line);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin: 8px 0;
+    }}
+    .consequence {{
+      background: #FFF8EB;
+      border: 1px solid #FFD8A8;
+      border-left: 4px solid var(--td-amber);
       border-radius: 6px;
       padding: 10px 12px;
       margin: 8px 0;
@@ -792,6 +930,7 @@ def _result_row(
     dependency_index: dict[str, list[str]],
 ) -> str:
     evidence = _evidence_summary(result)
+    consequence = _consequence(result)
     next_step = _next_step(result, dependency_index)
     sample_json = _h(json.dumps(result.sample_rows[:3], indent=2, sort_keys=True, default=str))
     error_html = ""
@@ -803,6 +942,11 @@ def _result_row(
     if next_step:
         next_step_html = f"""<div class="next-step">
           <strong>Next step</strong><br>{_h(next_step)}
+        </div>"""
+    consequence_html = ""
+    if consequence:
+        consequence_html = f"""<div class="consequence">
+          <strong>Potential consequence</strong><br>{_h(consequence)}
         </div>"""
     return f"""<tr
       data-status="{result.status.value}"
@@ -819,6 +963,7 @@ def _result_row(
       <td>
         <p>{_h(evidence)}</p>
         {error_html}
+        {consequence_html}
         {next_step_html}
         <details>
           <summary>Structured evidence</summary>
@@ -875,6 +1020,28 @@ def _next_step(
     if issue_code == "STALE_OBJECT_NAME":
         return "Apply the deterministic alias repair or replace the retired object name manually."
     return result.test_case.repair_strategy or "Review the structured evidence and choose a repair."
+
+
+def _consequence(result: TestResult) -> str:
+    if result.status == TestStatus.PASSED:
+        return ""
+    issue_code = ""
+    if result.sample_rows:
+        issue_code = str(result.sample_rows[0].get("issue_code") or "")
+    if issue_code in _ISSUE_CONSEQUENCES:
+        return _ISSUE_CONSEQUENCES[issue_code]
+    category = result.test_case.category.value
+    if category in _CATEGORY_CONSEQUENCES:
+        return _CATEGORY_CONSEQUENCES[category]
+    if result.error_message:
+        return (
+            "Validation could not complete for this check, so the product's current contract "
+            "health is unknown until the backend error is resolved."
+        )
+    return (
+        "Consumers may receive incomplete or misleading trust evidence until this validation "
+        "failure is reviewed."
+    )
 
 
 def _root_cause_groups(
