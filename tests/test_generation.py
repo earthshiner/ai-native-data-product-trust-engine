@@ -22,7 +22,7 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-STRUCT-002",
         "CALLCENTRE-PERF-001",
     ]
-    assert all("CallCentre" in test.sql for test in tests if test.test_id != "CALLCENTRE-DISCOVERY-001")
+    assert all("CallCentre" in test.sql for test in tests)
     assert tests[6].expected == ExpectedResult.NON_EMPTY
     assert "COUNT(DISTINCT type_signature) > 1" in tests[3].sql
 
@@ -34,7 +34,8 @@ def test_generate_metadata_tests_includes_data_product_registry_table_contract()
     assert registry_table_test.category == TestCategory.SEMANTIC
     assert registry_table_test.severity == TestSeverity.CRITICAL
     assert "FROM DBC.TablesV tv" in registry_table_test.sql
-    assert "governance.data_product_registry" in registry_table_test.sql
+    assert "CallCentre_SEM_STD_T.data_product_registry" in registry_table_test.sql
+    assert "tv.DatabaseName = 'CallCentre_SEM_STD_T'" in registry_table_test.sql
     assert "MISSING_DATA_PRODUCT_REGISTRY_TABLE" in registry_table_test.sql
     assert "TableKind = 'T'" in registry_table_test.sql
 
@@ -45,7 +46,8 @@ def test_generate_metadata_tests_includes_data_product_registry_contract():
 
     assert registry_test.category == TestCategory.SEMANTIC
     assert registry_test.severity == TestSeverity.CRITICAL
-    assert "FROM governance.data_product_registry" in registry_test.sql
+    assert "FROM CallCentre_SEM_STD_T.data_product_registry" in registry_test.sql
+    assert "semantic_database = 'CallCentre_SEM_STD_T'" in registry_test.sql
     assert "manifest_json" in registry_test.sql
     assert "MISSING_PRODUCT_REGISTRY_ROW" in registry_test.sql
     assert "SEMANTIC_DATABASE_NOT_IN_MODULE_MAP" in registry_test.sql

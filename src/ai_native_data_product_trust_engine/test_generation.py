@@ -14,12 +14,17 @@ def semantic_database(prefix: str) -> str:
     return f"{prefix}_SEM_STD_V"
 
 
+def semantic_table_database(prefix: str) -> str:
+    return f"{prefix}_SEM_STD_T"
+
+
 def memory_database(prefix: str) -> str:
     return f"{prefix}_MEM_STD_V"
 
 
 def generate_metadata_tests(prefix: str) -> list[TestCase]:
     sem_db = semantic_database(prefix)
+    sem_table_db = semantic_table_database(prefix)
     mem_db = memory_database(prefix)
 
     return [
@@ -157,24 +162,24 @@ ORDER BY pc.normalised_column_name, pc.column_name, pc.database_name, pc.table_n
             name="Data product registry table exists",
             category=TestCategory.SEMANTIC,
             severity=TestSeverity.CRITICAL,
-            sql="""
+            sql=f"""
 SELECT
-    'governance' AS database_name
+    '{sem_table_db}' AS database_name
    ,'data_product_registry' AS table_name
    ,'MISSING_DATA_PRODUCT_REGISTRY_TABLE' AS issue_code
-   ,'governance.data_product_registry is required for the Data Product Orientation Layer.' AS issue_detail
-   ,'Create and comment governance.data_product_registry before publishing MCP product discovery resources.' AS repair_hint
+   ,'{sem_table_db}.data_product_registry is required for the Data Product Orientation Layer.' AS issue_detail
+   ,'Create and comment {sem_table_db}.data_product_registry before publishing MCP product discovery resources.' AS repair_hint
 WHERE NOT EXISTS (
     SELECT 1
     FROM DBC.TablesV tv
-    WHERE tv.DatabaseName = 'governance'
+    WHERE tv.DatabaseName = '{sem_table_db}'
       AND tv.TableName = 'data_product_registry'
       AND tv.TableKind = 'T'
 );
 """.strip(),
-            expected_result="Returns zero rows when governance.data_product_registry exists.",
+            expected_result=f"Returns zero rows when {sem_table_db}.data_product_registry exists.",
             repair_strategy=(
-                "Create governance.data_product_registry with table and column comments so "
+                f"Create {sem_table_db}.data_product_registry with table and column comments so "
                 "the MCP Data Product Orientation Layer has a persistent backing catalogue."
             ),
         ),
@@ -201,10 +206,10 @@ WITH active_registry AS
        ,policy_uri
        ,approved_entrypoint
        ,approved_access_mode
-    FROM governance.data_product_registry
+    FROM {sem_table_db}.data_product_registry
     WHERE COALESCE(is_active, 1) = 1
       AND COALESCE(is_deleted, 0) = 0
-      AND semantic_database = '{sem_db}'
+      AND semantic_database = '{sem_table_db}'
 ),
 module_map AS
 (
@@ -219,8 +224,8 @@ registry_issues AS
     SELECT
         CAST(NULL AS VARCHAR(128)) AS product_id
        ,'MISSING_PRODUCT_REGISTRY_ROW' AS issue_code
-       ,'No active, non-deleted data_product_registry row points to {sem_db}.' AS issue_detail
-       ,'Insert or refresh governance.data_product_registry for this data product.' AS repair_hint
+       ,'No active, non-deleted data_product_registry row points to {sem_table_db}.' AS issue_detail
+       ,'Insert or refresh {sem_table_db}.data_product_registry for this data product.' AS repair_hint
     WHERE NOT EXISTS (SELECT 1 FROM active_registry)
 
     UNION ALL
@@ -364,7 +369,7 @@ ORDER BY issue_code, product_id;
 """.strip(),
             expected_result="Returns zero rows when the registry and orientation manifest match deployed metadata.",
             repair_strategy=(
-                "Refresh governance.data_product_registry and its manifest_json so MCP clients "
+                f"Refresh {sem_table_db}.data_product_registry and its manifest_json so MCP clients "
                 "discover the product, contract, semantic model, policy, quality, lineage and "
                 "approved access path before querying data."
             ),

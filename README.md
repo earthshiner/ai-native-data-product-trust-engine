@@ -105,7 +105,7 @@ The first implemented slice generates and executes nine metadata trust tests:
 - Column metadata references deployed columns.
 - Relationship metadata references deployed join columns.
 - Same/similar column names have consistent datatype, length, precision and scale.
-- `governance.data_product_registry` exists for product-first MCP discovery.
+- `{Product}_SEM_STD_T.data_product_registry` exists for product-first MCP discovery.
 - Data product registry and orientation manifest match deployed metadata.
 - Active cookbook recipes exist for later SQL template validation.
 - Product tables stay within the initial AMP storage skew warning threshold.
