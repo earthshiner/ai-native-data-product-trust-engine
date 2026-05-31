@@ -146,6 +146,33 @@ def test_html_report_never_displays_raw_backend_stack_as_evidence(tmp_path):
     assert "runtime.goexit" not in html
 
 
+def test_html_report_explains_relationship_datatype_mismatch_consequence(tmp_path):
+    output_path = tmp_path / "trust.html"
+    run = ValidationRun(
+        prefix="CallCentre",
+        started_at="2026-05-29T00:00:00+00:00",
+        completed_at="2026-05-29T00:00:01+00:00",
+        results=[
+            _result(
+                "CALLCENTRE-SEM-004",
+                TestStatus.FAILED,
+                sample_rows=[
+                    {
+                        "relationship_name": "Call to Customer",
+                        "issue_code": "JOIN_COLUMN_TYPE_MISMATCH",
+                    }
+                ],
+            )
+        ],
+    )
+
+    write_html_report(run, output_path, [])
+
+    html = output_path.read_text(encoding="utf-8")
+    assert "Potential consequence" in html
+    assert "Generated relationship joins may rely on implicit casts" in html
+
+
 def test_scorecards_keep_trust_performance_and_operational_separate():
     results = [
         _result("CALLCENTRE-SEM-001", TestStatus.PASSED, category=TestCategory.SEMANTIC),

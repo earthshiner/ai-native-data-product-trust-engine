@@ -95,6 +95,22 @@ _ISSUE_CONSEQUENCES = {
         "Queries may take stronger locks than intended or interfere with concurrent product "
         "loads and readers."
     ),
+    "JOIN_COLUMN_CHARSET_MISMATCH": (
+        "Generated relationship joins may require character-set conversion, increasing plan "
+        "risk and making comparisons less predictable."
+    ),
+    "JOIN_COLUMN_LENGTH_MISMATCH": (
+        "Generated relationship joins may truncate, pad or cast join keys, causing poor plans "
+        "or missed matches."
+    ),
+    "JOIN_COLUMN_PRECISION_SCALE_MISMATCH": (
+        "Generated relationship joins may cast numeric keys or compare rounded values, causing "
+        "plan instability or incorrect matches."
+    ),
+    "JOIN_COLUMN_TYPE_MISMATCH": (
+        "Generated relationship joins may rely on implicit casts, causing redistribution, poor "
+        "plans or failed SQL."
+    ),
     "MEMORY_DATABASE_NOT_DEPLOYED": (
         "Agents may be unable to read glossary, cookbook or design-memory guidance for the "
         "product."

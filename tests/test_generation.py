@@ -15,6 +15,7 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-SEM-001",
         "CALLCENTRE-SEM-002",
         "CALLCENTRE-SEM-003",
+        "CALLCENTRE-SEM-004",
         "CALLCENTRE-STRUCT-001",
         "CALLCENTRE-DISCOVERY-001",
         "CALLCENTRE-DISCOVERY-002",
@@ -23,8 +24,8 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-PERF-001",
     ]
     assert all("CallCentre" in test.sql for test in tests)
-    assert tests[6].expected == ExpectedResult.NON_EMPTY
-    assert "COUNT(DISTINCT type_signature) > 1" in tests[3].sql
+    assert tests[7].expected == ExpectedResult.NON_EMPTY
+    assert "COUNT(DISTINCT type_signature) > 1" in tests[4].sql
 
 
 def test_generate_metadata_tests_includes_data_product_registry_table_contract():
@@ -66,6 +67,24 @@ def test_generate_metadata_tests_includes_statistics_coverage_contract():
     assert "DBC.ColumnStatsV cs" not in stats_test.sql
     assert "MISSING_JOIN_COLUMN_STATS" in stats_test.sql
     assert "COLLECT STATISTICS COLUMN" in stats_test.sql
+
+
+def test_generate_metadata_tests_includes_relationship_datatype_contract():
+    tests = generate_metadata_tests("CallCentre")
+    datatype_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-004")
+
+    assert datatype_test.category == TestCategory.SEMANTIC
+    assert datatype_test.severity == TestSeverity.CRITICAL
+    assert "FROM CallCentre_SEM_STD_V.table_relationship tr" in datatype_test.sql
+    assert "INNER JOIN DBC.ColumnsV src" in datatype_test.sql
+    assert "INNER JOIN DBC.ColumnsV tgt" in datatype_test.sql
+    assert "JOIN_COLUMN_TYPE_MISMATCH" in datatype_test.sql
+    assert "JOIN_COLUMN_CHARSET_MISMATCH" in datatype_test.sql
+    assert "JOIN_COLUMN_PRECISION_SCALE_MISMATCH" in datatype_test.sql
+    assert "JOIN_COLUMN_LENGTH_MISMATCH" in datatype_test.sql
+    assert "source_decimal_total_digits" in datatype_test.sql
+    assert "target_decimal_fractional_digits" in datatype_test.sql
+    assert "character set" in datatype_test.repair_strategy
 
 
 def test_generate_metadata_tests_includes_table_skew_contract():
@@ -140,7 +159,7 @@ def test_validate_cli_writes_report(monkeypatch, tmp_path):
 
     assert exit_code == 0
     payload = json.loads(report_path.read_text(encoding="utf-8"))
-    assert payload["summary"]["passed"] == 9
+    assert payload["summary"]["passed"] == 10
     assert "CallCentre trust report" in html_path.read_text(encoding="utf-8")
 
 
@@ -204,6 +223,8 @@ class ValidationStubAdapter:
         if sql.startswith("HELP COLUMN"):
             return [{"Column Name": "call_id"}]
         if "COALESCE(RequestText" in sql:
+            return []
+        if "standard_tables AS" in sql:
             return []
         if "FROM DBC.TablesV" in sql and "TableKind = 'V'" in sql:
             return [

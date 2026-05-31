@@ -99,11 +99,12 @@ reports are local artifacts and are not committed.
 
 ## First Working Slice
 
-The first implemented slice generates and executes nine metadata trust tests:
+The first implemented slice generates and executes ten metadata trust tests:
 
 - Entity metadata references deployed objects.
 - Column metadata references deployed columns.
 - Relationship metadata references deployed join columns.
+- Relationship join columns have compatible datatype, length, precision, scale and character set.
 - Same/similar column names have consistent datatype, length, precision and scale.
 - `{Product}_SEM_STD_T.data_product_registry` exists for product-first MCP discovery.
 - Data product registry and orientation manifest match deployed metadata.
@@ -118,6 +119,11 @@ Column type consistency validation normalises column names by case and underscor
 normalised names with multiple physical type signatures across the data product. This catches
 join-risk patterns such as the same business key being defined with different datatypes, lengths,
 precision or scale in different modules or views.
+
+Relationship join column compatibility validation checks active `table_relationship` rows against
+`DBC.ColumnsV` for both sides of each declared join. It reports type, length, precision, scale and
+character-set mismatches with source and target column evidence, so stewards can align the physical
+join key or expose a compatible view-layer key before agents generate SQL from the relationship.
 
 The first free-text validation primitive is also in place. It scans entity, column,
 relationship, cookbook and glossary metadata text for known retired aliases and typo suspects such
