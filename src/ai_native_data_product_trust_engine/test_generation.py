@@ -98,6 +98,116 @@ WHERE COALESCE(tr.is_active, 1) = 1
             repair_strategy="Repair or deactivate invalid relationship rows before generating joins.",
         ),
         TestCase(
+            test_id=f"{prefix.upper()}-SEM-004",
+            name="Relationship join columns have compatible datatypes",
+            category=TestCategory.SEMANTIC,
+            severity=TestSeverity.CRITICAL,
+            sql=f"""
+WITH deployed_relationship_columns AS
+(
+    SELECT
+        tr.relationship_name
+       ,tr.source_database
+       ,tr.source_table
+       ,tr.source_column
+       ,TRIM(src.ColumnType) AS source_column_type
+       ,src.ColumnLength AS source_column_length
+       ,src.DecimalTotalDigits AS source_decimal_total_digits
+       ,src.DecimalFractionalDigits AS source_decimal_fractional_digits
+       ,TRIM(src.CharType) AS source_char_type
+       ,tr.target_database
+       ,tr.target_table
+       ,tr.target_column
+       ,TRIM(tgt.ColumnType) AS target_column_type
+       ,tgt.ColumnLength AS target_column_length
+       ,tgt.DecimalTotalDigits AS target_decimal_total_digits
+       ,tgt.DecimalFractionalDigits AS target_decimal_fractional_digits
+       ,TRIM(tgt.CharType) AS target_char_type
+    FROM {sem_db}.table_relationship tr
+    INNER JOIN DBC.ColumnsV src
+        ON src.DatabaseName = tr.source_database
+       AND src.TableName = tr.source_table
+       AND src.ColumnName = tr.source_column
+    INNER JOIN DBC.ColumnsV tgt
+        ON tgt.DatabaseName = tr.target_database
+       AND tgt.TableName = tr.target_table
+       AND tgt.ColumnName = tr.target_column
+    WHERE COALESCE(tr.is_active, 1) = 1
+),
+relationship_type_issues AS
+(
+    SELECT
+        relationship_name
+       ,source_database
+       ,source_table
+       ,source_column
+       ,source_column_type
+       ,source_column_length
+       ,source_decimal_total_digits
+       ,source_decimal_fractional_digits
+       ,source_char_type
+       ,target_database
+       ,target_table
+       ,target_column
+       ,target_column_type
+       ,target_column_length
+       ,target_decimal_total_digits
+       ,target_decimal_fractional_digits
+       ,target_char_type
+       ,CASE
+            WHEN source_column_type <> target_column_type
+                THEN 'JOIN_COLUMN_TYPE_MISMATCH'
+            WHEN COALESCE(source_char_type, '') <> COALESCE(target_char_type, '')
+                THEN 'JOIN_COLUMN_CHARSET_MISMATCH'
+            WHEN COALESCE(source_decimal_total_digits, -1)
+                    <> COALESCE(target_decimal_total_digits, -1)
+              OR COALESCE(source_decimal_fractional_digits, -1)
+                    <> COALESCE(target_decimal_fractional_digits, -1)
+                THEN 'JOIN_COLUMN_PRECISION_SCALE_MISMATCH'
+            WHEN COALESCE(source_column_length, -1) <> COALESCE(target_column_length, -1)
+                THEN 'JOIN_COLUMN_LENGTH_MISMATCH'
+            ELSE NULL
+        END AS issue_code
+    FROM deployed_relationship_columns
+    WHERE source_column_type <> target_column_type
+       OR COALESCE(source_char_type, '') <> COALESCE(target_char_type, '')
+       OR COALESCE(source_decimal_total_digits, -1)
+            <> COALESCE(target_decimal_total_digits, -1)
+       OR COALESCE(source_decimal_fractional_digits, -1)
+            <> COALESCE(target_decimal_fractional_digits, -1)
+       OR COALESCE(source_column_length, -1) <> COALESCE(target_column_length, -1)
+)
+SELECT
+    relationship_name
+   ,source_database
+   ,source_table
+   ,source_column
+   ,source_column_type
+   ,source_column_length
+   ,source_decimal_total_digits
+   ,source_decimal_fractional_digits
+   ,source_char_type
+   ,target_database
+   ,target_table
+   ,target_column
+   ,target_column_type
+   ,target_column_length
+   ,target_decimal_total_digits
+   ,target_decimal_fractional_digits
+   ,target_char_type
+   ,issue_code
+   ,'Align relationship join column datatype, length, precision, scale and character set before generated SQL uses this join.' AS repair_hint
+FROM relationship_type_issues
+ORDER BY relationship_name, issue_code, source_database, source_table, source_column;
+""".strip(),
+            expected_result="Returns zero rows for relationship join columns with incompatible type signatures.",
+            repair_strategy=(
+                "Align the relationship join column datatype, length, precision, scale and "
+                "character set, or expose a compatible view-layer join key before agents "
+                "generate SQL from this relationship."
+            ),
+        ),
+        TestCase(
             test_id=f"{prefix.upper()}-STRUCT-001",
             name="Similar column names use consistent datatypes",
             category=TestCategory.STRUCTURAL,
