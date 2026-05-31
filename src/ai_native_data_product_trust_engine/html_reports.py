@@ -9,6 +9,7 @@ from dataclasses import asdict
 from importlib import resources
 from pathlib import Path
 
+from ai_native_data_product_trust_engine.error_formatting import concise_backend_error
 from ai_native_data_product_trust_engine.models import (
     TestResult,
     TestSeverity,
@@ -693,7 +694,7 @@ def _result_row(
     error_html = ""
     if result.error_message:
         error_html = f"""<div class="backend-error">
-          <strong>Backend error</strong><br>{_h(_concise_backend_error(result.error_message))}
+          <strong>Backend error</strong><br>{_h(concise_backend_error(result.error_message))}
         </div>"""
     next_step_html = ""
     if next_step:
@@ -735,11 +736,9 @@ def _evidence_summary(result: TestResult) -> str:
             return f"{issue_code}: {repair_hint}"
         if issue_code:
             return str(issue_code)
-    return (
-        result.error_message
-        or result.test_case.repair_strategy
-        or "Review the structured evidence."
-    )
+    if result.error_message:
+        return concise_backend_error(result.error_message)
+    return result.test_case.repair_strategy or "Review the structured evidence."
 
 
 def _next_step(
@@ -953,17 +952,6 @@ def _missing_column_alter_hint(missing_column: str) -> str:
             "source table."
         )
     return "If the column is required, add it with an explicit data type to the source table."
-
-
-def _concise_backend_error(error_message: str) -> str:
-    message = error_message.strip()
-    for marker in ("\n at ", ". at ", " at gosqldriver/", " at database/sql."):
-        if marker in message:
-            message = message.split(marker, maxsplit=1)[0]
-            break
-    if message.startswith("RuntimeError:"):
-        message = message.removeprefix("RuntimeError:").strip()
-    return message.rstrip(".") + "."
 
 
 def _json_for_html(payload: dict[str, object]) -> str:

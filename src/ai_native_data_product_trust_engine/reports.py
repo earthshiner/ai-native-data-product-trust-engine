@@ -6,6 +6,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+from ai_native_data_product_trust_engine.error_formatting import concise_backend_error
 from ai_native_data_product_trust_engine.models import TestResult, ValidationRun
 from ai_native_data_product_trust_engine.scoring import (
     dimension_scores,
@@ -44,4 +45,6 @@ def _result_to_dict(result: TestResult) -> dict[str, object]:
     payload["test_case"]["category"] = result.test_case.category.value
     payload["test_case"]["severity"] = result.test_case.severity.value
     payload["test_case"]["expected"] = result.test_case.expected.value
+    if result.error_message:
+        payload["error_message"] = concise_backend_error(result.error_message)
     return payload
