@@ -103,6 +103,9 @@ def test_generate_tests_cli_includes_free_text_cases(capsys):
 
     captured = capsys.readouterr()
     assert exit_code == 0
+    assert "CALLCENTRE-CAP-003\tCAPABILITY\tSemantic search claims align to deployed capability" in (
+        captured.out
+    )
     assert "CALLCENTRE-TEXT-004\tFREE_TEXT\tQuery cookbook free-text references are current" in (
         captured.out
     )
@@ -159,7 +162,7 @@ def test_validate_cli_writes_report(monkeypatch, tmp_path):
 
     assert exit_code == 0
     payload = json.loads(report_path.read_text(encoding="utf-8"))
-    assert payload["summary"]["passed"] == 10
+    assert payload["summary"]["passed"] == 11
     assert "CallCentre trust report" in html_path.read_text(encoding="utf-8")
 
 

@@ -198,6 +198,10 @@ _ISSUE_CONSEQUENCES = {
         "The registry and module map disagree, so agents may navigate inconsistent metadata "
         "locations."
     ),
+    "SEMANTIC_SEARCH_CAPABILITY_UNAVAILABLE": (
+        "Agents may advertise or select semantic-search behaviour that the deployed product "
+        "cannot support."
+    ),
     "STALE_OBJECT_NAME": (
         "Agents may copy retired object names into generated SQL or documentation."
     ),
