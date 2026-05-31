@@ -63,6 +63,22 @@ def view_contract_test_cases(prefix: str) -> list[TestCase]:
             ),
         ),
         TestCase(
+            test_id=f"{prefix.upper()}-STD-VIEW-COLUMN-CONTRACT",
+            name="Standard view columns match source tables",
+            category=TestCategory.STRUCTURAL,
+            severity=TestSeverity.CRITICAL,
+            sql=_standard_view_inventory_sql(prefix),
+            expected_result=(
+                "Every %_STD_V view exposes the same column list in the same ColumnId order "
+                "as its matching %_STD_T table."
+            ),
+            expected=ExpectedResult.NON_EMPTY,
+            repair_strategy=(
+                "Recreate the %_STD_V view with an explicit view column list and SELECT "
+                "projection matching the source table ColumnId order."
+            ),
+        ),
+        TestCase(
             test_id=f"{prefix.upper()}-BUS-VIEW-SOURCES",
             name="Business views select from standard views",
             category=TestCategory.STRUCTURAL,
@@ -106,6 +122,7 @@ def run_view_contract_validations(prefix: str, adapter) -> list[TestResult]:
     results = [_run_view_validation(prefix, adapter, row) for row in view_rows]
     results.append(_run_standard_table_view_coverage_validation(prefix, adapter))
     results.extend(_run_standard_view_contract_validations(prefix, adapter))
+    results.extend(_run_standard_view_column_contract_validations(prefix, adapter))
     results.extend(_run_business_view_source_validations(prefix, adapter))
     results.extend(_run_view_table_locking_validations(prefix, adapter))
     return results
@@ -114,6 +131,14 @@ def run_view_contract_validations(prefix: str, adapter) -> list[TestResult]:
 def _run_standard_view_contract_validations(prefix: str, adapter) -> list[TestResult]:
     view_rows = adapter.fetch_all(_standard_view_inventory_sql(prefix))
     return [_run_standard_view_contract_validation(prefix, adapter, row) for row in view_rows]
+
+
+def _run_standard_view_column_contract_validations(prefix: str, adapter) -> list[TestResult]:
+    view_rows = adapter.fetch_all(_standard_view_inventory_sql(prefix))
+    return [
+        _run_standard_view_column_contract_validation(prefix, adapter, row)
+        for row in view_rows
+    ]
 
 
 def _run_business_view_source_validations(prefix: str, adapter) -> list[TestResult]:
@@ -215,14 +240,6 @@ def _run_standard_view_contract_validation(
     view_text = str(row.get("view_text") or row.get("RequestText") or "")
     base_database_name = database_name.removesuffix("_STD_V") + "_STD_T"
     violations = _standard_view_text_violations(database_name, view_name, view_text)
-    violations.extend(
-        _standard_view_column_violations(
-            adapter,
-            database_name,
-            view_name,
-            base_database_name,
-        )
-    )
     test_case = TestCase(
         test_id=f"{prefix.upper()}-STD-VIEW-1TO1-{database_name}.{view_name}",
         name=f"Standard view is 1:1: {database_name}.{view_name}",
@@ -256,6 +273,58 @@ def _run_standard_view_contract_validation(
                 "base_database_name": base_database_name,
                 "base_table_name": view_name,
                 "validation_mode": "STD_VIEW_1TO1",
+            }
+        ],
+    )
+
+
+def _run_standard_view_column_contract_validation(
+    prefix: str,
+    adapter,
+    row: dict[str, object],
+) -> TestResult:
+    database_name = str(row.get("database_name") or row.get("DatabaseName") or "").strip()
+    view_name = str(row.get("view_name") or row.get("TableName") or "").strip()
+    base_database_name = database_name.removesuffix("_STD_V") + "_STD_T"
+    violations = _standard_view_column_violations(
+        adapter,
+        database_name,
+        view_name,
+        base_database_name,
+    )
+    test_case = TestCase(
+        test_id=f"{prefix.upper()}-STD-VIEW-COLUMN-CONTRACT-{database_name}.{view_name}",
+        name=f"Standard view columns match table: {database_name}.{view_name}",
+        category=TestCategory.STRUCTURAL,
+        severity=TestSeverity.CRITICAL,
+        sql=_standard_view_column_contract_sql(database_name, view_name, base_database_name),
+        expected_result=(
+            "Standard view columns match the source table column list in the same ColumnId "
+            "order."
+        ),
+        repair_strategy=(
+            "Recreate the %_STD_V view with an explicit column list and SELECT columns in "
+            "the same ColumnId order as the matching %_STD_T table."
+        ),
+    )
+    if violations:
+        return TestResult(
+            test_case=test_case,
+            status=TestStatus.FAILED,
+            row_count=len(violations),
+            sample_rows=violations[:10],
+        )
+    return TestResult(
+        test_case=test_case,
+        status=TestStatus.PASSED,
+        row_count=0,
+        sample_rows=[
+            {
+                "database_name": database_name,
+                "view_name": view_name,
+                "base_database_name": base_database_name,
+                "base_table_name": view_name,
+                "validation_mode": "STD_VIEW_COLUMN_CONTRACT",
             }
         ],
     )

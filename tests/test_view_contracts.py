@@ -7,7 +7,7 @@ from ai_native_data_product_trust_engine.view_contracts import (
 def test_view_contract_test_cases_include_inventory_sql():
     tests = view_contract_test_cases("CallCentre")
 
-    assert len(tests) == 5
+    assert len(tests) == 6
     assert tests[0].test_id == "CALLCENTRE-VIEW-COLUMNS"
     assert "DBC.TablesV" in tests[0].sql
     assert "TableKind = 'V'" in tests[0].sql
@@ -15,8 +15,10 @@ def test_view_contract_test_cases_include_inventory_sql():
     assert tests[2].test_id == "CALLCENTRE-STD-TABLE-VIEW-COVERAGE"
     assert "MISSING_STANDARD_LOCKING_VIEW" in tests[2].sql
     assert "expected_view_database_name" in tests[2].sql
-    assert tests[3].test_id == "CALLCENTRE-BUS-VIEW-SOURCES"
-    assert tests[4].test_id == "CALLCENTRE-VIEW-TABLE-LOCKING"
+    assert tests[3].test_id == "CALLCENTRE-STD-VIEW-COLUMN-CONTRACT"
+    assert "ColumnId order" in tests[3].expected_result
+    assert tests[4].test_id == "CALLCENTRE-BUS-VIEW-SOURCES"
+    assert tests[5].test_id == "CALLCENTRE-VIEW-TABLE-LOCKING"
 
 
 def test_run_view_contract_validations_resolves_each_product_view():
@@ -76,7 +78,6 @@ def test_run_view_contract_validations_checks_std_view_contract():
 
     assert len(results) == 1
     assert results[0].status.value == "PASSED"
-    assert "Call_H" in adapter.column_contract_sql[0]
 
 
 def test_run_view_contract_validations_reports_std_view_logic():
@@ -93,13 +94,7 @@ def test_run_view_contract_validations_reports_std_view_logic():
             }
         ],
         bus_view_rows=[],
-        column_contract_rows=[
-            {
-                "column_id": 2,
-                "view_column_name": "topic",
-                "table_column_name": "start_ts",
-            }
-        ],
+        column_contract_rows=[],
         locking_view_rows=[],
         table_view_coverage_rows=[],
     )
@@ -112,7 +107,46 @@ def test_run_view_contract_validations_reports_std_view_logic():
     assert "SELECT_STAR" in issue_codes
     assert "MISSING_VIEW_COLUMN_LIST" in issue_codes
     assert "BUSINESS_LOGIC_IN_STD_VIEW" in issue_codes
-    assert "STD_VIEW_COLUMN_ORDER_MISMATCH" in issue_codes
+
+
+def test_run_view_contract_validations_reports_std_view_column_contract_drift():
+    adapter = StubAdapter(
+        view_rows=[],
+        std_view_rows=[
+            {
+                "database_name": "CallCentre_DOM_STD_V",
+                "view_name": "Call_H",
+                "view_text": (
+                    "CREATE VIEW CallCentre_DOM_STD_V.Call_H "
+                    "(call_id, topic) AS "
+                    "LOCKING ROW FOR ACCESS "
+                    "SELECT call_id, topic FROM CallCentre_DOM_STD_T.Call_H;"
+                ),
+            }
+        ],
+        bus_view_rows=[],
+        column_contract_rows=[
+            {
+                "column_id": 2,
+                "view_column_name": "topic",
+                "table_column_name": "start_ts",
+            }
+        ],
+        locking_view_rows=[],
+        table_view_coverage_rows=[],
+    )
+
+    results = adapter.run_columns_only()
+
+    assert len(results) == 1
+    assert results[0].status.value == "FAILED"
+    assert results[0].test_case.test_id.startswith(
+        "CALLCENTRE-STD-VIEW-COLUMN-CONTRACT-"
+    )
+    assert results[0].sample_rows[0]["issue_code"] == "STD_VIEW_COLUMN_ORDER_MISMATCH"
+    assert results[0].sample_rows[0]["view_column_name"] == "topic"
+    assert results[0].sample_rows[0]["table_column_name"] == "start_ts"
+    assert "Call_H" in adapter.column_contract_sql[0]
 
 
 def test_run_view_contract_validations_reports_bus_view_selecting_table():
@@ -309,6 +343,13 @@ class StubAdapter:
         )
 
         return [_run_standard_table_view_coverage_validation("CallCentre", self)]
+
+    def run_columns_only(self):
+        from ai_native_data_product_trust_engine.view_contracts import (
+            _run_standard_view_column_contract_validations,
+        )
+
+        return _run_standard_view_column_contract_validations("CallCentre", self)
 
     def fetch_all(self, sql):
         if sql.startswith("HELP COLUMN"):
