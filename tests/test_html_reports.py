@@ -13,6 +13,14 @@ from ai_native_data_product_trust_engine.repairs import RepairCandidate
 from ai_native_data_product_trust_engine.reports import validation_run_to_dict
 from ai_native_data_product_trust_engine.scoring import scorecards
 
+TERADATA_DRIVER_STACK_ERROR = (
+    "[Version 20.0.0.56] [Session 5405] [Teradata Database] [Error 3807] "
+    "Object 'CallCentre_SEM_STD_T.data_product_registry' does not exist. "
+    "at gosqldriver/teradatasql.MakeError ErrorUtil.go:100 at "
+    "gosqldriver/teradatasql.formatError ErrorUtil.go:106 at "
+    "database/sql.(*DB).queryDC sql.go:1781 at runtime.goexit asm_amd64.s:1771"
+)
+
 
 def test_write_html_report_creates_branded_interactive_report(tmp_path):
     output_path = tmp_path / "trust.html"
@@ -107,6 +115,31 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "overflow-wrap: anywhere" in html
 
 
+def test_html_report_never_displays_raw_backend_stack_as_evidence(tmp_path):
+    output_path = tmp_path / "trust.html"
+    run = ValidationRun(
+        prefix="CallCentre",
+        started_at="2026-05-29T00:00:00+00:00",
+        completed_at="2026-05-29T00:00:01+00:00",
+        results=[
+            _result(
+                "CALLCENTRE-DISCOVERY-002",
+                TestStatus.ERROR,
+                error_message=TERADATA_DRIVER_STACK_ERROR,
+            )
+        ],
+    )
+
+    write_html_report(run, output_path, [])
+
+    html = output_path.read_text(encoding="utf-8")
+    assert "Backend error" in html
+    assert "Object &#x27;CallCentre_SEM_STD_T.data_product_registry&#x27; does not exist." in html
+    assert "gosqldriver" not in html
+    assert "database/sql" not in html
+    assert "runtime.goexit" not in html
+
+
 def test_scorecards_keep_trust_performance_and_operational_separate():
     results = [
         _result("CALLCENTRE-SEM-001", TestStatus.PASSED, category=TestCategory.SEMANTIC),
@@ -149,6 +182,28 @@ def test_json_report_includes_separate_score_families():
     assert report["scores"]["data_product_trust"]["score"] == 100
     assert report["scores"]["performance_readiness"]["score"] == 0
     assert report["scores"]["operational_readiness"]["assessed"] is False
+
+
+def test_json_report_uses_friendly_backend_error_message():
+    run = ValidationRun(
+        prefix="CallCentre",
+        started_at="2026-05-29T00:00:00+00:00",
+        completed_at="2026-05-29T00:00:01+00:00",
+        results=[
+            _result(
+                "CALLCENTRE-DISCOVERY-002",
+                TestStatus.ERROR,
+                error_message=TERADATA_DRIVER_STACK_ERROR,
+            )
+        ],
+    )
+
+    report = validation_run_to_dict(run)
+
+    error_message = report["results"][0]["error_message"]
+    assert error_message.endswith("does not exist.")
+    assert "gosqldriver" not in error_message
+    assert "database/sql" not in error_message
 
 
 def _result(
