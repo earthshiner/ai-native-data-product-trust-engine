@@ -10,6 +10,9 @@ from ai_native_data_product_trust_engine.adapters import adapter_from_environmen
 from ai_native_data_product_trust_engine.capabilities import capability_test_cases
 from ai_native_data_product_trust_engine.html_reports import write_html_report
 from ai_native_data_product_trust_engine.query_templates import query_template_test_cases
+from ai_native_data_product_trust_engine.relationship_health import (
+    relationship_health_test_cases,
+)
 from ai_native_data_product_trust_engine.reports import write_json_report
 from ai_native_data_product_trust_engine.repairs import (
     apply_safe_repairs,
@@ -74,6 +77,7 @@ def _main(argv: list[str] | None = None) -> int:
             *generate_metadata_tests(args.prefix),
             *capability_test_cases(args.prefix),
             *query_template_test_cases(args.prefix),
+            *relationship_health_test_cases(args.prefix),
             *text_reference_test_cases(args.prefix),
             *view_contract_test_cases(args.prefix),
         ]

@@ -91,9 +91,30 @@ _ISSUE_CONSEQUENCES = {
         "Generated joins and filters may trigger implicit casts, poor plans or incorrect "
         "comparisons across similar business keys."
     ),
+    "CARDINALITY_SOURCE_NOT_UNIQUE": (
+        "Agents may trust a one-side relationship that actually duplicates source keys, causing "
+        "duplicate-heavy or misleading joins."
+    ),
+    "CARDINALITY_TARGET_NOT_UNIQUE": (
+        "Agents may trust a one-side relationship that actually duplicates target keys, causing "
+        "duplicate-heavy or misleading joins."
+    ),
+    "CURRENT_VIEW_MISSING_CURRENT_FILTER": (
+        "Agents may query historical rows when they expect the current-state view to expose only "
+        "current records."
+    ),
+    "CURRENT_VIEW_NOT_DECLARED": (
+        "Agents may not know the governed current-state access path for temporal records."
+    ),
+    "CURRENT_VIEW_NOT_DEPLOYED": (
+        "Agents may navigate to a declared current-state view that does not exist."
+    ),
     "DIRECT_TABLE_VIEW_MISSING_LOCK": (
         "Queries may take stronger locks than intended or interfere with concurrent product "
         "loads and readers."
+    ),
+    "DUPLICATE_CURRENT_RECORD": (
+        "Current-state queries may return multiple active records for the same business key."
     ),
     "EXPLAIN_ALL_AMP_SCAN": (
         "Interactive or agent-generated access may scan more data than intended, increasing "
@@ -220,6 +241,10 @@ _ISSUE_CONSEQUENCES = {
         "Column order and shape may change when source tables evolve, breaking generated SQL "
         "contracts."
     ),
+    "SOURCE_TO_TARGET_ORPHAN": (
+        "Generated joins may silently drop source records because their declared target key does "
+        "not exist."
+    ),
     "SEMANTIC_DATABASE_NOT_DEPLOYED": (
         "The registry points to a Semantic database that cannot be found, so metadata discovery "
         "may fail."
@@ -241,6 +266,10 @@ _ISSUE_CONSEQUENCES = {
     ),
     "TABLE_AMP_SKEW": (
         "Large scans or joins may be uneven across AMPs, increasing runtime and resource pressure."
+    ),
+    "TARGET_TO_SOURCE_ORPHAN": (
+        "Generated traversals may find target records that are not represented from the declared "
+        "source side."
     ),
     "UNSUPPORTED_CAPABILITY": (
         "Agents may choose recipes or functions that the deployed platform/product cannot run."
