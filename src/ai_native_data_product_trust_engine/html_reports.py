@@ -135,8 +135,8 @@ _ISSUE_CONSEQUENCES = {
         "schemas alone."
     ),
     "MISSING_STANDARD_LOCKING_VIEW": (
-        "Agents and applications may have to query product tables directly, bypassing the "
-        "standard locking access view."
+        "Agents and applications may query product tables directly, potentially taking locks "
+        "that block other queries from using those tables."
     ),
     "MISSING_VIEW_COLUMN_LIST": (
         "The view output contract may drift silently if the underlying table changes."
