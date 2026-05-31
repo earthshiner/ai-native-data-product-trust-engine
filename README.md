@@ -169,9 +169,10 @@ in place.
 
 The optional HTML report is the human-facing companion to the JSON evidence. It uses Teradata brand
 colours, separate data product trust, performance readiness and operational readiness scorecards,
-filterable validation results, repair posture summaries and embedded structured evidence so users can
-scan the current trust position and decide what to fix next. Hover text and the glossary explain terms
-such as structural, semantic, query, capability, free-text, performance, operational and repairs.
+tabbed sections, filterable validation results, repair posture summaries and embedded structured
+evidence so users can scan the current trust position and decide what to fix next. Hover text and the
+glossary explain terms such as structural, semantic, query, capability, free-text, performance,
+operational and repairs.
 Failure rows show a concise backend error and a suggested next step first; raw stack traces remain in
 the structured JSON evidence for agents and deeper diagnostics.
 When multiple validation failures share the same missing column, the report correlates them and
