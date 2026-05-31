@@ -17,7 +17,11 @@ from ai_native_data_product_trust_engine.models import (
     ValidationRun,
 )
 from ai_native_data_product_trust_engine.repairs import RepairCandidate
-from ai_native_data_product_trust_engine.reports import validation_run_to_dict
+from ai_native_data_product_trust_engine.reports import (
+    format_duration,
+    validation_run_duration_seconds,
+    validation_run_to_dict,
+)
 from ai_native_data_product_trust_engine.scoring import (
     dimension_scores as calculate_dimension_scores,
     scorecards as calculate_scorecards,
@@ -94,6 +98,7 @@ def render_html_report(
     results = sorted(run.results, key=_result_sort_key)
     scorecards = calculate_scorecards(results)
     dimension_scores = calculate_dimension_scores(results)
+    duration = format_duration(validation_run_duration_seconds(run))
     dependency_index = _dependency_index(results)
     root_cause_groups = _root_cause_groups(results, dependency_index)
     safe_auto_count = sum(1 for candidate in repair_candidates if not candidate.requires_approval)
@@ -193,7 +198,7 @@ def render_html_report(
     }}
     .summary-grid {{
       display: grid;
-      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
       gap: 14px;
       margin-bottom: 18px;
     }}
@@ -489,6 +494,7 @@ def render_html_report(
         {_metric("Failed", run.failed_count)}
         {_metric("Errors", run.error_count)}
         {_metric("Repairs", len(repair_candidates))}
+        {_metric("Duration", duration)}
       </section>
 
       <section class="dimension-grid" aria-label="Dimension scores">
@@ -633,7 +639,7 @@ def _repair_to_dict(candidate: RepairCandidate) -> dict[str, object]:
     return payload
 
 
-def _metric(label: str, value: int) -> str:
+def _metric(label: str, value: object) -> str:
     return f"""<div class="panel">
       <div class="metric-label">{_term(label.upper(), label)}</div>
       <div class="metric-value">{value}</div>

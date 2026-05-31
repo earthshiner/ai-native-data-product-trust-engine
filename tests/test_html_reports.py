@@ -97,6 +97,8 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "#FF5F02" in html
     assert "#00233C" in html
     assert "trust-report-data" in html
+    assert "Duration" in html
+    assert '<div class="metric-value">1s</div>' in html
     assert "statusFilter" in html
     assert "MISSING_COLUMN" in html
     assert "Approval required" in html
@@ -182,6 +184,8 @@ def test_json_report_includes_separate_score_families():
     assert report["scores"]["data_product_trust"]["score"] == 100
     assert report["scores"]["performance_readiness"]["score"] == 0
     assert report["scores"]["operational_readiness"]["assessed"] is False
+    assert report["summary"]["duration_seconds"] == 1.0
+    assert report["summary"]["duration"] == "1s"
 
 
 def test_json_report_uses_friendly_backend_error_message():
