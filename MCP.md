@@ -9,19 +9,25 @@ at the directory containing the generated JSON reports.
 
 ## Install
 
-Install the project with the optional MCP dependency:
+Use Python 3.10 or later. On Windows, create a dedicated virtual environment from the repository
+root so the MCP client does not accidentally launch an older global Python:
 
 ```powershell
-pip install .[mcp]
+py -3.13 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .[mcp]
 ```
 
 For live Teradata validation, also install the Teradata optional dependency:
 
 ```powershell
-pip install .[mcp,teradata]
+.\.venv\Scripts\python.exe -m pip install -e .[mcp,teradata]
 ```
 
-During local development from the repository root, set `PYTHONPATH` if the package is not installed:
+If `py -3.13` is not available, use another installed Python 3.10+ interpreter. Do not configure the
+MCP client to use Python 3.8; this project requires Python 3.10 or later.
+
+During local development from the repository root, setting `PYTHONPATH` can work if the package is
+not installed, but installing into a virtual environment is preferred:
 
 ```powershell
 $env:PYTHONPATH='src'
@@ -32,7 +38,7 @@ $env:PYTHONPATH='src'
 The MCP server reads Trust Engine JSON reports. Generate a report before starting the server:
 
 ```powershell
-python -m ai_native_data_product_trust_engine validate `
+.\.venv\Scripts\python.exe -m ai_native_data_product_trust_engine validate `
   --prefix CallCentre `
   --output reports\callcentre-validation.json `
   --html-output reports\callcentre-validation.html
@@ -46,55 +52,77 @@ latest report for each `prefix`.
 Start the MCP server over the report directory:
 
 ```powershell
-python -m ai_native_data_product_trust_engine mcp-server --reports-dir reports
+.\.venv\Scripts\python.exe -m ai_native_data_product_trust_engine mcp-server --reports-dir reports
 ```
 
 Or use the installed console script:
 
 ```powershell
-adp-trust mcp-server --reports-dir reports
+.\.venv\Scripts\adp-trust.exe mcp-server --reports-dir reports
 ```
 
 ## Client Configuration
 
-Configure an MCP client to launch the server as a stdio command. Example:
+Configure an MCP client to launch the server as a stdio command. Use the absolute path to the
+virtual environment Python and an absolute `--reports-dir` path. This avoids the client resolving
+`python` to an unsupported interpreter such as Python 3.8.
 
 ```json
 {
   "mcpServers": {
     "adp-trust": {
-      "command": "python",
+      "command": "C:\\SCM\\ai-native-data-product-trust-engine\\.venv\\Scripts\\python.exe",
       "args": [
         "-m",
         "ai_native_data_product_trust_engine",
         "mcp-server",
         "--reports-dir",
-        "reports"
-      ],
-      "env": {
-        "PYTHONPATH": "src"
-      }
+        "C:\\SCM\\ai-native-data-product-trust-engine\\reports"
+      ]
     }
   }
 }
 ```
 
-If the package is installed in the client runtime, `PYTHONPATH` is not required and the command can
-use `adp-trust` instead:
+If you prefer the installed console script, point directly at the venv script:
 
 ```json
 {
   "mcpServers": {
     "adp-trust": {
-      "command": "adp-trust",
-      "args": ["mcp-server", "--reports-dir", "reports"]
+      "command": "C:\\SCM\\ai-native-data-product-trust-engine\\.venv\\Scripts\\adp-trust.exe",
+      "args": [
+        "mcp-server",
+        "--reports-dir",
+        "C:\\SCM\\ai-native-data-product-trust-engine\\reports"
+      ]
     }
   }
 }
 ```
 
-Use an absolute `--reports-dir` path when the MCP client starts the command from a different working
-directory.
+If you run from source without installing the package, set an absolute `PYTHONPATH` and still use a
+Python 3.10+ interpreter:
+
+```json
+{
+  "mcpServers": {
+    "adp-trust": {
+      "command": "C:\\Users\\pd185014\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+      "args": [
+        "-m",
+        "ai_native_data_product_trust_engine",
+        "mcp-server",
+        "--reports-dir",
+        "C:\\SCM\\ai-native-data-product-trust-engine\\reports"
+      ],
+      "env": {
+        "PYTHONPATH": "C:\\SCM\\ai-native-data-product-trust-engine\\src"
+      }
+    }
+  }
+}
+```
 
 ## Resources
 
@@ -150,7 +178,17 @@ The design goal is simple: expose product trust first, not tables first.
 If the server says the MCP SDK is unavailable, install the optional dependency:
 
 ```powershell
-pip install .[mcp]
+.\.venv\Scripts\python.exe -m pip install -e .[mcp]
+```
+
+If the MCP log says `No module named ai_native_data_product_trust_engine`, the MCP client is using a
+Python environment where the project is not installed. Configure the client to use the absolute path
+to `.venv\Scripts\python.exe`, or install the project into the interpreter the client is launching.
+
+If the MCP log shows Python 3.8, change the client command to a Python 3.10+ interpreter:
+
+```json
+"command": "C:\\SCM\\ai-native-data-product-trust-engine\\.venv\\Scripts\\python.exe"
 ```
 
 If no products are listed, check that the reports directory exists and contains Trust Engine JSON
@@ -159,7 +197,7 @@ reports with a `prefix` field.
 If a product cannot be found, rerun validation for that prefix:
 
 ```powershell
-python -m ai_native_data_product_trust_engine validate `
+.\.venv\Scripts\python.exe -m ai_native_data_product_trust_engine validate `
   --prefix CallCentre `
   --output reports\callcentre-validation.json
 ```
