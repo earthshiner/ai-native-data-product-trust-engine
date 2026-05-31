@@ -147,6 +147,10 @@ the same `ColumnId` order as the matching table. Business logic belongs in `%_BU
 those business views must select from `%_STD_V` access views rather than directly from `%_STD_T`
 tables.
 
+Standard table/view coverage validation checks every `%_STD_T` table has a same-named `%_STD_V`
+locking access view. Missing views are reported as structural contract failures so agents and
+applications do not have to query product tables directly.
+
 View locking validation checks every product view that directly queries a table, even outside the
 preferred layer architecture. `LOCKING ROW FOR ACCESS` is preferred. `LOCKING TABLE <table> FOR
 ACCESS` is accepted when it names the directly referenced table, but is treated as more fragile
