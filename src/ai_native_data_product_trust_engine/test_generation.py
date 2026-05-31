@@ -561,6 +561,169 @@ ORDER BY skew_percent DESC, total_perm_bytes DESC, database_name, table_name;
             ),
         ),
         TestCase(
+            test_id=f"{prefix.upper()}-STRUCT-003",
+            name="Product tables have healthy primary index definitions",
+            category=TestCategory.STRUCTURAL,
+            severity=TestSeverity.WARNING,
+            sql=f"""
+WITH product_tables AS
+(
+    SELECT
+        TRIM(tv.DatabaseName) AS database_name
+       ,TRIM(tv.TableName) AS table_name
+       ,COALESCE(tv.PIColumnCount, 0) AS pi_column_count
+    FROM DBC.TablesV tv
+    WHERE tv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+      AND tv.TableKind = 'T'
+),
+table_size AS
+(
+    SELECT
+        TRIM(tsv.DatabaseName) AS database_name
+       ,TRIM(tsv.TableName) AS table_name
+       ,COUNT(*) AS amp_count
+       ,SUM(COALESCE(tsv.CurrentPerm, 0)) AS total_perm_bytes
+       ,MIN(COALESCE(tsv.CurrentPerm, 0)) AS min_amp_perm_bytes
+       ,MAX(COALESCE(tsv.CurrentPerm, 0)) AS max_amp_perm_bytes
+       ,AVG(COALESCE(tsv.CurrentPerm, 0)) AS avg_amp_perm_bytes
+       ,CASE
+            WHEN MAX(COALESCE(tsv.CurrentPerm, 0)) = 0 THEN 0
+            ELSE 100 - (
+                (AVG(COALESCE(tsv.CurrentPerm, 0)) / MAX(COALESCE(tsv.CurrentPerm, 0))) * 100
+            )
+        END AS skew_percent
+    FROM DBC.TableSizeV tsv
+    GROUP BY TRIM(tsv.DatabaseName), TRIM(tsv.TableName)
+),
+primary_index_columns AS
+(
+    SELECT
+        TRIM(iv.DatabaseName) AS database_name
+       ,TRIM(iv.TableName) AS table_name
+       ,LISTAGG(TRIM(iv.ColumnName), ',') WITHIN GROUP (ORDER BY iv.ColumnPosition)
+            AS primary_index_columns
+       ,COUNT(*) AS primary_index_column_count
+       ,SUM(CASE WHEN colv.Nullable = 'Y' THEN 1 ELSE 0 END) AS nullable_pi_column_count
+       ,MAX(
+            CASE
+                WHEN UPPER(TRIM(iv.ColumnName)) LIKE '%STATUS%'
+                  OR UPPER(TRIM(iv.ColumnName)) LIKE '%TYPE%'
+                  OR UPPER(TRIM(iv.ColumnName)) LIKE '%FLAG%'
+                  OR UPPER(TRIM(iv.ColumnName)) LIKE '%GENDER%'
+                  OR UPPER(TRIM(iv.ColumnName)) LIKE '%CATEGORY%'
+                THEN 1
+                ELSE 0
+            END
+        ) AS suspicious_low_cardinality_name
+    FROM DBC.IndicesV iv
+    LEFT OUTER JOIN DBC.ColumnsV colv
+        ON colv.DatabaseName = iv.DatabaseName
+       AND colv.TableName = iv.TableName
+       AND colv.ColumnName = iv.ColumnName
+    WHERE iv.IndexNumber = 1
+      AND iv.IndexType IN ('P', 'Q', 'A', 'K')
+      AND iv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+    GROUP BY TRIM(iv.DatabaseName), TRIM(iv.TableName)
+),
+primary_index_issues AS
+(
+    SELECT
+        pt.database_name
+       ,pt.table_name
+       ,COALESCE(pic.primary_index_columns, '') AS primary_index_columns
+       ,COALESCE(ts.total_perm_bytes, 0) AS total_perm_bytes
+       ,COALESCE(ts.skew_percent, 0) AS skew_percent
+       ,'PRIMARY_INDEX_NOT_DEFINED' AS issue_code
+       ,'Define and document an intentional primary index, or explicitly justify NoPI table design.' AS repair_hint
+    FROM product_tables pt
+    LEFT OUTER JOIN primary_index_columns pic
+        ON pic.database_name = pt.database_name
+       AND pic.table_name = pt.table_name
+    LEFT OUTER JOIN table_size ts
+        ON ts.database_name = pt.database_name
+       AND ts.table_name = pt.table_name
+    WHERE pt.pi_column_count = 0
+      AND pic.table_name IS NULL
+
+    UNION ALL
+
+    SELECT
+        pt.database_name
+       ,pt.table_name
+       ,pic.primary_index_columns
+       ,COALESCE(ts.total_perm_bytes, 0)
+       ,COALESCE(ts.skew_percent, 0)
+       ,'PRIMARY_INDEX_NULLABLE_COLUMN' AS issue_code
+       ,'Review nullable primary index columns; NULL-heavy PI values can concentrate rows on a small number of AMPs.' AS repair_hint
+    FROM product_tables pt
+    INNER JOIN primary_index_columns pic
+        ON pic.database_name = pt.database_name
+       AND pic.table_name = pt.table_name
+    LEFT OUTER JOIN table_size ts
+        ON ts.database_name = pt.database_name
+       AND ts.table_name = pt.table_name
+    WHERE pic.nullable_pi_column_count > 0
+
+    UNION ALL
+
+    SELECT
+        pt.database_name
+       ,pt.table_name
+       ,pic.primary_index_columns
+       ,COALESCE(ts.total_perm_bytes, 0)
+       ,COALESCE(ts.skew_percent, 0)
+       ,'PRIMARY_INDEX_LOW_CARDINALITY_SUSPECT' AS issue_code
+       ,'Review low-cardinality-looking primary index columns and document the design if intentional.' AS repair_hint
+    FROM product_tables pt
+    INNER JOIN primary_index_columns pic
+        ON pic.database_name = pt.database_name
+       AND pic.table_name = pt.table_name
+    LEFT OUTER JOIN table_size ts
+        ON ts.database_name = pt.database_name
+       AND ts.table_name = pt.table_name
+    WHERE pic.primary_index_column_count = 1
+      AND pic.suspicious_low_cardinality_name = 1
+
+    UNION ALL
+
+    SELECT
+        pt.database_name
+       ,pt.table_name
+       ,COALESCE(pic.primary_index_columns, '') AS primary_index_columns
+       ,COALESCE(ts.total_perm_bytes, 0)
+       ,COALESCE(ts.skew_percent, 0)
+       ,'PRIMARY_INDEX_SKEW_HIGH' AS issue_code
+       ,'Review primary index choice because observed AMP storage skew is above the initial warning threshold.' AS repair_hint
+    FROM product_tables pt
+    INNER JOIN table_size ts
+        ON ts.database_name = pt.database_name
+       AND ts.table_name = pt.table_name
+    LEFT OUTER JOIN primary_index_columns pic
+        ON pic.database_name = pt.database_name
+       AND pic.table_name = pt.table_name
+    WHERE ts.total_perm_bytes > 0
+      AND ts.amp_count > 1
+      AND ts.skew_percent > 20
+)
+SELECT
+    database_name
+   ,table_name
+   ,primary_index_columns
+   ,total_perm_bytes
+   ,skew_percent
+   ,issue_code
+   ,repair_hint
+FROM primary_index_issues
+ORDER BY issue_code, skew_percent DESC, total_perm_bytes DESC, database_name, table_name;
+""".strip(),
+            expected_result="Returns zero rows for product tables with suspicious primary index health.",
+            repair_strategy=(
+                "Review missing, nullable, low-cardinality-looking or highly skewed primary "
+                "indexes. Document intentional designs; otherwise adjust the table or view-layer "
+                "access strategy."
+            ),
+        ),
+        TestCase(
             test_id=f"{prefix.upper()}-PERF-001",
             name="Relationship join columns have valid optimiser statistics",
             category=TestCategory.PERFORMANCE,
