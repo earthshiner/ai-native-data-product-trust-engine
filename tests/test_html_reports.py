@@ -75,6 +75,8 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "Performance readiness score" in html
     assert "Operational readiness score" in html
     assert "Glossary" in html
+    assert "data:image/png;base64" in html
+    assert "<span>N/A</span>" in html
     assert "title=\"Checks product meaning" in html
     assert "Free Text" in html
     assert "#FF5F02" in html
