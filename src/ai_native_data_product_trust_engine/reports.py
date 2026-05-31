@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
 from ai_native_data_product_trust_engine.error_formatting import concise_backend_error
@@ -15,6 +16,7 @@ from ai_native_data_product_trust_engine.scoring import (
 
 
 def validation_run_to_dict(run: ValidationRun) -> dict[str, object]:
+    duration_seconds = validation_run_duration_seconds(run)
     return {
         "prefix": run.prefix,
         "started_at": run.started_at,
@@ -24,6 +26,8 @@ def validation_run_to_dict(run: ValidationRun) -> dict[str, object]:
             "passed": run.passed_count,
             "failed": run.failed_count,
             "errors": run.error_count,
+            "duration_seconds": duration_seconds,
+            "duration": format_duration(duration_seconds),
         },
         "scores": scorecards(run.results),
         "dimension_scores": dimension_scores(run.results),
@@ -39,6 +43,28 @@ def write_json_report(run: ValidationRun, output_path: Path) -> None:
     )
 
 
+def validation_run_duration_seconds(run: ValidationRun) -> float:
+    try:
+        started_at = _parse_datetime(run.started_at)
+        completed_at = _parse_datetime(run.completed_at)
+    except ValueError:
+        return 0.0
+    return max((completed_at - started_at).total_seconds(), 0.0)
+
+
+def format_duration(duration_seconds: float) -> str:
+    if duration_seconds < 1:
+        return f"{duration_seconds:.2f}s"
+    rounded_seconds = int(round(duration_seconds))
+    hours, remainder = divmod(rounded_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
 def _result_to_dict(result: TestResult) -> dict[str, object]:
     payload = asdict(result)
     payload["status"] = result.status.value
@@ -48,3 +74,7 @@ def _result_to_dict(result: TestResult) -> dict[str, object]:
     if result.error_message:
         payload["error_message"] = concise_backend_error(result.error_message)
     return payload
+
+
+def _parse_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
