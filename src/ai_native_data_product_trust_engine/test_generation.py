@@ -806,4 +806,136 @@ ORDER BY dc.database_name, dc.table_name, dc.column_name, dc.relationship_name;
                 "Collect or refresh optimiser statistics on relationship join columns."
             ),
         ),
+        TestCase(
+            test_id=f"{prefix.upper()}-OPS-001",
+            name="Observability module is registered and deployed",
+            category=TestCategory.OPERATIONAL,
+            severity=TestSeverity.WARNING,
+            sql=f"""
+WITH observability_module AS
+(
+    SELECT
+        TRIM(database_name) AS observability_database
+    FROM {sem_db}.data_product_map
+    WHERE UPPER(TRIM(module_name)) = 'OBSERVABILITY'
+      AND COALESCE(is_active, 1) = 1
+),
+observability_issues AS
+(
+    SELECT
+        CAST(NULL AS VARCHAR(100)) AS observability_database
+       ,'MISSING_OBSERVABILITY_MODULE' AS issue_code
+       ,'No active Observability module is registered in data_product_map.' AS issue_detail
+       ,'Register and deploy the Observability module so operational readiness can track lineage, freshness, quality and usage evidence.' AS repair_hint
+    WHERE NOT EXISTS (SELECT 1 FROM observability_module)
+
+    UNION ALL
+
+    SELECT
+        om.observability_database
+       ,'OBSERVABILITY_DATABASE_NOT_DEPLOYED' AS issue_code
+       ,'The registered Observability database is not visible in DBC.DatabasesV.' AS issue_detail
+       ,'Deploy the Observability database or refresh data_product_map.database_name.' AS repair_hint
+    FROM observability_module om
+    LEFT OUTER JOIN DBC.DatabasesV dbv
+        ON dbv.DatabaseName = om.observability_database
+    WHERE dbv.DatabaseName IS NULL
+)
+SELECT
+    observability_database
+   ,issue_code
+   ,issue_detail
+   ,repair_hint
+FROM observability_issues
+ORDER BY issue_code, observability_database;
+""".strip(),
+            expected_result="Returns zero rows when an active Observability module is registered and deployed.",
+            repair_strategy=(
+                "Register and deploy the Observability module so the product can publish "
+                "lineage, freshness, quality and usage evidence."
+            ),
+        ),
+        TestCase(
+            test_id=f"{prefix.upper()}-OPS-002",
+            name="Observability evidence objects are deployed",
+            category=TestCategory.OPERATIONAL,
+            severity=TestSeverity.WARNING,
+            sql=f"""
+WITH observability_module AS
+(
+    SELECT
+        TRIM(database_name) AS observability_database
+    FROM {sem_db}.data_product_map
+    WHERE UPPER(TRIM(module_name)) = 'OBSERVABILITY'
+      AND COALESCE(is_active, 1) = 1
+),
+required_tables AS
+(
+    SELECT 'change_event' AS object_name
+    UNION ALL SELECT 'data_quality_metric'
+    UNION ALL SELECT 'data_lineage'
+    UNION ALL SELECT 'lineage_run'
+),
+required_semantic_views AS
+(
+    SELECT 'lineage_graph' AS object_name
+    UNION ALL SELECT 'lineage_run_latest'
+),
+missing_table_issues AS
+(
+    SELECT
+        om.observability_database
+       ,rt.object_name
+       ,'MISSING_OBSERVABILITY_TABLE' AS issue_code
+       ,'Required Observability table is not deployed.' AS issue_detail
+       ,'Deploy the Observability table so operational evidence can be captured.' AS repair_hint
+    FROM observability_module om
+    CROSS JOIN required_tables rt
+    LEFT OUTER JOIN DBC.TablesV tv
+        ON tv.DatabaseName = om.observability_database
+       AND tv.TableName = rt.object_name
+       AND tv.TableKind = 'T'
+    WHERE tv.TableName IS NULL
+),
+missing_view_issues AS
+(
+    SELECT
+        '{sem_db}' AS observability_database
+       ,rsv.object_name
+       ,'MISSING_OBSERVABILITY_SEMANTIC_VIEW' AS issue_code
+       ,'Required Semantic observability view is not deployed.' AS issue_detail
+       ,'Deploy the Semantic observability view so agents can inspect lineage and run status.' AS repair_hint
+    FROM required_semantic_views rsv
+    LEFT OUTER JOIN DBC.TablesV tv
+        ON tv.DatabaseName = '{sem_db}'
+       AND tv.TableName = rsv.object_name
+       AND tv.TableKind = 'V'
+    WHERE tv.TableName IS NULL
+)
+SELECT
+    observability_database
+   ,object_name
+   ,issue_code
+   ,issue_detail
+   ,repair_hint
+FROM missing_table_issues
+UNION ALL
+SELECT
+    observability_database
+   ,object_name
+   ,issue_code
+   ,issue_detail
+   ,repair_hint
+FROM missing_view_issues
+ORDER BY issue_code, observability_database, object_name;
+""".strip(),
+            expected_result=(
+                "Returns zero rows when required Observability evidence tables and Semantic "
+                "observability views are deployed."
+            ),
+            repair_strategy=(
+                "Deploy the Observability evidence tables and Semantic lineage views so agents "
+                "can inspect operational health before relying on the product."
+            ),
+        ),
     ]

@@ -157,6 +157,13 @@ warning-level structural findings because some NoPI or skewed designs can be int
 report includes table size, skew, PI columns and repair guidance so agents can distinguish documented
 design choices from likely distribution defects.
 
+Operational readiness now has an initial evidence baseline instead of remaining unassessed. The
+first checks verify that the Observability module is registered and deployed, and that required
+operational evidence objects are present: `change_event`, `data_quality_metric`, `data_lineage`,
+`lineage_run`, plus the Semantic `lineage_graph` and `lineage_run_latest` views. These checks make
+the operational readiness score reflect whether freshness, lineage, quality and usage evidence can
+be captured and inspected.
+
 View contract validation discovers deployed product views from `DBC.TablesV` and runs `HELP COLUMN`
 against a zero-row subquery for each view. Teradata resolves the view and returns authoritative
 output-column metadata, validating that source objects, projected columns, join columns, aliases and

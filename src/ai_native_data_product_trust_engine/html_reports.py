@@ -162,6 +162,18 @@ _ISSUE_CONSEQUENCES = {
         "Agents may not know which metadata, policy, quality and access resources to read before "
         "querying data."
     ),
+    "MISSING_OBSERVABILITY_MODULE": (
+        "The product has no active operational evidence anchor for lineage, freshness, quality "
+        "or usage monitoring."
+    ),
+    "MISSING_OBSERVABILITY_SEMANTIC_VIEW": (
+        "Agents may not have a governed Semantic view for lineage or latest-run operational "
+        "status."
+    ),
+    "MISSING_OBSERVABILITY_TABLE": (
+        "Operational evidence such as quality metrics, lineage definitions or lineage runs may "
+        "not be captured."
+    ),
     "MISSING_POLICY_URI": (
         "Clients may not see access rules or entitlements before attempting data access."
     ),
@@ -185,6 +197,10 @@ _ISSUE_CONSEQUENCES = {
     ),
     "OBSERVABILITY_DATABASE_NOT_IN_MODULE_MAP": (
         "Agents may miss lineage, quality or usage evidence when assessing operational readiness."
+    ),
+    "OBSERVABILITY_DATABASE_NOT_DEPLOYED": (
+        "Operational evidence cannot be recorded or inspected because the registered "
+        "Observability database is unavailable."
     ),
     "PRIMARY_INDEX_LOW_CARDINALITY_SUSPECT": (
         "Rows may concentrate on a small number of AMPs if the primary index has few distinct "

@@ -23,6 +23,8 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-STRUCT-002",
         "CALLCENTRE-STRUCT-003",
         "CALLCENTRE-PERF-001",
+        "CALLCENTRE-OPS-001",
+        "CALLCENTRE-OPS-002",
     ]
     assert all("CallCentre" in test.sql for test in tests)
     assert tests[7].expected == ExpectedResult.NON_EMPTY
@@ -116,11 +118,38 @@ def test_generate_metadata_tests_includes_primary_index_health_contract():
     assert "intentional designs" in pi_test.repair_strategy
 
 
+def test_generate_metadata_tests_includes_operational_readiness_contracts():
+    tests = generate_metadata_tests("CallCentre")
+    module_test = next(test for test in tests if test.test_id == "CALLCENTRE-OPS-001")
+    objects_test = next(test for test in tests if test.test_id == "CALLCENTRE-OPS-002")
+
+    assert module_test.category == TestCategory.OPERATIONAL
+    assert module_test.severity == TestSeverity.WARNING
+    assert "MISSING_OBSERVABILITY_MODULE" in module_test.sql
+    assert "OBSERVABILITY_DATABASE_NOT_DEPLOYED" in module_test.sql
+    assert "FROM CallCentre_SEM_STD_V.data_product_map" in module_test.sql
+
+    assert objects_test.category == TestCategory.OPERATIONAL
+    assert objects_test.severity == TestSeverity.WARNING
+    assert "change_event" in objects_test.sql
+    assert "data_quality_metric" in objects_test.sql
+    assert "data_lineage" in objects_test.sql
+    assert "lineage_run" in objects_test.sql
+    assert "lineage_graph" in objects_test.sql
+    assert "lineage_run_latest" in objects_test.sql
+    assert "MISSING_OBSERVABILITY_TABLE" in objects_test.sql
+    assert "MISSING_OBSERVABILITY_SEMANTIC_VIEW" in objects_test.sql
+
+
 def test_generate_tests_cli_includes_free_text_cases(capsys):
     exit_code = main(["generate-tests", "--prefix", "CallCentre"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
+    assert (
+        "CALLCENTRE-OPS-001\tOPERATIONAL\tObservability module is registered and deployed"
+        in captured.out
+    )
     assert "CALLCENTRE-CAP-003\tCAPABILITY\tSemantic search claims align to deployed capability" in (
         captured.out
     )
