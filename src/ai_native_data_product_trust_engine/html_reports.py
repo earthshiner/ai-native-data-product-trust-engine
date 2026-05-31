@@ -95,6 +95,25 @@ _ISSUE_CONSEQUENCES = {
         "Queries may take stronger locks than intended or interfere with concurrent product "
         "loads and readers."
     ),
+    "EXPLAIN_ALL_AMP_SCAN": (
+        "Interactive or agent-generated access may scan more data than intended, increasing "
+        "runtime and resource pressure."
+    ),
+    "EXPLAIN_DUPLICATED_LARGE_TABLE": (
+        "The plan may duplicate large data across AMPs, increasing spool, network and runtime "
+        "risk."
+    ),
+    "EXPLAIN_LOW_CONFIDENCE": (
+        "The optimiser estimates may be unreliable, so generated SQL performance may vary "
+        "significantly."
+    ),
+    "EXPLAIN_MISSING_STATS": (
+        "The optimiser may choose a poor plan because required statistics are missing or stale."
+    ),
+    "EXPLAIN_PRODUCT_JOIN": (
+        "The recipe may combine rows without a selective join path, causing excessive work or "
+        "unexpected result expansion."
+    ),
     "JOIN_COLUMN_CHARSET_MISMATCH": (
         "Generated relationship joins may require character-set conversion, increasing plan "
         "risk and making comparisons less predictable."
@@ -191,6 +210,10 @@ _ISSUE_CONSEQUENCES = {
     ),
     "UNSUPPORTED_CAPABILITY": (
         "Agents may choose recipes or functions that the deployed platform/product cannot run."
+    ),
+    "UNBOUNDED_INTERACTIVE_RECIPE": (
+        "Agents may run open-ended queries over large tables, causing slow responses, high "
+        "resource use or accidental broad data access."
     ),
 }
 

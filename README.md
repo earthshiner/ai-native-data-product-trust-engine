@@ -136,6 +136,16 @@ classes include missing columns, missing objects, unsupported functions, unsuppo
 capabilities and syntax errors. Query failures include extracted object/column/function names where
 available plus a first repair hint.
 
+Interactive recipe bounds validation treats active cookbook entries as agent-facing unless their
+title, use case, performance notes or complexity clearly identify them as batch, exhaustive,
+offline, training or full-extract patterns. Agent-facing recipes must include a parameterised
+predicate or row-limiting construct such as `TOP`, `SAMPLE`, `QUALIFY ROW_NUMBER` or `FETCH FIRST`.
+
+EXPLAIN performance validation scans recipe plans for early risk signals including product joins,
+all-AMP scans, duplicated large table access, missing or stale statistics, and low-confidence
+estimates. These checks feed the performance readiness score rather than the data product trust
+score, because a product can be semantically trustworthy while still needing access-path tuning.
+
 Statistics coverage validation checks active relationship join columns against `DBC.ColumnStatsV`.
 Missing valid statistics are reported as performance readiness warnings with the relationship name,
 join-column usage, issue code and a `COLLECT STATISTICS` repair hint. This keeps the check focused on
