@@ -124,6 +124,14 @@ def test_generate_tests_cli_includes_free_text_cases(capsys):
     assert "CALLCENTRE-CAP-003\tCAPABILITY\tSemantic search claims align to deployed capability" in (
         captured.out
     )
+    assert (
+        "CALLCENTRE-REL-ORPHANS\tDATA_QUALITY\tDeclared relationships have bounded orphan evidence"
+        in captured.out
+    )
+    assert (
+        "CALLCENTRE-TEMPORAL-CURRENT\tDATA_QUALITY\tTemporal entities have valid current-record contracts"
+        in captured.out
+    )
     assert "CALLCENTRE-TEXT-004\tFREE_TEXT\tQuery cookbook free-text references are current" in (
         captured.out
     )

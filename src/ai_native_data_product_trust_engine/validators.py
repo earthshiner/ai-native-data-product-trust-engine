@@ -18,6 +18,9 @@ from ai_native_data_product_trust_engine.models import (
 )
 from ai_native_data_product_trust_engine.capabilities import run_capability_validations
 from ai_native_data_product_trust_engine.query_templates import run_query_template_validations
+from ai_native_data_product_trust_engine.relationship_health import (
+    run_relationship_health_validations,
+)
 from ai_native_data_product_trust_engine.text_references import run_text_reference_validations
 from ai_native_data_product_trust_engine.view_contracts import run_view_contract_validations
 
@@ -56,6 +59,7 @@ def run_validation(
     tests: list[TestCase],
     include_capability_scans: bool = True,
     include_query_template_scans: bool = True,
+    include_relationship_health_scans: bool = True,
     include_text_reference_scans: bool = True,
     include_view_contract_scans: bool = True,
 ) -> ValidationRun:
@@ -65,6 +69,8 @@ def run_validation(
         results.extend(run_capability_validations(prefix, adapter))
     if include_query_template_scans:
         results.extend(run_query_template_validations(prefix, adapter))
+    if include_relationship_health_scans:
+        results.extend(run_relationship_health_validations(prefix, adapter))
     if include_text_reference_scans:
         results.extend(run_text_reference_validations(prefix, adapter))
     if include_view_contract_scans:

@@ -125,6 +125,12 @@ Relationship join column compatibility validation checks active `table_relations
 character-set mismatches with source and target column evidence, so stewards can align the physical
 join key or expose a compatible view-layer key before agents generate SQL from the relationship.
 
+Relationship health validation runs bounded evidence checks over active relationship metadata. It
+samples declared source and target keys to report source-to-target and target-to-source orphan
+rates, validates whether observed duplicate key behaviour contradicts declared `1:1`, `1:M` or
+`M:1` cardinality, and checks temporal entities for duplicate current rows and current-state views
+that omit the declared current flag filter.
+
 The first free-text validation primitive is also in place. It scans entity, column,
 relationship, cookbook and glossary metadata text for known retired aliases and typo suspects such
 as `v_relationship_paths` and `v_relationship_patsh`, then reports table, column, row key, token,
