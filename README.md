@@ -179,6 +179,11 @@ because every source table must be named correctly.
 The first capability registry primitive discovers native VECTOR and fallback embedding evidence
 from deployed objects. It reports capability inventory and fails alignment when active cookbook
 metadata references native VECTOR behaviour while the product only has fallback embedding evidence.
+Semantic-search capability alignment also scans cookbook, entity, column, relationship and glossary
+text for semantic search, embedding, cosine similarity, nearest-neighbour and native VECTOR claims.
+Semantic-search claims are accepted when either native VECTOR or fallback embedding evidence exists,
+but native VECTOR wording requires native VECTOR evidence. Findings include the source table, column,
+row key and a repair hint so agents can update wording or route users to the supported pattern.
 
 Repair proposal mode generates Markdown and SQL repair artifacts beside the validation report. Safe
 auto mode applies only deterministic repairs that do not require steward approval, such as known
