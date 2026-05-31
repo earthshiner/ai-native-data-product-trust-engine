@@ -204,6 +204,36 @@ def render_html_report(
       padding: 18px;
       box-shadow: 0 1px 2px rgba(0, 35, 60, 0.06);
     }}
+    .tabs {{
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--td-line);
+      margin-bottom: 18px;
+    }}
+    .tab {{
+      appearance: none;
+      border: 0;
+      border-bottom: 3px solid transparent;
+      background: transparent;
+      color: var(--td-muted);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      padding: 12px 14px;
+      white-space: nowrap;
+    }}
+    .tab[aria-selected="true"] {{
+      border-bottom-color: var(--td-orange);
+      color: var(--td-navy);
+    }}
+    .tab:focus-visible {{
+      outline: 3px solid rgba(255, 95, 2, 0.35);
+      outline-offset: 2px;
+    }}
+    .tab-panel[hidden] {{
+      display: none;
+    }}
     .score {{
       display: flex;
       align-items: center;
@@ -419,85 +449,132 @@ def render_html_report(
     </p>
   </header>
   <main>
-    <section class="score-grid" aria-label="Readiness scores">
-      {_score_card(
-          "Data product trust score",
-          "DATA_PRODUCT_TRUST",
-          scorecards["data_product_trust"],
-          "Measures metadata, semantics, contracts, access safety and data-trust evidence.",
-      )}
-      {_score_card(
-          "Performance readiness score",
-          "PERFORMANCE_READINESS",
-          scorecards["performance_readiness"],
-          "Measures execution risk such as skew, statistics, expensive joins and recipe bounds.",
-      )}
-      {_score_card(
-          "Operational readiness score",
-          "OPERATIONAL_READINESS",
-          scorecards["operational_readiness"],
-          "Measures freshness, observability, monitoring, SLA and pipeline health signals.",
-      )}
+    <nav class="tabs" role="tablist" aria-label="Report sections">
+      {_tab_button("overview", "Overview", True)}
+      {_tab_button("root-causes", "Root causes", False)}
+      {_tab_button("repairs", "Repairs", False)}
+      {_tab_button("glossary", "Glossary", False)}
+      {_tab_button("results", "Validation results", False)}
+    </nav>
+
+    <section
+      id="panel-overview"
+      class="tab-panel"
+      role="tabpanel"
+      aria-labelledby="tab-overview"
+    >
+      <section class="score-grid" aria-label="Readiness scores">
+        {_score_card(
+            "Data product trust score",
+            "DATA_PRODUCT_TRUST",
+            scorecards["data_product_trust"],
+            "Measures metadata, semantics, contracts, access safety and data-trust evidence.",
+        )}
+        {_score_card(
+            "Performance readiness score",
+            "PERFORMANCE_READINESS",
+            scorecards["performance_readiness"],
+            "Measures execution risk such as skew, statistics, expensive joins and recipe bounds.",
+        )}
+        {_score_card(
+            "Operational readiness score",
+            "OPERATIONAL_READINESS",
+            scorecards["operational_readiness"],
+            "Measures freshness, observability, monitoring, SLA and pipeline health signals.",
+        )}
+      </section>
+
+      <section class="summary-grid" aria-label="Validation summary">
+        {_metric("Passed", run.passed_count)}
+        {_metric("Failed", run.failed_count)}
+        {_metric("Errors", run.error_count)}
+        {_metric("Repairs", len(repair_candidates))}
+      </section>
+
+      <section class="dimension-grid" aria-label="Dimension scores">
+        {_dimension_cards(dimension_scores)}
+      </section>
     </section>
 
-    <section class="summary-grid" aria-label="Validation summary">
-      {_metric("Passed", run.passed_count)}
-      {_metric("Failed", run.failed_count)}
-      {_metric("Errors", run.error_count)}
-      {_metric("Repairs", len(repair_candidates))}
+    <section
+      id="panel-root-causes"
+      class="tab-panel"
+      role="tabpanel"
+      aria-labelledby="tab-root-causes"
+      hidden
+    >
+      {_root_cause_section(root_cause_groups)}
     </section>
 
-    <section class="dimension-grid" aria-label="Dimension scores">
-      {_dimension_cards(dimension_scores)}
+    <section
+      id="panel-repairs"
+      class="tab-panel"
+      role="tabpanel"
+      aria-labelledby="tab-repairs"
+      hidden
+    >
+      <section class="repairs" aria-label="Repair posture">
+        {safe_auto_panel}
+        {approval_panel}
+      </section>
     </section>
 
-    {_glossary_section()}
-
-    <section class="repairs" aria-label="Repair posture">
-      {safe_auto_panel}
-      {approval_panel}
+    <section
+      id="panel-glossary"
+      class="tab-panel"
+      role="tabpanel"
+      aria-labelledby="tab-glossary"
+      hidden
+    >
+      {_glossary_section()}
     </section>
 
-    {_root_cause_section(root_cause_groups)}
-
-    <section class="panel" style="margin-top:18px">
-      <h2>Validation results</h2>
-      <div class="toolbar">
-        <select id="statusFilter" aria-label="Filter by status">
-          <option value="">All statuses</option>
-          <option value="PASSED">Passed</option>
-          <option value="FAILED">Failed</option>
-          <option value="ERROR">Error</option>
-        </select>
-        <select id="categoryFilter" aria-label="Filter by category">
-          <option value="">All categories</option>
-          {_category_options(results)}
-        </select>
-        <select id="severityFilter" aria-label="Filter by severity">
-          <option value="">All severities</option>
-          {_severity_options(results)}
-        </select>
-        <input
-          id="searchFilter"
-          type="search"
-          placeholder="Search test, issue, object, hint"
-          aria-label="Search results"
-        />
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Status</th>
-            <th>Test</th>
-            <th>Category</th>
-            <th>Severity</th>
-            <th>Evidence</th>
-          </tr>
-        </thead>
-        <tbody id="resultsBody">
-          {_result_rows(results, dependency_index)}
-        </tbody>
-      </table>
+    <section
+      id="panel-results"
+      class="tab-panel"
+      role="tabpanel"
+      aria-labelledby="tab-results"
+      hidden
+    >
+      <section class="panel">
+        <h2>Validation results</h2>
+        <div class="toolbar">
+          <select id="statusFilter" aria-label="Filter by status">
+            <option value="">All statuses</option>
+            <option value="PASSED">Passed</option>
+            <option value="FAILED">Failed</option>
+            <option value="ERROR">Error</option>
+          </select>
+          <select id="categoryFilter" aria-label="Filter by category">
+            <option value="">All categories</option>
+            {_category_options(results)}
+          </select>
+          <select id="severityFilter" aria-label="Filter by severity">
+            <option value="">All severities</option>
+            {_severity_options(results)}
+          </select>
+          <input
+            id="searchFilter"
+            type="search"
+            placeholder="Search test, issue, object, hint"
+            aria-label="Search results"
+          />
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Test</th>
+              <th>Category</th>
+              <th>Severity</th>
+              <th>Evidence</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody">
+            {_result_rows(results, dependency_index)}
+          </tbody>
+        </table>
+      </section>
     </section>
 
     <script id="trust-report-data" type="application/json">{data_json}</script>
@@ -517,6 +594,17 @@ def render_html_report(
         }});
       }}
       filters.forEach((id) => document.getElementById(id).addEventListener("input", applyFilters));
+      document.querySelectorAll("[role='tab']").forEach((tab) => {{
+        tab.addEventListener("click", () => {{
+          const targetPanelId = tab.getAttribute("aria-controls");
+          document.querySelectorAll("[role='tab']").forEach((item) => {{
+            item.setAttribute("aria-selected", String(item === tab));
+          }});
+          document.querySelectorAll(".tab-panel").forEach((panel) => {{
+            panel.hidden = panel.id !== targetPanelId;
+          }});
+        }});
+      }});
     </script>
   </main>
 </body>
@@ -550,6 +638,18 @@ def _metric(label: str, value: int) -> str:
       <div class="metric-label">{_term(label.upper(), label)}</div>
       <div class="metric-value">{value}</div>
     </div>"""
+
+
+def _tab_button(tab_id: str, label: str, selected: bool) -> str:
+    selected_value = "true" if selected else "false"
+    return f"""<button
+        id="tab-{_h(tab_id)}"
+        class="tab"
+        type="button"
+        role="tab"
+        aria-selected="{selected_value}"
+        aria-controls="panel-{_h(tab_id)}"
+      >{_h(label)}</button>"""
 
 
 def _score_card(
@@ -635,9 +735,12 @@ def _glossary_section() -> str:
 
 def _root_cause_section(groups: list[dict[str, object]]) -> str:
     if not groups:
-        return ""
+        return """<section class="panel" aria-label="Root cause groups">
+      <h2>Root cause groups</h2>
+      <p>No repeated root cause groups detected.</p>
+    </section>"""
     cards = "\n".join(_root_cause_card(group) for group in groups)
-    return f"""<section class="panel" style="margin-top:18px" aria-label="Root cause groups">
+    return f"""<section class="panel" aria-label="Root cause groups">
       <h2>Root cause groups</h2>
       <p>
         Repeated failures are grouped by the same missing object, missing column, or capability

@@ -83,6 +83,13 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "Performance readiness score" in html
     assert "Operational readiness score" in html
     assert "Glossary" in html
+    assert 'role="tablist"' in html
+    assert 'id="tab-overview"' in html
+    assert 'aria-controls="panel-results"' in html
+    assert 'id="panel-results"' in html
+    assert 'class="tab-panel"' in html
+    assert "document.querySelectorAll(&quot;[role=&#x27;tab&#x27;]&quot;)" not in html
+    assert "document.querySelectorAll(\"[role='tab']\")" in html
     assert "data:image/png;base64" in html
     assert "<span>N/A</span>" in html
     assert "title=\"Checks product meaning" in html
