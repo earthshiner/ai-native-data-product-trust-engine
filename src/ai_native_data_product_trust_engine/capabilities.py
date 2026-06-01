@@ -14,6 +14,7 @@ from ai_native_data_product_trust_engine.models import (
     TestSeverity,
     TestStatus,
 )
+from ai_native_data_product_trust_engine.object_filters import backup_object_exclusion_sql
 
 NATIVE_VECTOR_PATTERN = re.compile(
     r"\b(TD_VECTORDISTANCE|NATIVE\s+VECTOR|VECTOR\s+(?:SEARCH|DISTANCE|INDEX|COLUMN))\b",
@@ -260,6 +261,7 @@ SELECT
    ,ColumnType
 FROM DBC.ColumnsV
 WHERE DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+  AND {backup_object_exclusion_sql('TableName')}
   AND (
        UPPER(ColumnType) IN ('VECTOR', 'VE')
     OR UPPER(ColumnName) = 'VECTOR'
@@ -276,6 +278,7 @@ SELECT
    ,ColumnType
 FROM DBC.ColumnsV
 WHERE DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+  AND {backup_object_exclusion_sql('TableName')}
   AND (
        UPPER(TableName) LIKE '%EMBED%'
     OR UPPER(ColumnName) LIKE '%EMBED%'

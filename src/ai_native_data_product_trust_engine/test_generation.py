@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ai_native_data_product_trust_engine.object_filters import backup_object_exclusion_sql
 from ai_native_data_product_trust_engine.models import (
     ExpectedResult,
     TestCase,
@@ -42,7 +43,8 @@ LEFT OUTER JOIN DBC.TablesV tv
     ON tv.DatabaseName = em.database_name
    AND tv.TableName = em.table_name
 WHERE tv.TableName IS NULL
-  AND COALESCE(em.is_active, 1) = 1;
+  AND COALESCE(em.is_active, 1) = 1
+  AND {backup_object_exclusion_sql('em.table_name')};
 """.strip(),
             expected_result="Returns zero rows.",
             repair_strategy="Mark stale entity metadata inactive or update database_name/table_name to the deployed object.",
@@ -63,7 +65,8 @@ LEFT OUTER JOIN DBC.ColumnsV colv
    AND colv.TableName = cmeta.table_name
    AND colv.ColumnName = cmeta.column_name
 WHERE colv.ColumnName IS NULL
-  AND COALESCE(cmeta.is_active, 1) = 1;
+  AND COALESCE(cmeta.is_active, 1) = 1
+  AND {backup_object_exclusion_sql('cmeta.table_name')};
 """.strip(),
             expected_result="Returns zero rows.",
             repair_strategy="Refresh column metadata from DBC.ColumnsV or deactivate obsolete metadata rows.",
@@ -92,6 +95,8 @@ LEFT OUTER JOIN DBC.ColumnsV tgt
    AND tgt.TableName = tr.target_table
    AND tgt.ColumnName = tr.target_column
 WHERE COALESCE(tr.is_active, 1) = 1
+  AND {backup_object_exclusion_sql('tr.source_table')}
+  AND {backup_object_exclusion_sql('tr.target_table')}
   AND (src.ColumnName IS NULL OR tgt.ColumnName IS NULL);
 """.strip(),
             expected_result="Returns zero rows.",
@@ -133,6 +138,8 @@ WITH deployed_relationship_columns AS
        AND tgt.TableName = tr.target_table
        AND tgt.ColumnName = tr.target_column
     WHERE COALESCE(tr.is_active, 1) = 1
+      AND {backup_object_exclusion_sql('tr.source_table')}
+      AND {backup_object_exclusion_sql('tr.target_table')}
 ),
 relationship_type_issues AS
 (
@@ -235,6 +242,7 @@ WITH product_columns AS
        AND tv.TableName = colv.TableName
     WHERE colv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
       AND tv.TableKind IN ('T', 'V')
+      AND {backup_object_exclusion_sql('colv.TableName')}
 ),
 drifted_names AS
 (
@@ -520,6 +528,7 @@ WITH table_amp_usage AS
        AND tv.TableName = tsv.TableName
     WHERE tsv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
       AND tv.TableKind = 'T'
+      AND {backup_object_exclusion_sql('tsv.TableName')}
 ),
 table_skew AS
 (
@@ -575,6 +584,7 @@ WITH product_tables AS
     FROM DBC.TablesV tv
     WHERE tv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
       AND tv.TableKind = 'T'
+      AND {backup_object_exclusion_sql('tv.TableName')}
 ),
 table_size AS
 (
@@ -593,6 +603,7 @@ table_size AS
             )
         END AS skew_percent
     FROM DBC.TableSizeV tsv
+    WHERE {backup_object_exclusion_sql('tsv.TableName')}
     GROUP BY TRIM(tsv.DatabaseName), TRIM(tsv.TableName)
 ),
 primary_index_columns AS
@@ -623,6 +634,7 @@ primary_index_columns AS
     WHERE iv.IndexNumber = 1
       AND iv.IndexType IN ('P', 'Q', 'A', 'K')
       AND iv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+      AND {backup_object_exclusion_sql('iv.TableName')}
     GROUP BY TRIM(iv.DatabaseName), TRIM(iv.TableName)
 ),
 primary_index_issues AS
@@ -742,6 +754,7 @@ WITH required_stats AS
       AND tr.source_database IS NOT NULL
       AND tr.source_table IS NOT NULL
       AND tr.source_column IS NOT NULL
+      AND {backup_object_exclusion_sql('tr.source_table')}
     UNION
     SELECT DISTINCT
         tr.target_database AS database_name
@@ -754,6 +767,7 @@ WITH required_stats AS
       AND tr.target_database IS NOT NULL
       AND tr.target_table IS NOT NULL
       AND tr.target_column IS NOT NULL
+      AND {backup_object_exclusion_sql('tr.target_table')}
 ),
 deployed_columns AS
 (
@@ -778,6 +792,7 @@ valid_column_stats AS
        ,statv.LastCollectTimeStamp AS last_collect_timestamp
     FROM DBC.ColumnStatsV statv
     WHERE statv.ValidStats = 'Y'
+      AND {backup_object_exclusion_sql('statv.TableName')}
 )
 SELECT
     dc.database_name

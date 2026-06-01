@@ -12,6 +12,7 @@ from ai_native_data_product_trust_engine.models import (
     TestSeverity,
     TestStatus,
 )
+from ai_native_data_product_trust_engine.object_filters import backup_object_exclusion_sql
 
 SAMPLE_LIMIT = 1000
 
@@ -463,6 +464,8 @@ FROM {sem_db}.table_relationship
 WHERE COALESCE(is_active, 1) = 1
   AND source_database IS NOT NULL
   AND target_database IS NOT NULL
+  AND {backup_object_exclusion_sql('source_table')}
+  AND {backup_object_exclusion_sql('target_table')}
 ORDER BY relationship_id
 """.strip()
 
@@ -484,6 +487,7 @@ FROM {sem_db}.entity_metadata
 WHERE COALESCE(is_active, 1) = 1
   AND database_name IS NOT NULL
   AND table_name IS NOT NULL
+  AND {backup_object_exclusion_sql('table_name')}
   AND natural_key_column IS NOT NULL
   AND current_flag_column IS NOT NULL
   AND COALESCE(UPPER(TRIM(temporal_pattern)), 'NONE') <> 'NONE'
@@ -501,6 +505,7 @@ FROM DBC.TablesV
 WHERE DatabaseName = {_sql_string(database_name)}
   AND TableName = {_sql_string(view_name)}
   AND TableKind = 'V'
+  AND {backup_object_exclusion_sql('TableName')}
 """.strip()
 
 
