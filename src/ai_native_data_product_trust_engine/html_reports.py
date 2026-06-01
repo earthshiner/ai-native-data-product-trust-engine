@@ -434,6 +434,19 @@ def render_html_report(
       gap: 14px;
       margin-bottom: 18px;
     }}
+    .overview-section {{
+      margin-bottom: 18px;
+    }}
+    .overview-section h2 {{
+      margin: 0 0 8px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }}
+    .overview-note {{
+      margin: 0 0 14px;
+      color: var(--td-muted);
+      max-width: 980px;
+    }}
     .panel {{
       background: var(--td-white);
       border: 1px solid var(--td-line);
@@ -517,6 +530,12 @@ def render_html_report(
       margin-top: 6px;
       font-size: 30px;
       font-weight: 700;
+    }}
+    .metric-suffix {{
+      color: var(--td-muted);
+      font-size: 16px;
+      font-weight: 700;
+      margin-left: 2px;
     }}
     .term {{
       cursor: help;
@@ -730,16 +749,50 @@ def render_html_report(
         )}
       </section>
 
-      <section class="summary-grid" aria-label="Validation summary">
-        {_metric("Passed", run.passed_count)}
-        {_metric("Failed", run.failed_count)}
-        {_metric("Errors", run.error_count)}
-        {_metric("Repairs", len(repair_candidates))}
-        {_metric("Duration", duration)}
+      <section class="panel overview-section" aria-label="Overview explanation">
+        <h2>How to read the numbers</h2>
+        <p class="overview-note">
+          Validation outcomes are counts of checks. Passed + failed + errors equals total checks
+          run. Readiness scorecards each count the checks that belong to that score family, and
+          category scores are 0-100 scores, not check counts. Repair candidates are actions derived
+          from failures, so they do not add to the validation total.
+        </p>
       </section>
 
-      <section class="dimension-grid" aria-label="Dimension scores">
-        {_dimension_cards(dimension_scores)}
+      <section class="overview-section" aria-label="Validation outcomes">
+        <h2>Validation outcomes</h2>
+        <p class="overview-note">These counts reconcile: passed + failed + errors = total checks.</p>
+        <div class="summary-grid">
+          {_metric("Passed", run.passed_count)}
+          {_metric("Failed", run.failed_count)}
+          {_metric("Errors", run.error_count)}
+          {_metric("Total checks", len(run.results))}
+          {_metric("Duration", duration)}
+        </div>
+      </section>
+
+      <section class="overview-section" aria-label="Repair candidate summary">
+        <h2>Repair candidates</h2>
+        <p class="overview-note">
+          Repairs are candidate actions generated from failed checks. They are not extra checks and
+          are not included in the validation total.
+        </p>
+        <div class="summary-grid">
+          {_metric("Total repairs", len(repair_candidates))}
+          {_metric("Safe-auto", safe_auto_count)}
+          {_metric("Approval required", approval_count)}
+        </div>
+      </section>
+
+      <section class="overview-section" aria-label="Category scores">
+        <h2>Category scores</h2>
+        <p class="overview-note">
+          These are per-category scores from 0 to 100. They help identify weak areas, but they are
+          not counts and should not be added together.
+        </p>
+        <div class="dimension-grid">
+          {_dimension_cards(dimension_scores)}
+        </div>
       </section>
     </section>
 
@@ -961,7 +1014,7 @@ def _dimension_cards(dimension_scores: dict[str, int]) -> str:
     return "\n".join(
         f"""<div class="panel">
           <div class="metric-label">{_term(category, category)}</div>
-          <div class="metric-value">{score}</div>
+          <div class="metric-value">{score}<span class="metric-suffix">/100</span></div>
           <div class="bar" aria-hidden="true"><span style="width:{score}%"></span></div>
         </div>"""
         for category, score in dimension_scores.items()
