@@ -42,12 +42,17 @@ def classify_stale_relationship_path_name(object_name: str) -> RepairCandidate |
 
 def generate_repair_candidates(run: ValidationRun) -> list[RepairCandidate]:
     candidates: list[RepairCandidate] = []
+    seen_candidate_keys: set[tuple[object, ...]] = set()
     for result in run.results:
         if result.status == TestStatus.PASSED:
             continue
         for sample_row in result.sample_rows or [{}]:
             candidate = _candidate_from_sample(result.test_case.test_id, sample_row)
             if candidate:
+                dedupe_key = _candidate_dedupe_key(candidate)
+                if dedupe_key in seen_candidate_keys:
+                    continue
+                seen_candidate_keys.add(dedupe_key)
                 candidates.append(candidate)
     return candidates
 
@@ -97,6 +102,20 @@ def _candidate_from_sample(test_id: str, sample_row: dict[str, object]) -> Repai
         test_id=test_id,
         evidence=sample_row,
     )
+
+
+def _candidate_dedupe_key(candidate: RepairCandidate) -> tuple[object, ...]:
+    evidence = candidate.evidence
+    if candidate.issue_code == "MISSING_JOIN_COLUMN_STATS":
+        return (
+            candidate.issue_code,
+            evidence.get("database_name"),
+            evidence.get("table_name"),
+            evidence.get("column_name"),
+        )
+    if candidate.sql:
+        return (candidate.issue_code, candidate.mode.value, candidate.sql)
+    return (candidate.candidate_id,)
 
 
 def _is_safe_text_alias(sample_row: dict[str, object]) -> bool:
@@ -271,6 +290,15 @@ def _repair_sql(candidates: list[RepairCandidate]) -> str:
 
 
 def _candidate_id(test_id: str, issue_code: str, sample_row: dict[str, object]) -> str:
+    if issue_code == "MISSING_JOIN_COLUMN_STATS":
+        row_id = (
+            f"{sample_row.get('database_name', '')}-"
+            f"{sample_row.get('table_name', '')}-"
+            f"{sample_row.get('column_name', '')}"
+        )
+        raw = f"{test_id}-{issue_code}-{row_id}"
+        return "".join(char if char.isalnum() else "-" for char in str(raw)).strip("-").upper()
+
     row_id = (
         sample_row.get("recipe_id")
         or sample_row.get("relationship_name")

@@ -109,6 +109,41 @@ def test_apply_safe_repairs_reports_execution_failures():
     assert applied[0].error_message == "no update permission"
 
 
+def test_generate_repair_candidates_deduplicates_join_column_statistics():
+    run = _run_with_samples(
+        [
+            {
+                "issue_code": "MISSING_JOIN_COLUMN_STATS",
+                "database_name": "CallCentre_DOM_STD_T",
+                "table_name": "Call_H",
+                "column_name": "call_id",
+                "relationship_name": "Call_to_CategoryScore",
+                "repair_hint": (
+                    "COLLECT STATISTICS COLUMN (call_id) ON CallCentre_DOM_STD_T.Call_H;"
+                ),
+            },
+            {
+                "issue_code": "MISSING_JOIN_COLUMN_STATS",
+                "database_name": "CallCentre_DOM_STD_T",
+                "table_name": "Call_H",
+                "column_name": "call_id",
+                "relationship_name": "Call_to_Dynamics",
+                "repair_hint": (
+                    "COLLECT STATISTICS COLUMN (call_id) ON CallCentre_DOM_STD_T.Call_H;"
+                ),
+            },
+        ]
+    )
+
+    candidates = generate_repair_candidates(run)
+
+    assert len(candidates) == 1
+    assert candidates[0].candidate_id == (
+        "CALLCENTRE-TEXT-004-MISSING-JOIN-COLUMN-STATS-"
+        "CALLCENTRE-DOM-STD-T-CALL-H-CALL-ID"
+    )
+
+
 class StubAdapter:
     def __init__(self, error=None):
         self.executed_sql = []
@@ -121,6 +156,10 @@ class StubAdapter:
 
 
 def _run_with_sample(sample):
+    return _run_with_samples([sample])
+
+
+def _run_with_samples(samples):
     return ValidationRun(
         prefix="CallCentre",
         started_at="2026-01-01T00:00:00+00:00",
@@ -136,8 +175,8 @@ def _run_with_sample(sample):
                     expected_result="Returns zero rows.",
                 ),
                 status=TestStatus.FAILED,
-                row_count=1,
-                sample_rows=[sample],
+                row_count=len(samples),
+                sample_rows=samples,
             )
         ],
     )
