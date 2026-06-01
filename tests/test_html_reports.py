@@ -45,6 +45,10 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
                         "repair_hint": "Refresh the view contract.",
                         "recipe_id": "QC-001",
                         "recipe_title": "Call volume by day of week",
+                        "objects_to_examine": [
+                            "Query_Cookbook recipe QC-001: Call volume by day of week",
+                            "SQL object CallCentre_DOM_BUS_V.Call_Enriched",
+                        ],
                     }
                 ],
                 error_message=(
@@ -127,6 +131,8 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "Backend error" in html
     assert "Referenced from" in html
     assert "Query recipe QC-001: Call volume by day of week" in html
+    assert "Objects to examine" in html
+    assert "SQL object CallCentre_DOM_BUS_V.Call_Enriched" in html
     assert "Potential consequence" in html
     assert "Generated SQL, views or recipes that depend on this column may fail at runtime." in html
     assert (

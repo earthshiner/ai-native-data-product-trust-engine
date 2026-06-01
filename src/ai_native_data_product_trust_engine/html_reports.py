@@ -699,6 +699,19 @@ def render_html_report(
       margin: 8px 0;
       overflow-wrap: anywhere;
     }}
+    .inspection-scope {{
+      background: #F7F9FB;
+      border: 1px solid var(--td-line);
+      border-left: 4px solid var(--td-orange);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin: 8px 0;
+      overflow-wrap: anywhere;
+    }}
+    .inspection-scope ul {{
+      margin: 6px 0 0;
+      padding-left: 18px;
+    }}
     .consequence {{
       background: #FFF8EB;
       border: 1px solid #FFD8A8;
@@ -1210,6 +1223,7 @@ def _result_row(
     consequence = _consequence(result)
     next_step = _next_step(result, dependency_index)
     reference_context = _reference_context(result)
+    objects_to_examine = _objects_to_examine(result)
     sample_json = _h(json.dumps(result.sample_rows[:3], indent=2, sort_keys=True, default=str))
     error_html = ""
     if result.error_message:
@@ -1225,6 +1239,13 @@ def _result_row(
     if reference_context:
         reference_html = f"""<div class="reference-context">
           <strong>Referenced from</strong><br>{_h(reference_context)}
+        </div>"""
+    inspection_html = ""
+    if objects_to_examine:
+        object_items = "".join(f"<li>{_h(object_name)}</li>" for object_name in objects_to_examine)
+        inspection_html = f"""<div class="inspection-scope">
+          <strong>Objects to examine</strong>
+          <ul>{object_items}</ul>
         </div>"""
     consequence_html = ""
     if consequence:
@@ -1247,6 +1268,7 @@ def _result_row(
         <p>{_h(evidence)}</p>
         {error_html}
         {reference_html}
+        {inspection_html}
         {consequence_html}
         {next_step_html}
         <details>
@@ -1301,6 +1323,28 @@ def _sample_reference_label(result: TestResult, sample_row: dict[str, object]) -
     if object_names:
         return ", ".join(object_names)
     return result.test_case.test_id + ": " + result.test_case.name
+
+
+def _objects_to_examine(result: TestResult) -> list[str]:
+    objects: list[str] = []
+    for sample_row in result.sample_rows[:5]:
+        objects.extend(_sample_objects_to_examine(sample_row))
+    return list(dict.fromkeys(objects))
+
+
+def _sample_objects_to_examine(sample_row: dict[str, object]) -> list[str]:
+    objects: list[str] = []
+    for field_name in ("objects_to_examine", "referenced_objects"):
+        field_value = sample_row.get(field_name)
+        if isinstance(field_value, str):
+            objects.append(field_value)
+        elif isinstance(field_value, list):
+            objects.extend(str(value) for value in field_value if value)
+    database_name = sample_row.get("database_name") or sample_row.get("observability_database")
+    table_name = sample_row.get("table_name") or sample_row.get("object_name")
+    if database_name and table_name:
+        objects.append(f"{database_name}.{table_name}")
+    return objects
 
 
 def _next_step(

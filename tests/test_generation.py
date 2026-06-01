@@ -120,6 +120,7 @@ def test_generate_metadata_tests_includes_primary_index_health_contract():
     assert "PRIMARY_INDEX_LOW_CARDINALITY_SUSPECT" in pi_test.sql
     assert "PRIMARY_INDEX_SKEW_HIGH" in pi_test.sql
     assert "primary_index_columns" in pi_test.sql
+    assert "LISTAGG(iv.ColumnName" in pi_test.sql
     assert "intentional designs" in pi_test.repair_strategy
 
 
@@ -146,6 +147,7 @@ def test_generate_metadata_tests_includes_operational_readiness_contracts():
     assert "MISSING_OBSERVABILITY_SEMANTIC_VIEW" in objects_test.sql
     assert "observability_issues AS" in objects_test.sql
     assert "FROM observability_issues" in objects_test.sql
+    assert "FROM sys_calendar.CALENDAR cal" in objects_test.sql
 
 
 def test_generate_tests_cli_includes_free_text_cases(capsys):
@@ -207,6 +209,21 @@ def test_run_test_case_records_structured_backend_error():
     assert result.sample_rows[0]["test_id"] == "TEST-001"
     assert result.sample_rows[0]["referenced_from"] == "TEST-001: Example generated test"
     assert "ORDER BY clause" in result.sample_rows[0]["backend_error"]
+
+
+def test_run_test_case_records_backend_error_inspection_scope():
+    test_case = next(
+        test for test in generate_metadata_tests("CallCentre")
+        if test.test_id == "CALLCENTRE-STRUCT-003"
+    )
+    result = run_test_case(FailingTestAdapter(), test_case)
+
+    assert "CALLCENTRE_% product tables in DBC.TablesV" in result.sample_rows[0][
+        "objects_to_examine"
+    ]
+    assert "Primary index metadata in DBC.IndicesV" in result.sample_rows[0][
+        "objects_to_examine"
+    ]
 
 
 def test_validate_cli_writes_report(monkeypatch, tmp_path):

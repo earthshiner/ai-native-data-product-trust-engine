@@ -15,6 +15,10 @@ from ai_native_data_product_trust_engine.models import (
 )
 
 PARAMETER_PATTERN = re.compile(r"(?<!:):([A-Za-z][A-Za-z0-9_]*)")
+SQL_OBJECT_PATTERN = re.compile(
+    r"\b(?:FROM|JOIN|UPDATE|INTO)\s+([A-Za-z][A-Za-z0-9_$#]*\.[A-Za-z][A-Za-z0-9_$#]*)",
+    re.I,
+)
 MISSING_COLUMN_PATTERNS = (
     re.compile(r"Column/Parameter '([^']+)' does not exist", re.I),
     re.compile(r"Column ([A-Za-z0-9_.$]+) not found", re.I),
@@ -224,6 +228,12 @@ def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> lis
         explain_rows = adapter.fetch_all(f"EXPLAIN {bound_template.sql}")
     except Exception as exc:  # noqa: BLE001 - backend errors are classified for evidence.
         evidence = extract_sql_error_evidence(str(exc), sql_template)
+        evidence["referenced_objects"] = _referenced_sql_objects(sql_template)
+        evidence["objects_to_examine"] = _recipe_objects_to_examine(
+            recipe_id,
+            recipe_title,
+            sql_template,
+        )
         results.insert(
             0,
             _failed_result(
@@ -448,6 +458,12 @@ def _run_recipe_bounds_validation(
             "interactive_recipe": True,
             "parameters": list(bound_template.parameters),
             "missing_bound_type": "parameterised predicate or row-limiting clause",
+            "referenced_objects": _referenced_sql_objects(str(row.get("sql_template") or "")),
+            "objects_to_examine": _recipe_objects_to_examine(
+                recipe_id,
+                recipe_title,
+                str(row.get("sql_template") or ""),
+            ),
             "repair_hint": (
                 "Add a date/key parameter, TOP, SAMPLE, QUALIFY ROW_NUMBER, FETCH FIRST, "
                 "or mark this as an intentional batch/exhaustive recipe."
@@ -497,6 +513,24 @@ def _explain_text(explain_rows: list[dict[str, object]]) -> str:
     for row in explain_rows:
         values.extend(str(value) for value in row.values() if value is not None)
     return "\n".join(values)
+
+
+def _referenced_sql_objects(sql_template: str) -> list[str]:
+    return list(dict.fromkeys(SQL_OBJECT_PATTERN.findall(sql_template)))
+
+
+def _recipe_objects_to_examine(
+    recipe_id: str,
+    recipe_title: str,
+    sql_template: str,
+) -> list[str]:
+    objects = [f"Query_Cookbook recipe {recipe_id}: {recipe_title or recipe_id}"]
+    referenced_objects = _referenced_sql_objects(sql_template)
+    if referenced_objects:
+        objects.extend(f"SQL object {object_name}" for object_name in referenced_objects)
+    else:
+        objects.append("Recipe SQL template text")
+    return objects
 
 
 def _first_pattern_match(patterns: tuple[re.Pattern[str], ...], message: str) -> str | None:

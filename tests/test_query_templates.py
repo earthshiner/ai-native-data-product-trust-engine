@@ -114,6 +114,8 @@ def test_run_query_template_validations_reports_recipe_failures():
     assert results[0].sample_rows[0]["issue_code"] == "MISSING_COLUMN"
     assert results[0].sample_rows[0]["missing_column"] == "missing_column"
     assert results[0].sample_rows[0]["parameters"] == ["call_id"]
+    assert results[0].sample_rows[0]["referenced_objects"] == ["db.table"]
+    assert "SQL object db.table" in results[0].sample_rows[0]["objects_to_examine"]
     assert results[1].status.value == "PASSED"
 
 
@@ -138,6 +140,8 @@ def test_run_query_template_validations_flags_unbounded_interactive_recipe():
     assert bounds_result.sample_rows[0]["missing_bound_type"] == (
         "parameterised predicate or row-limiting clause"
     )
+    assert bounds_result.sample_rows[0]["referenced_objects"] == ["db.customer"]
+    assert "SQL object db.customer" in bounds_result.sample_rows[0]["objects_to_examine"]
 
 
 def test_run_query_template_validations_allows_unbounded_batch_recipe():

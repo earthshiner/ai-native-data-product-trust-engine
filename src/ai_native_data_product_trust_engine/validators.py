@@ -201,6 +201,9 @@ def _backend_error_evidence(test_case: TestCase, exc: Exception) -> dict[str, ob
             "backend_error": concise_backend_error(str(exc)),
         }
     )
+    inspection_scope = _inspection_scope(test_case)
+    if inspection_scope:
+        evidence["objects_to_examine"] = inspection_scope
     return evidence
 
 
@@ -224,6 +227,38 @@ def _scanner_error_evidence(
         }
     )
     return evidence
+
+
+def _inspection_scope(test_case: TestCase) -> list[str]:
+    test_id = test_case.test_id.upper()
+    prefix = test_id.split("-", 1)[0]
+    if test_id.endswith("STRUCT-003"):
+        return [
+            f"{prefix}_% product tables in DBC.TablesV",
+            "Primary index metadata in DBC.IndicesV",
+            "Column nullability in DBC.ColumnsV",
+            "AMP storage distribution in DBC.TableSizeV",
+        ]
+    if test_id.endswith("OPS-002"):
+        return [
+            f"Observability database registered in {prefix}_SEM_STD_V.data_product_map",
+            "Observability tables: change_event, data_quality_metric, data_lineage, lineage_run",
+            f"Semantic observability views in {prefix}_SEM_STD_V: lineage_graph, lineage_run_latest",
+        ]
+    return _referenced_sql_objects(test_case.sql)
+
+
+def _referenced_sql_objects(sql: str) -> list[str]:
+    object_refs: list[str] = []
+    tokens = sql.replace("\n", " ").split()
+    for index, token in enumerate(tokens[:-1]):
+        if token.upper() not in {"FROM", "JOIN", "UPDATE", "INTO"}:
+            continue
+        candidate = tokens[index + 1].strip("(),;")
+        if "." not in candidate or candidate.upper().startswith("SELECT"):
+            continue
+        object_refs.append(candidate)
+    return list(dict.fromkeys(object_refs))
 
 
 def _utc_now() -> str:

@@ -600,7 +600,7 @@ primary_index_columns AS
     SELECT
         TRIM(iv.DatabaseName) AS database_name
        ,TRIM(iv.TableName) AS table_name
-       ,LISTAGG(TRIM(iv.ColumnName), ',') WITHIN GROUP (ORDER BY iv.ColumnPosition)
+       ,LISTAGG(iv.ColumnName, ',') WITHIN GROUP (ORDER BY iv.ColumnPosition)
             AS primary_index_columns
        ,COUNT(*) AS primary_index_column_count
        ,SUM(CASE WHEN colv.Nullable = 'Y' THEN 1 ELSE 0 END) AS nullable_pi_column_count
@@ -872,14 +872,38 @@ WITH observability_module AS
 required_tables AS
 (
     SELECT 'change_event' AS object_name
-    UNION ALL SELECT 'data_quality_metric'
-    UNION ALL SELECT 'data_lineage'
-    UNION ALL SELECT 'lineage_run'
+    FROM sys_calendar.CALENDAR cal
+    WHERE cal.calendar_date = DATE '1900-01-01'
+
+    UNION ALL
+
+    SELECT 'data_quality_metric'
+    FROM sys_calendar.CALENDAR cal
+    WHERE cal.calendar_date = DATE '1900-01-01'
+
+    UNION ALL
+
+    SELECT 'data_lineage'
+    FROM sys_calendar.CALENDAR cal
+    WHERE cal.calendar_date = DATE '1900-01-01'
+
+    UNION ALL
+
+    SELECT 'lineage_run'
+    FROM sys_calendar.CALENDAR cal
+    WHERE cal.calendar_date = DATE '1900-01-01'
 ),
 required_semantic_views AS
 (
     SELECT 'lineage_graph' AS object_name
-    UNION ALL SELECT 'lineage_run_latest'
+    FROM sys_calendar.CALENDAR cal
+    WHERE cal.calendar_date = DATE '1900-01-01'
+
+    UNION ALL
+
+    SELECT 'lineage_run_latest'
+    FROM sys_calendar.CALENDAR cal
+    WHERE cal.calendar_date = DATE '1900-01-01'
 ),
 missing_table_issues AS
 (
