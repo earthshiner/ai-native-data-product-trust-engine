@@ -13,8 +13,17 @@ Use Python 3.10 or later. On Windows, create a dedicated virtual environment fro
 root so the MCP client does not accidentally launch an older global Python:
 
 ```powershell
+cd C:\SCM\ai-native-data-product-trust-engine
 py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .[mcp]
+```
+
+Run those as three separate commands. Do not put the `pip install` command on the same line as
+`py -3.13 -m venv .venv`. If PowerShell is currently in the `src` directory, move up to the
+repository root first:
+
+```powershell
+cd C:\SCM\ai-native-data-product-trust-engine
 ```
 
 For live Teradata validation, also install the Teradata optional dependency:
