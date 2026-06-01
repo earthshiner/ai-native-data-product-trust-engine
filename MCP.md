@@ -67,7 +67,7 @@ Start the MCP server over the report directory:
 Or use the installed console script:
 
 ```powershell
-.\.venv\Scripts\adp-trust.exe mcp-server --reports-dir reports
+.\.venv\Scripts\adp-trust-engine.exe mcp-server --reports-dir reports
 ```
 
 ## Client Configuration
@@ -79,7 +79,7 @@ virtual environment Python and an absolute `--reports-dir` path. This avoids the
 ```json
 {
   "mcpServers": {
-    "adp-trust": {
+    "adp-trust-engine": {
       "command": "C:\\SCM\\ai-native-data-product-trust-engine\\.venv\\Scripts\\python.exe",
       "args": [
         "-m",
@@ -98,8 +98,8 @@ If you prefer the installed console script, point directly at the venv script:
 ```json
 {
   "mcpServers": {
-    "adp-trust": {
-      "command": "C:\\SCM\\ai-native-data-product-trust-engine\\.venv\\Scripts\\adp-trust.exe",
+    "adp-trust-engine": {
+      "command": "C:\\SCM\\ai-native-data-product-trust-engine\\.venv\\Scripts\\adp-trust-engine.exe",
       "args": [
         "mcp-server",
         "--reports-dir",
@@ -116,7 +116,7 @@ Python 3.10+ interpreter:
 ```json
 {
   "mcpServers": {
-    "adp-trust": {
+    "adp-trust-engine": {
       "command": "C:\\Users\\pd185014\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
       "args": [
         "-m",
