@@ -76,7 +76,8 @@ _TERM_DEFINITIONS = {
 }
 
 _HEADER_IMAGE_PACKAGE = "ai_native_data_product_trust_engine.assets"
-_HEADER_IMAGE_NAME = "orange_blue_gradient.png"
+_HEADER_IMAGE_NAME = "orange_blue_gradient.jpg"
+_LOGO_IMAGE_NAME = "teradata_logo_rgb_pos.png"
 
 _ISSUE_CONSEQUENCES = {
     "BUS_VIEW_SELECTS_TABLE_DIRECTLY": (
@@ -360,6 +361,7 @@ def render_html_report(
         }
     )
     header_image = _header_image_data_uri()
+    logo_image = _logo_image_data_uri()
 
     return f"""<!doctype html>
 <html lang="en">
@@ -367,6 +369,12 @@ def render_html_report(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{_h(run.prefix)} metadata trust report</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;display=swap"
+    rel="stylesheet"
+  />
   <style>
     :root {{
       --td-orange: #FF5F02;
@@ -388,39 +396,89 @@ def render_html_report(
       line-height: 1.45;
     }}
     header {{
+      position: relative;
       background-color: var(--td-navy);
-      background-image: linear-gradient(90deg, rgba(0, 35, 60, 0.90), rgba(0, 35, 60, 0.54)), url("{header_image}");
-      background-position: center;
+      background-image:
+        linear-gradient(
+          100deg,
+          rgba(0, 35, 60, 0.94) 0%,
+          rgba(0, 35, 60, 0.80) 34%,
+          rgba(0, 35, 60, 0.42) 64%,
+          rgba(0, 35, 60, 0.18) 100%
+        ),
+        url("{header_image}");
+      background-repeat: no-repeat;
+      background-position: right top;
       background-size: cover;
       color: var(--td-white);
-      padding: 34px 32px 42px;
-      border-bottom: 6px solid var(--td-orange);
+      border-bottom: 5px solid var(--td-orange);
     }}
-    header .brand {{
+    .header-inner {{
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 30px 24px 38px;
+    }}
+    .header-top {{
       display: flex;
       align-items: center;
-      gap: 12px;
-      margin-bottom: 18px;
-      font-weight: 700;
-      letter-spacing: 0;
+      gap: 16px;
+      margin-bottom: 22px;
     }}
-    .brand-mark {{
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: var(--td-orange);
-      display: inline-block;
+    .header-logo {{
+      height: 26px;
+      width: auto;
+      /* official positive wordmark rendered white for the dark gradient */
+      filter: brightness(0) invert(1);
+    }}
+    .header-eyebrow {{
+      padding-left: 16px;
+      border-left: 1px solid rgba(255, 255, 255, 0.35);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #CDDDEA;
     }}
     h1 {{
       margin: 0;
-      font-size: 34px;
+      font-size: 38px;
       font-weight: 300;
-      letter-spacing: 0;
+      letter-spacing: -0.01em;
+      line-height: 1.1;
     }}
-    header p {{
-      max-width: 960px;
-      margin: 10px 0 0;
+    .header-lede {{
+      max-width: 720px;
+      margin: 12px 0 0;
+      font-size: 15px;
       color: #DDE8F0;
+    }}
+    .header-meta {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 22px;
+    }}
+    .meta-chip {{
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.10);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--td-white);
+      backdrop-filter: blur(2px);
+    }}
+    .meta-chip b {{
+      font-weight: 700;
+    }}
+    .meta-chip .meta-dot {{
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--td-orange);
     }}
     main {{
       max-width: 1280px;
@@ -690,6 +748,28 @@ def render_html_report(
       padding: 10px 12px;
       margin: 8px 0;
     }}
+    .reference-context {{
+      background: #F7F9FB;
+      border: 1px solid var(--td-line);
+      border-left: 4px solid var(--td-navy);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin: 8px 0;
+      overflow-wrap: anywhere;
+    }}
+    .inspection-scope {{
+      background: #F7F9FB;
+      border: 1px solid var(--td-line);
+      border-left: 4px solid var(--td-orange);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin: 8px 0;
+      overflow-wrap: anywhere;
+    }}
+    .inspection-scope ul {{
+      margin: 6px 0 0;
+      padding-left: 18px;
+    }}
     .consequence {{
       background: #FFF8EB;
       border: 1px solid #FFD8A8;
@@ -700,22 +780,33 @@ def render_html_report(
     }}
     @media (max-width: 900px) {{
       .summary-grid {{ grid-template-columns: 1fr 1fr; }}
+      .header-inner {{ padding: 24px 18px 30px; }}
       h1 {{ font-size: 28px; }}
+      .header-lede {{ font-size: 14px; }}
     }}
   </style>
 </head>
 <body>
   <header>
-    <div class="brand">
-      <span class="brand-mark" aria-hidden="true"></span> Teradata metadata trust
+    <div class="header-inner">
+      <div class="header-top">
+        <img class="header-logo" src="{logo_image}" alt="Teradata" />
+        <span class="header-eyebrow">Metadata trust report</span>
+      </div>
+      <h1>{_h(run.prefix)} trust report</h1>
+      <p class="header-lede">
+        A human-readable view of the product trust, performance readiness and operational
+        readiness signals that agents, cookbooks, notebooks and applications depend on. JSON
+        remains the source evidence; this report shows what is healthy, what is broken, and
+        what to fix next.
+      </p>
+      <div class="header-meta">
+        <span class="meta-chip"><span class="meta-dot" aria-hidden="true"></span>Product <b>{_h(run.prefix)}</b></span>
+        <span class="meta-chip"><b>{total_checks}</b>&nbsp;checks carried out</span>
+        <span class="meta-chip"><b>{run.passed_count}</b>&nbsp;passed&nbsp;&middot;&nbsp;<b>{run.failed_count}</b>&nbsp;failed&nbsp;&middot;&nbsp;<b>{run.error_count}</b>&nbsp;errors</span>
+        <span class="meta-chip">Run duration <b>{_h(duration)}</b></span>
+      </div>
     </div>
-    <h1>{_h(run.prefix)} trust report</h1>
-    <p>
-      Human-readable view of the product trust, performance readiness, and operational
-      readiness signals that agents, cookbooks, notebooks and applications depend on.
-      JSON remains the source evidence; this report helps people see what is healthy,
-      what is broken, and what to fix next.
-    </p>
   </header>
   <main>
     <nav class="tabs" role="tablist" aria-label="Report sections">
@@ -1200,6 +1291,8 @@ def _result_row(
     evidence = _evidence_summary(result)
     consequence = _consequence(result)
     next_step = _next_step(result, dependency_index)
+    reference_context = _reference_context(result)
+    objects_to_examine = _objects_to_examine(result)
     sample_json = _h(json.dumps(result.sample_rows[:3], indent=2, sort_keys=True, default=str))
     error_html = ""
     if result.error_message:
@@ -1210,6 +1303,18 @@ def _result_row(
     if next_step:
         next_step_html = f"""<div class="next-step">
           <strong>Next step</strong><br>{_h(next_step)}
+        </div>"""
+    reference_html = ""
+    if reference_context:
+        reference_html = f"""<div class="reference-context">
+          <strong>Referenced from</strong><br>{_h(reference_context)}
+        </div>"""
+    inspection_html = ""
+    if objects_to_examine:
+        object_items = "".join(f"<li>{_h(object_name)}</li>" for object_name in objects_to_examine)
+        inspection_html = f"""<div class="inspection-scope">
+          <strong>Objects to examine</strong>
+          <ul>{object_items}</ul>
         </div>"""
     consequence_html = ""
     if consequence:
@@ -1231,6 +1336,8 @@ def _result_row(
       <td>
         <p>{_h(evidence)}</p>
         {error_html}
+        {reference_html}
+        {inspection_html}
         {consequence_html}
         {next_step_html}
         <details>
@@ -1255,6 +1362,58 @@ def _evidence_summary(result: TestResult) -> str:
     if result.error_message:
         return concise_backend_error(result.error_message)
     return result.test_case.repair_strategy or "Review the structured evidence."
+
+
+def _reference_context(result: TestResult) -> str:
+    if not result.sample_rows:
+        return result.test_case.test_id + ": " + result.test_case.name
+    contexts: list[str] = []
+    for sample_row in result.sample_rows[:5]:
+        label = _sample_reference_label(result, sample_row)
+        if label and label not in contexts:
+            contexts.append(label)
+    return "; ".join(contexts)
+
+
+def _sample_reference_label(result: TestResult, sample_row: dict[str, object]) -> str:
+    recipe_id = sample_row.get("recipe_id")
+    recipe_title = sample_row.get("recipe_title")
+    if recipe_id and recipe_title:
+        return f"Query recipe {recipe_id}: {recipe_title}"
+    if recipe_id:
+        return f"Query recipe {recipe_id}"
+    referenced_from = sample_row.get("referenced_from")
+    if referenced_from:
+        return str(referenced_from)
+    scanner = sample_row.get("scanner")
+    if scanner:
+        return f"Scanner {scanner}: {result.test_case.name}"
+    object_names = _dependent_objects_from_sample(sample_row)
+    if object_names:
+        return ", ".join(object_names)
+    return result.test_case.test_id + ": " + result.test_case.name
+
+
+def _objects_to_examine(result: TestResult) -> list[str]:
+    objects: list[str] = []
+    for sample_row in result.sample_rows[:5]:
+        objects.extend(_sample_objects_to_examine(sample_row))
+    return list(dict.fromkeys(objects))
+
+
+def _sample_objects_to_examine(sample_row: dict[str, object]) -> list[str]:
+    objects: list[str] = []
+    for field_name in ("objects_to_examine", "referenced_objects"):
+        field_value = sample_row.get(field_name)
+        if isinstance(field_value, str):
+            objects.append(field_value)
+        elif isinstance(field_value, list):
+            objects.extend(str(value) for value in field_value if value)
+    database_name = sample_row.get("database_name") or sample_row.get("observability_database")
+    table_name = sample_row.get("table_name") or sample_row.get("object_name")
+    if database_name and table_name:
+        objects.append(f"{database_name}.{table_name}")
+    return objects
 
 
 def _next_step(
@@ -1498,6 +1657,12 @@ def _json_for_html(payload: dict[str, object]) -> str:
 
 def _header_image_data_uri() -> str:
     image = resources.files(_HEADER_IMAGE_PACKAGE).joinpath(_HEADER_IMAGE_NAME).read_bytes()
+    encoded = base64.b64encode(image).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
+
+
+def _logo_image_data_uri() -> str:
+    image = resources.files(_HEADER_IMAGE_PACKAGE).joinpath(_LOGO_IMAGE_NAME).read_bytes()
     encoded = base64.b64encode(image).decode("ascii")
     return f"data:image/png;base64,{encoded}"
 

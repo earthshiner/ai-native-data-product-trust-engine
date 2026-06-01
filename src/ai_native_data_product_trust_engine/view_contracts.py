@@ -12,6 +12,7 @@ from ai_native_data_product_trust_engine.models import (
     TestSeverity,
     TestStatus,
 )
+from ai_native_data_product_trust_engine.object_filters import backup_object_exclusion_sql
 from ai_native_data_product_trust_engine.query_templates import extract_sql_error_evidence
 
 
@@ -439,6 +440,7 @@ SELECT
 FROM DBC.TablesV
 WHERE DatabaseName LIKE '{escaped_prefix}\\_%' ESCAPE '\\'
   AND TableKind = 'V'
+  AND {backup_object_exclusion_sql('TableName')}
 ORDER BY DatabaseName, TableName
 """.strip()
 
@@ -453,6 +455,7 @@ SELECT
 FROM DBC.TablesV
 WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_STD\\_V' ESCAPE '\\'
   AND TableKind = 'V'
+  AND {backup_object_exclusion_sql('TableName')}
 ORDER BY DatabaseName, TableName
 """.strip()
 
@@ -467,6 +470,7 @@ SELECT
 FROM DBC.TablesV
 WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_BUS\\_V' ESCAPE '\\'
   AND TableKind = 'V'
+  AND {backup_object_exclusion_sql('TableName')}
 ORDER BY DatabaseName, TableName
 """.strip()
 
@@ -485,6 +489,7 @@ WITH standard_tables AS
     FROM DBC.TablesV
     WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_STD\\_T' ESCAPE '\\'
       AND TableKind = 'T'
+      AND {backup_object_exclusion_sql('TableName')}
 ),
 missing_views AS
 (
@@ -524,6 +529,7 @@ SELECT
 FROM DBC.TablesV
 WHERE DatabaseName LIKE '{escaped_prefix}\\_%' ESCAPE '\\'
   AND TableKind = 'V'
+  AND {backup_object_exclusion_sql('TableName')}
 ORDER BY DatabaseName, TableName
 """.strip()
 

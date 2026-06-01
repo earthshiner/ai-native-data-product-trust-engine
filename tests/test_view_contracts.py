@@ -21,6 +21,15 @@ def test_view_contract_test_cases_include_inventory_sql():
     assert tests[5].test_id == "CALLCENTRE-VIEW-TABLE-LOCKING"
 
 
+def test_view_contract_inventory_sql_excludes_backup_objects():
+    tests = view_contract_test_cases("CallCentre")
+
+    for test in tests:
+        if "DBC.TablesV" in test.sql:
+            assert "_BKP" in test.sql
+            assert "_BK" in test.sql
+
+
 def test_run_view_contract_validations_resolves_each_product_view():
     adapter = StubAdapter(
         view_rows=[

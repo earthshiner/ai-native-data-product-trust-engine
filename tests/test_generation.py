@@ -77,6 +77,25 @@ def test_generate_metadata_tests_includes_statistics_coverage_contract():
     assert "COLLECT STATISTICS COLUMN" in stats_test.sql
 
 
+def test_generate_metadata_tests_exclude_backup_objects():
+    tests = generate_metadata_tests("CallCentre")
+    inventory_test_ids = {
+        "CALLCENTRE-SEM-001",
+        "CALLCENTRE-SEM-002",
+        "CALLCENTRE-SEM-003",
+        "CALLCENTRE-SEM-004",
+        "CALLCENTRE-STRUCT-001",
+        "CALLCENTRE-STRUCT-002",
+        "CALLCENTRE-STRUCT-003",
+        "CALLCENTRE-PERF-001",
+    }
+    inventory_tests = [test for test in tests if test.test_id in inventory_test_ids]
+
+    assert inventory_tests
+    assert all("_BKP" in test.sql for test in inventory_tests)
+    assert all("_BK" in test.sql for test in inventory_tests)
+
+
 def test_generate_metadata_tests_includes_relationship_datatype_contract():
     tests = generate_metadata_tests("CallCentre")
     datatype_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-004")
