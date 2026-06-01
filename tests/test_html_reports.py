@@ -102,9 +102,16 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "trust-report-data" in html
     assert "Duration" in html
     assert '<div class="metric-value">1s</div>' in html
-    assert "Total checks" in html
+    assert "How to read the numbers" in html
+    assert "passed + failed + errors = total checks" in html
     assert "1 passed + 3 failed + 0 errors = 4 total checks" in html
     assert "Repair candidates are separate" in html
+    assert "Repair candidates" in html
+    assert "not included in the validation total" in html
+    assert "Category scores" in html
+    assert "not counts and should not be added together" in html
+    assert '<div class="metric-value">4</div>' in html
+    assert '<span class="metric-suffix">/100</span>' in html
     assert "CALLCENTRE-SEM-001" in html
     assert "Returns zero rows." in html
     assert "statusFilter" in html

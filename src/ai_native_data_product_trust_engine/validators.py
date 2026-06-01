@@ -12,7 +12,9 @@ from typing import Protocol
 from ai_native_data_product_trust_engine.models import (
     ExpectedResult,
     TestCase,
+    TestCategory,
     TestResult,
+    TestSeverity,
     TestStatus,
     ValidationRun,
 )
@@ -66,15 +68,60 @@ def run_validation(
     started_at = _utc_now()
     results = [run_test_case(adapter, test_case) for test_case in tests]
     if include_capability_scans:
-        results.extend(run_capability_validations(prefix, adapter))
+        results.extend(
+            _run_scanner(
+                prefix,
+                "CAPABILITY-SCAN",
+                "Capability discovery scans complete",
+                TestCategory.CAPABILITY,
+                run_capability_validations,
+                adapter,
+            )
+        )
     if include_query_template_scans:
-        results.extend(run_query_template_validations(prefix, adapter))
+        results.extend(
+            _run_scanner(
+                prefix,
+                "QUERY-SCAN",
+                "Query template scans complete",
+                TestCategory.QUERY,
+                run_query_template_validations,
+                adapter,
+            )
+        )
     if include_relationship_health_scans:
-        results.extend(run_relationship_health_validations(prefix, adapter))
+        results.extend(
+            _run_scanner(
+                prefix,
+                "RELATIONSHIP-SCAN",
+                "Relationship health scans complete",
+                TestCategory.DATA_QUALITY,
+                run_relationship_health_validations,
+                adapter,
+            )
+        )
     if include_text_reference_scans:
-        results.extend(run_text_reference_validations(prefix, adapter))
+        results.extend(
+            _run_scanner(
+                prefix,
+                "TEXT-SCAN",
+                "Free-text reference scans complete",
+                TestCategory.FREE_TEXT,
+                run_text_reference_validations,
+                adapter,
+            )
+        )
     if include_view_contract_scans:
-        results.extend(run_view_contract_validations(prefix, adapter))
+        results.extend(
+            _run_scanner(
+                prefix,
+                "VIEW-SCAN",
+                "View contract scans complete",
+                TestCategory.STRUCTURAL,
+                run_view_contract_validations,
+                adapter,
+            )
+        )
     completed_at = _utc_now()
     return ValidationRun(
         prefix=prefix,
@@ -92,6 +139,50 @@ def _status_from_rows(expected: ExpectedResult, row_count: int) -> TestStatus:
 
     msg = f"[ADPTrust.UnsupportedExpectation] Unsupported expectation {expected}."
     raise ValueError(msg)
+
+
+def _run_scanner(
+    prefix: str,
+    scanner_id: str,
+    scanner_name: str,
+    category: TestCategory,
+    scanner,
+    adapter: DatabaseAdapter,
+) -> list[TestResult]:
+    try:
+        return scanner(prefix, adapter)
+    except Exception as exc:  # noqa: BLE001 - scanner failures are validation evidence.
+        test_case = TestCase(
+            test_id=f"{prefix.upper()}-{scanner_id}",
+            name=scanner_name,
+            category=category,
+            severity=TestSeverity.CRITICAL,
+            sql="",
+            expected_result="Scanner completes and records validation evidence.",
+            expected=ExpectedResult.ZERO_ROWS,
+            repair_strategy=(
+                "Review the missing object or backend error, repair the deployed metadata or "
+                "view contract, then rerun validation."
+            ),
+        )
+        return [
+            TestResult(
+                test_case=test_case,
+                status=TestStatus.ERROR,
+                row_count=0,
+                sample_rows=[
+                    {
+                        "issue_code": "SCANNER_BACKEND_ERROR",
+                        "scanner": scanner_id,
+                        "repair_hint": (
+                            "A specialised validation scanner could not complete. Inspect the "
+                            "backend error, fix the missing or invalid object, then rerun."
+                        ),
+                    }
+                ],
+                error_message=str(exc),
+            )
+        ]
 
 
 def _utc_now() -> str:

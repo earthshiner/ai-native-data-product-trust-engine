@@ -82,6 +82,7 @@ python -m ai_native_data_product_trust_engine discover --prefix CallCentre
 python -m ai_native_data_product_trust_engine generate-tests --prefix CallCentre
 python -m ai_native_data_product_trust_engine validate --prefix CallCentre --repair-mode proposal
 python -m ai_native_data_product_trust_engine report --prefix CallCentre
+python -m ai_native_data_product_trust_engine mcp-server --reports-dir reports
 ```
 
 During local development, run from the repository root with `src` on `PYTHONPATH`:
@@ -96,6 +97,34 @@ python -m ai_native_data_product_trust_engine validate --prefix CallCentre --out
 Live validation currently uses `DATABASE_URI` by default and writes JSON validation evidence. Use
 `--html-output` to also create a standalone interactive HTML report for human review. Generated
 reports are local artifacts and are not committed.
+
+## Agent-Friendly MCP Orientation Layer
+
+The Trust Engine can expose local report evidence through an optional MCP server so agents do not
+have to scrape HTML or guess where to start. Install the optional MCP extra, run validation to write
+JSON reports, then start the server over the report directory:
+
+```powershell
+pip install .[mcp]
+python -m ai_native_data_product_trust_engine validate --prefix CallCentre --output reports\callcentre-validation.json
+python -m ai_native_data_product_trust_engine mcp-server --reports-dir reports
+```
+
+The first resource is `trust://products`. From there, agents read the product orientation manifest
+before inspecting details:
+
+- `trust://products/{prefix}/orientation`
+- `trust://products/{prefix}/latest-report`
+- `trust://products/{prefix}/scores`
+- `trust://products/{prefix}/checks`
+- `trust://products/{prefix}/failures`
+- `trust://products/{prefix}/repair-candidates`
+
+The MCP tools follow the same metadata-first handshake: `search_data_products`,
+`describe_data_product`, `get_recommended_entrypoint`, `list_failed_checks`,
+`generate_repair_plan` and `explain_check`. These are deliberately report-backed and read-only in
+this slice. Agents get a safe map of trust state, failure consequences and repair posture before any
+data product access path is considered.
 
 ## First Working Slice
 

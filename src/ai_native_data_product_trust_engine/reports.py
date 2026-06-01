@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from datetime import datetime
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from ai_native_data_product_trust_engine.error_formatting import concise_backend_error
 from ai_native_data_product_trust_engine.models import TestResult, ValidationRun
@@ -38,7 +41,7 @@ def validation_run_to_dict(run: ValidationRun) -> dict[str, object]:
 def write_json_report(run: ValidationRun, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
-        json.dumps(validation_run_to_dict(run), indent=2, sort_keys=True),
+        json.dumps(_json_safe(validation_run_to_dict(run)), indent=2, sort_keys=True),
         encoding="utf-8",
     )
 
@@ -73,8 +76,26 @@ def _result_to_dict(result: TestResult) -> dict[str, object]:
     payload["test_case"]["expected"] = result.test_case.expected.value
     if result.error_message:
         payload["error_message"] = concise_backend_error(result.error_message)
-    return payload
+    return _json_safe(payload)
 
 
 def _parse_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, datetime | date | time):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, bytes):
+        return value.hex()
+    return str(value)

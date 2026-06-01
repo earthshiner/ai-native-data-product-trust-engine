@@ -2,10 +2,15 @@ import json
 
 from ai_native_data_product_trust_engine.adapters import _teradatasql_args_from_url
 from ai_native_data_product_trust_engine.cli import _summarise_error, main
-from ai_native_data_product_trust_engine.models import ExpectedResult, TestCase, TestCategory, TestSeverity
+from ai_native_data_product_trust_engine.models import (
+    ExpectedResult,
+    TestCase,
+    TestCategory,
+    TestSeverity,
+)
 from ai_native_data_product_trust_engine.repairs import classify_stale_relationship_path_name
 from ai_native_data_product_trust_engine.test_generation import generate_metadata_tests
-from ai_native_data_product_trust_engine.validators import run_test_case
+from ai_native_data_product_trust_engine.validators import run_test_case, run_validation
 
 
 def test_generate_metadata_tests_includes_core_contracts():
@@ -249,6 +254,26 @@ def test_validate_cli_traps_uncaught_backend_errors(monkeypatch, capsys):
     assert "Traceback" not in captured.err
 
 
+def test_run_validation_records_scanner_errors_as_results():
+    run = run_validation(
+        "CallCentre",
+        FailingScannerAdapter(),
+        [],
+        include_capability_scans=False,
+        include_query_template_scans=False,
+        include_relationship_health_scans=False,
+        include_text_reference_scans=False,
+        include_view_contract_scans=True,
+    )
+
+    assert run.error_count == 1
+    result = run.results[0]
+    assert result.test_case.test_id == "CALLCENTRE-VIEW-SCAN"
+    assert result.status.value == "ERROR"
+    assert result.sample_rows[0]["issue_code"] == "SCANNER_BACKEND_ERROR"
+    assert "CallCentre_DOM_BUS_V.Call_H" in result.error_message
+
+
 def test_teradatasql_args_from_url_redacts_nothing_but_parses_components():
     args = _teradatasql_args_from_url("teradata://user:p%40ss@example.com:1025/db?logmech=LDAP")
 
@@ -294,6 +319,17 @@ class ValidationStubAdapter:
                 }
             ]
         return []
+
+
+class FailingScannerAdapter:
+    def fetch_all(self, sql):
+        raise RuntimeError(
+            "[Version 20.0.0.56] [Teradata Database] [Error 3807] "
+            "Object 'CallCentre_DOM_BUS_V.Call_H' does not exist.\n at gosqldriver/stack"
+        )
+
+    def execute(self, sql):
+        raise AssertionError("execute should not be called")
 
 
 def _test_case(expected: ExpectedResult) -> TestCase:
