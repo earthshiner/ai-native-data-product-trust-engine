@@ -12,7 +12,6 @@ from ai_native_data_product_trust_engine.models import (
     TestSeverity,
     TestStatus,
 )
-from ai_native_data_product_trust_engine.object_filters import backup_object_exclusion_sql
 
 SAMPLE_LIMIT = 1000
 
@@ -369,31 +368,29 @@ def _temporal_current_duplicate_sql(row: dict[str, object]) -> str:
     if deleted_flag_column:
         deleted_filter = f"\n      AND COALESCE({_qi(deleted_flag_column)}, 0) = 0"
     entity_name = _sql_string(row.get("entity_name") or table_name)
+    # Aggregate over the FULL table — never a sample. Duplicate-current rows are sparse
+    # (a handful of keys among millions), so a TOP-N sample of the input misses them
+    # almost every time. The GROUP BY/HAVING is a single bounded pass; only the evidence
+    # list of offending keys is capped, by TOP on the result of the aggregation.
     return f"""
-WITH current_rows AS
-(
-    SELECT TOP {SAMPLE_LIMIT}
-        {_qi(natural_key_column)} AS natural_key
-    FROM {_qname(database_name, table_name)}
-    WHERE {_qi(current_flag_column)} = 1{deleted_filter}
-),
-duplicate_current AS
+WITH duplicate_current AS
 (
     SELECT
-        natural_key
+        {_qi(natural_key_column)} AS natural_key
        ,COUNT(*) AS current_row_count
-    FROM current_rows
-    GROUP BY natural_key
+    FROM {_qname(database_name, table_name)}
+    WHERE {_qi(current_flag_column)} = 1{deleted_filter}
+    GROUP BY {_qi(natural_key_column)}
     HAVING COUNT(*) > 1
 )
-SELECT
+SELECT TOP {SAMPLE_LIMIT}
     {entity_name} AS entity_name
    ,'DUPLICATE_CURRENT_RECORD' AS issue_code
-   ,COUNT(*) AS duplicate_key_count
-   ,MAX(current_row_count) AS max_current_row_count
+   ,natural_key
+   ,current_row_count
    ,'Repair temporal current flags so each natural key has at most one current non-deleted row.' AS repair_hint
 FROM duplicate_current
-HAVING COUNT(*) > 0
+ORDER BY current_row_count DESC, natural_key
 """.strip()
 
 
@@ -464,8 +461,6 @@ FROM {sem_db}.table_relationship
 WHERE COALESCE(is_active, 1) = 1
   AND source_database IS NOT NULL
   AND target_database IS NOT NULL
-  AND {backup_object_exclusion_sql('source_table')}
-  AND {backup_object_exclusion_sql('target_table')}
 ORDER BY relationship_id
 """.strip()
 
@@ -487,7 +482,6 @@ FROM {sem_db}.entity_metadata
 WHERE COALESCE(is_active, 1) = 1
   AND database_name IS NOT NULL
   AND table_name IS NOT NULL
-  AND {backup_object_exclusion_sql('table_name')}
   AND natural_key_column IS NOT NULL
   AND current_flag_column IS NOT NULL
   AND COALESCE(UPPER(TRIM(temporal_pattern)), 'NONE') <> 'NONE'
@@ -505,7 +499,6 @@ FROM DBC.TablesV
 WHERE DatabaseName = {_sql_string(database_name)}
   AND TableName = {_sql_string(view_name)}
   AND TableKind = 'V'
-  AND {backup_object_exclusion_sql('TableName')}
 """.strip()
 
 
