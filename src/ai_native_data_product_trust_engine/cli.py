@@ -27,7 +27,7 @@ from ai_native_data_product_trust_engine.view_contracts import view_contract_tes
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="adp-trust",
+        prog="adp-trust-engine",
         description="Validate and self-heal AI-native Data Product metadata.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
