@@ -144,6 +144,8 @@ def test_generate_metadata_tests_includes_operational_readiness_contracts():
     assert "lineage_run_latest" in objects_test.sql
     assert "MISSING_OBSERVABILITY_TABLE" in objects_test.sql
     assert "MISSING_OBSERVABILITY_SEMANTIC_VIEW" in objects_test.sql
+    assert "observability_issues AS" in objects_test.sql
+    assert "FROM observability_issues" in objects_test.sql
 
 
 def test_generate_tests_cli_includes_free_text_cases(capsys):
@@ -193,6 +195,18 @@ def test_run_test_case_fails_non_empty_expectation():
 
     assert result.status.value == "FAILED"
     assert result.row_count == 0
+
+
+def test_run_test_case_records_structured_backend_error():
+    adapter = FailingTestAdapter()
+    result = run_test_case(adapter, _test_case(ExpectedResult.ZERO_ROWS))
+
+    assert result.status.value == "ERROR"
+    assert result.row_count == 0
+    assert result.sample_rows[0]["issue_code"] == "SQL_VALIDATION_ERROR"
+    assert result.sample_rows[0]["test_id"] == "TEST-001"
+    assert result.sample_rows[0]["referenced_from"] == "TEST-001: Example generated test"
+    assert "ORDER BY clause" in result.sample_rows[0]["backend_error"]
 
 
 def test_validate_cli_writes_report(monkeypatch, tmp_path):
@@ -270,7 +284,11 @@ def test_run_validation_records_scanner_errors_as_results():
     result = run.results[0]
     assert result.test_case.test_id == "CALLCENTRE-VIEW-SCAN"
     assert result.status.value == "ERROR"
-    assert result.sample_rows[0]["issue_code"] == "SCANNER_BACKEND_ERROR"
+    assert result.sample_rows[0]["issue_code"] == "MISSING_OBJECT"
+    assert result.sample_rows[0]["missing_object"] == "CallCentre_DOM_BUS_V.Call_H"
+    assert result.sample_rows[0]["referenced_from"] == (
+        "CALLCENTRE-VIEW-SCAN: View contract scans complete"
+    )
     assert "CallCentre_DOM_BUS_V.Call_H" in result.error_message
 
 
@@ -297,6 +315,15 @@ class StubAdapter:
 
     def fetch_all(self, sql):
         return self.rows
+
+
+class FailingTestAdapter:
+    def fetch_all(self, sql):
+        raise RuntimeError(
+            "[Version 20.0.0.56] [Teradata Database] [Error 3848] "
+            "The ORDER BY clause must contain only integer constants.\n"
+            " at gosqldriver/stack"
+        )
 
 
 class ValidationStubAdapter:

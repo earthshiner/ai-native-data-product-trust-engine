@@ -911,6 +911,26 @@ missing_view_issues AS
        AND tv.TableName = rsv.object_name
        AND tv.TableKind = 'V'
     WHERE tv.TableName IS NULL
+),
+observability_issues AS
+(
+    SELECT
+        observability_database
+       ,object_name
+       ,issue_code
+       ,issue_detail
+       ,repair_hint
+    FROM missing_table_issues
+
+    UNION ALL
+
+    SELECT
+        observability_database
+       ,object_name
+       ,issue_code
+       ,issue_detail
+       ,repair_hint
+    FROM missing_view_issues
 )
 SELECT
     observability_database
@@ -918,15 +938,7 @@ SELECT
    ,issue_code
    ,issue_detail
    ,repair_hint
-FROM missing_table_issues
-UNION ALL
-SELECT
-    observability_database
-   ,object_name
-   ,issue_code
-   ,issue_detail
-   ,repair_hint
-FROM missing_view_issues
+FROM observability_issues
 ORDER BY issue_code, observability_database, object_name;
 """.strip(),
             expected_result=(

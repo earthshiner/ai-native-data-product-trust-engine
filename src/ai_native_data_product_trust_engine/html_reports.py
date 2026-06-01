@@ -690,6 +690,15 @@ def render_html_report(
       padding: 10px 12px;
       margin: 8px 0;
     }}
+    .reference-context {{
+      background: #F7F9FB;
+      border: 1px solid var(--td-line);
+      border-left: 4px solid var(--td-navy);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin: 8px 0;
+      overflow-wrap: anywhere;
+    }}
     .consequence {{
       background: #FFF8EB;
       border: 1px solid #FFD8A8;
@@ -1200,6 +1209,7 @@ def _result_row(
     evidence = _evidence_summary(result)
     consequence = _consequence(result)
     next_step = _next_step(result, dependency_index)
+    reference_context = _reference_context(result)
     sample_json = _h(json.dumps(result.sample_rows[:3], indent=2, sort_keys=True, default=str))
     error_html = ""
     if result.error_message:
@@ -1210,6 +1220,11 @@ def _result_row(
     if next_step:
         next_step_html = f"""<div class="next-step">
           <strong>Next step</strong><br>{_h(next_step)}
+        </div>"""
+    reference_html = ""
+    if reference_context:
+        reference_html = f"""<div class="reference-context">
+          <strong>Referenced from</strong><br>{_h(reference_context)}
         </div>"""
     consequence_html = ""
     if consequence:
@@ -1231,6 +1246,7 @@ def _result_row(
       <td>
         <p>{_h(evidence)}</p>
         {error_html}
+        {reference_html}
         {consequence_html}
         {next_step_html}
         <details>
@@ -1255,6 +1271,36 @@ def _evidence_summary(result: TestResult) -> str:
     if result.error_message:
         return concise_backend_error(result.error_message)
     return result.test_case.repair_strategy or "Review the structured evidence."
+
+
+def _reference_context(result: TestResult) -> str:
+    if not result.sample_rows:
+        return result.test_case.test_id + ": " + result.test_case.name
+    contexts: list[str] = []
+    for sample_row in result.sample_rows[:5]:
+        label = _sample_reference_label(result, sample_row)
+        if label and label not in contexts:
+            contexts.append(label)
+    return "; ".join(contexts)
+
+
+def _sample_reference_label(result: TestResult, sample_row: dict[str, object]) -> str:
+    recipe_id = sample_row.get("recipe_id")
+    recipe_title = sample_row.get("recipe_title")
+    if recipe_id and recipe_title:
+        return f"Query recipe {recipe_id}: {recipe_title}"
+    if recipe_id:
+        return f"Query recipe {recipe_id}"
+    referenced_from = sample_row.get("referenced_from")
+    if referenced_from:
+        return str(referenced_from)
+    scanner = sample_row.get("scanner")
+    if scanner:
+        return f"Scanner {scanner}: {result.test_case.name}"
+    object_names = _dependent_objects_from_sample(sample_row)
+    if object_names:
+        return ", ".join(object_names)
+    return result.test_case.test_id + ": " + result.test_case.name
 
 
 def _next_step(

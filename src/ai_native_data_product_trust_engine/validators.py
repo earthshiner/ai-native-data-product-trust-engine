@@ -19,7 +19,11 @@ from ai_native_data_product_trust_engine.models import (
     ValidationRun,
 )
 from ai_native_data_product_trust_engine.capabilities import run_capability_validations
-from ai_native_data_product_trust_engine.query_templates import run_query_template_validations
+from ai_native_data_product_trust_engine.error_formatting import concise_backend_error
+from ai_native_data_product_trust_engine.query_templates import (
+    extract_sql_error_evidence,
+    run_query_template_validations,
+)
 from ai_native_data_product_trust_engine.relationship_health import (
     run_relationship_health_validations,
 )
@@ -43,6 +47,7 @@ def run_test_case(adapter: DatabaseAdapter, test_case: TestCase) -> TestResult:
             test_case=test_case,
             status=TestStatus.ERROR,
             row_count=0,
+            sample_rows=[_backend_error_evidence(test_case, exc)],
             error_message=str(exc),
         )
 
@@ -171,18 +176,54 @@ def _run_scanner(
                 status=TestStatus.ERROR,
                 row_count=0,
                 sample_rows=[
-                    {
-                        "issue_code": "SCANNER_BACKEND_ERROR",
-                        "scanner": scanner_id,
-                        "repair_hint": (
-                            "A specialised validation scanner could not complete. Inspect the "
-                            "backend error, fix the missing or invalid object, then rerun."
-                        ),
-                    }
+                    _scanner_error_evidence(
+                        scanner_id,
+                        scanner_name,
+                        test_case.test_id,
+                        category,
+                        exc,
+                    )
                 ],
                 error_message=str(exc),
             )
         ]
+
+
+def _backend_error_evidence(test_case: TestCase, exc: Exception) -> dict[str, object]:
+    evidence = extract_sql_error_evidence(str(exc), test_case.sql)
+    evidence.update(
+        {
+            "test_id": test_case.test_id,
+            "test_name": test_case.name,
+            "category": test_case.category.value,
+            "source_type": "validation_check",
+            "referenced_from": f"{test_case.test_id}: {test_case.name}",
+            "backend_error": concise_backend_error(str(exc)),
+        }
+    )
+    return evidence
+
+
+def _scanner_error_evidence(
+    scanner_id: str,
+    scanner_name: str,
+    test_id: str,
+    category: TestCategory,
+    exc: Exception,
+) -> dict[str, object]:
+    evidence = extract_sql_error_evidence(str(exc))
+    evidence.update(
+        {
+            "scanner": scanner_id,
+            "test_id": test_id,
+            "test_name": scanner_name,
+            "category": category.value,
+            "source_type": "specialised_scanner",
+            "referenced_from": f"{test_id}: {scanner_name}",
+            "backend_error": concise_backend_error(str(exc)),
+        }
+    )
+    return evidence
 
 
 def _utc_now() -> str:
