@@ -335,6 +335,11 @@ def render_html_report(
     root_cause_groups = _root_cause_groups(results, dependency_index)
     safe_auto_count = sum(1 for candidate in repair_candidates if not candidate.requires_approval)
     approval_count = sum(1 for candidate in repair_candidates if candidate.requires_approval)
+    total_checks = len(results)
+    status_equation = (
+        f"{run.passed_count} passed + {run.failed_count} failed + {run.error_count} errors "
+        f"= {total_checks} total checks"
+    )
     safe_auto_panel = _repair_panel(
         "Safe-auto candidates",
         safe_auto_count,
@@ -731,11 +736,17 @@ def render_html_report(
       </section>
 
       <section class="summary-grid" aria-label="Validation summary">
-        {_metric("Passed", run.passed_count)}
-        {_metric("Failed", run.failed_count)}
-        {_metric("Errors", run.error_count)}
-        {_metric("Repairs", len(repair_candidates))}
-        {_metric("Duration", duration)}
+        {_metric("Total checks", total_checks, "Every validation check that ran in this report.")}
+        {_metric("Passed", run.passed_count, "Checks with no failed evidence.")}
+        {_metric("Failed", run.failed_count, "Checks that returned failed evidence rows.")}
+        {_metric("Errors", run.error_count, "Checks that could not complete because the backend returned an error.")}
+        {_metric("Repairs", len(repair_candidates), "Repair candidates generated from failed/error evidence. See the Repairs tab; CLI runs also write .repairs.md and .repairs.sql beside the JSON report.")}
+        {_metric("Duration", duration, "Elapsed wall-clock time for this validation run.")}
+      </section>
+      <section class="panel" aria-label="Count explanation">
+        <h2>How to read these numbers</h2>
+        <p>{_h(status_equation)}. Repair candidates are separate: one failed check can generate
+        zero, one or many proposed repairs depending on the structured evidence.</p>
       </section>
 
       <section class="dimension-grid" aria-label="Dimension scores">
@@ -786,9 +797,18 @@ def render_html_report(
       aria-labelledby="tab-repairs"
       hidden
     >
-      <section class="repairs" aria-label="Repair posture">
-        {safe_auto_panel}
-        {approval_panel}
+      <section class="panel" aria-label="Repair candidate details">
+        <h2>Repair candidates</h2>
+        <p>
+          Repair candidates are generated from failed/error evidence. They are embedded in this
+          HTML report data, and the CLI writes the same repair set as sibling
+          <code>.repairs.md</code> and <code>.repairs.sql</code> files beside the JSON report.
+        </p>
+        <section class="repairs" aria-label="Repair posture">
+          {safe_auto_panel}
+          {approval_panel}
+        </section>
+        {_repair_candidate_table(repair_candidates)}
       </section>
     </section>
 
@@ -906,10 +926,12 @@ def _repair_to_dict(candidate: RepairCandidate) -> dict[str, object]:
     return payload
 
 
-def _metric(label: str, value: object) -> str:
+def _metric(label: str, value: object, description: str = "") -> str:
+    description_html = f"<p>{_h(description)}</p>" if description else ""
     return f"""<div class="panel">
       <div class="metric-label">{_term(label.upper(), label)}</div>
       <div class="metric-value">{value}</div>
+      {description_html}
     </div>"""
 
 
@@ -996,6 +1018,48 @@ def _repair_panel(title: str, count: int, text: str) -> str:
       <div class="metric-value">{count}</div>
       <p>{_h(text)}</p>
     </div>"""
+
+
+def _repair_candidate_table(candidates: list[RepairCandidate]) -> str:
+    if not candidates:
+        return "<p>No repair candidates were generated for this run.</p>"
+    return f"""<table>
+      <thead>
+        <tr>
+          <th>Candidate</th>
+          <th>Issue</th>
+          <th>Mode</th>
+          <th>Approval</th>
+          <th>Source</th>
+          <th>Summary</th>
+        </tr>
+      </thead>
+      <tbody>
+        {"".join(_repair_candidate_row(candidate) for candidate in candidates)}
+      </tbody>
+    </table>"""
+
+
+def _repair_candidate_row(candidate: RepairCandidate) -> str:
+    approval = "Approval required" if candidate.requires_approval else "Safe-auto"
+    sql_html = f"<pre>{_h(candidate.sql)}</pre>" if candidate.sql else "<p>No SQL generated.</p>"
+    if candidate.sql or candidate.evidence:
+        evidence_json = _h(json.dumps(candidate.evidence, indent=2, sort_keys=True, default=str))
+    else:
+        evidence_json = "{}"
+    details_html = f"""<details>
+      <summary>Repair details</summary>
+      {sql_html}
+      <pre>{evidence_json}</pre>
+    </details>"""
+    return f"""<tr>
+      <td><code>{_h(candidate.candidate_id or "REPAIR-CANDIDATE")}</code></td>
+      <td>{_h(candidate.issue_code)}</td>
+      <td>{_h(candidate.mode.value)}</td>
+      <td>{_h(approval)}</td>
+      <td><code>{_h(candidate.test_id or "n/a")}</code></td>
+      <td>{_h(candidate.summary)}{details_html}</td>
+    </tr>"""
 
 
 def _glossary_section() -> str:
