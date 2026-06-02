@@ -5,6 +5,35 @@ from ai_native_data_product_trust_engine.relationship_health import (
     run_relationship_orphan_validations,
     run_temporal_current_validations,
 )
+from ai_native_data_product_trust_engine import relationship_health
+
+
+def test_duplicate_current_sql_scans_full_table_not_a_sample():
+    """Regression: the duplicate-current check must aggregate over the whole table.
+    Sampling the input (TOP-N before GROUP BY) let sparse duplicate-current rows slip
+    through undetected. The GROUP BY/HAVING must run on the table itself; only the
+    offending-key evidence list may be capped."""
+    sql = relationship_health._temporal_current_duplicate_sql(
+        {
+            "entity_name": "CallSummary",
+            "database_name": "CallCentre_DOM_STD_T",
+            "table_name": "Call_Summary_H",
+            "natural_key_column": "call_id",
+            "current_flag_column": "is_current",
+            "deleted_flag_column": "is_deleted",
+        }
+    )
+    # Full-table aggregation present
+    assert "GROUP BY" in sql
+    assert "HAVING COUNT(*) > 1" in sql
+    # The old sampled-input CTE must be gone
+    assert "current_rows AS" not in sql
+    # No TOP applied to the table scan: the only TOP is on the aggregated result,
+    # which must appear after the GROUP BY/HAVING block.
+    assert sql.index("GROUP BY") < sql.index("SELECT TOP")
+    # Still emits the issue code and keys on the declared business key
+    assert "DUPLICATE_CURRENT_RECORD" in sql
+    assert "is_deleted" in sql
 
 
 RELATIONSHIP_ROW = {
