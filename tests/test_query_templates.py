@@ -138,6 +138,28 @@ def test_explain_performance_findings_extracts_known_risks():
     assert "EXPLAIN_PRODUCT_JOIN" in issue_codes
 
 
+def test_explain_performance_findings_extracts_helpstats_suggestions():
+    findings = explain_performance_findings(
+        [
+            {
+                "Explain": (
+                    "BEGIN RECOMMENDED STATS "
+                    "COLLECT STATISTICS COLUMN (agent_id) "
+                    "ON CallCentre_DOM_BUS_V.Call_Current; END RECOMMENDED STATS"
+                )
+            }
+        ]
+    )
+
+    helpstats = next(
+        finding
+        for finding in findings
+        if finding["issue_code"] == "EXPLAIN_HELPSTATS_SUGGESTION"
+    )
+    assert "COLLECT STATISTICS COLUMN (agent_id)" in helpstats["finding"]
+    assert "advisory" in helpstats["repair_hint"]
+
+
 def test_run_query_template_validations_reports_recipe_failures():
     adapter = StubAdapter(
         recipe_rows=[
@@ -272,11 +294,41 @@ def test_run_query_template_validations_reports_explain_performance_risk():
     assert "EXPLAIN_PRODUCT_JOIN" in issue_codes
 
 
+def test_run_query_template_validations_enables_helpstats_in_explain_session():
+    adapter = StubAdapter(
+        recipe_rows=[
+            {
+                "recipe_id": "QC-005",
+                "recipe_title": "Helpstats recipe",
+                "use_case": "Agent lookup",
+                "sql_template": "SELECT * FROM db.customer WHERE customer_id = :customer_id",
+            }
+        ]
+    )
+
+    results = run_query_template_validations("CallCentre", adapter, enable_helpstats=True)
+
+    assert adapter.session_queries == [
+        (
+            "EXPLAIN SELECT * FROM db.customer WHERE customer_id = '__ADP_TRUST_SAMPLE_ID__'",
+            "DIAGNOSTIC HELPSTATS ON FOR SESSION",
+            "DIAGNOSTIC HELPSTATS NOT ON FOR SESSION",
+        )
+    ]
+    explain_result = next(
+        result
+        for result in results
+        if result.test_case.test_id == "CALLCENTRE-QUERY-EXPLAIN-QC-005"
+    )
+    assert explain_result.sample_rows[0]["helpstats_enabled"] is True
+
+
 class StubAdapter:
     def __init__(self, recipe_rows, explain_error=None, explain_rows=None):
         self.recipe_rows = recipe_rows
         self.explain_error = explain_error
         self.explain_rows = explain_rows or [{"Explain": "ok"}]
+        self.session_queries = []
 
     def fetch_all(self, sql):
         if sql.startswith("EXPLAIN"):
@@ -284,3 +336,7 @@ class StubAdapter:
                 raise self.explain_error
             return self.explain_rows
         return self.recipe_rows
+
+    def fetch_all_with_session_setup(self, sql, setup_sql=None, teardown_sql=None):
+        self.session_queries.append((sql, setup_sql, teardown_sql))
+        return self.fetch_all(sql)

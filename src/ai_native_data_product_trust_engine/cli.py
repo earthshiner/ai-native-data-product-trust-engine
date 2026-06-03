@@ -100,6 +100,14 @@ def build_parser() -> argparse.ArgumentParser:
                     "two-part Teradata table name; defaults to <prefix>_SEM_STD_T.trust_engine_run."
                 ),
             )
+            subparser.add_argument(
+                "--enable-helpstats",
+                action="store_true",
+                help=(
+                    "Enable Teradata DIAGNOSTIC HELPSTATS for each cookbook EXPLAIN. "
+                    "Suggestions are advisory and are reported as performance findings."
+                ),
+            )
 
     mcp_parser = subparsers.add_parser(
         "mcp-server",
@@ -162,6 +170,7 @@ def _main(argv: list[str] | None = None) -> int:
             adapter,
             tests,
             excluded_checks=excluded_checks,
+            enable_helpstats=args.enable_helpstats,
             **rule_config.scanner_kwargs(),
         )
         LOGGER.info(

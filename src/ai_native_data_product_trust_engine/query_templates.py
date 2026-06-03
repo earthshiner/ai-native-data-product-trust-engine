@@ -46,6 +46,16 @@ BOUNDED_SQL_PATTERNS = (
     re.compile(r"\bWHERE\b[\s\S]*\bBETWEEN\b[\s\S]*:", re.I),
     re.compile(r"\bWHERE\b[\s\S]*(?:=|>=|<=|>|<|IN\s*\()[\s\S]*:", re.I),
 )
+HELPSTATS_ON_SQL = "DIAGNOSTIC HELPSTATS ON FOR SESSION"
+HELPSTATS_OFF_SQL = "DIAGNOSTIC HELPSTATS NOT ON FOR SESSION"
+HELPSTATS_COLLECT_STATISTICS_PATTERN = re.compile(
+    r"\bCOLLECT\s+(?:SUMMARY\s+)?STATISTICS\b[\s\S]{0,600}?(?:;|\n|$)",
+    re.I,
+)
+HELPSTATS_RECOMMENDATION_PATTERN = re.compile(
+    r"\b(?:statistics\s+are\s+recommended|recommend(?:ed|ation)|helpstats)\b",
+    re.I,
+)
 EXPLAIN_FINDING_PATTERNS = (
     (
         "EXPLAIN_MISSING_STATS",
@@ -81,11 +91,15 @@ class BoundSqlTemplate:
     parameters: tuple[str, ...]
 
 
-def run_query_template_validations(prefix: str, adapter) -> list[TestResult]:
+def run_query_template_validations(
+    prefix: str,
+    adapter,
+    enable_helpstats: bool = False,
+) -> list[TestResult]:
     recipe_rows = adapter.fetch_all(_active_recipes_sql(prefix))
     results: list[TestResult] = []
     for row in recipe_rows:
-        results.extend(_run_recipe_validations(prefix, adapter, row))
+        results.extend(_run_recipe_validations(prefix, adapter, row, enable_helpstats))
     return results
 
 
@@ -202,7 +216,12 @@ def query_template_test_cases(prefix: str) -> list[TestCase]:
     ]
 
 
-def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> list[TestResult]:
+def _run_recipe_validations(
+    prefix: str,
+    adapter,
+    row: dict[str, object],
+    enable_helpstats: bool = False,
+) -> list[TestResult]:
     recipe_id = str(row.get("recipe_id") or "UNKNOWN_RECIPE")
     recipe_title = str(row.get("recipe_title") or "")
     sql_template = str(row.get("sql_template") or "").strip()
@@ -236,7 +255,7 @@ def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> lis
     ]
     explain_sql = f"EXPLAIN {bound_template.sql}"
     try:
-        explain_rows = adapter.fetch_all(explain_sql)
+        explain_rows = _fetch_explain_rows(adapter, explain_sql, enable_helpstats)
     except Exception as exc:  # noqa: BLE001 - backend errors are classified for evidence.
         evidence = extract_sql_error_evidence(str(exc), sql_template)
         results.insert(
@@ -250,6 +269,7 @@ def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> lis
                 parameters=bound_template.parameters,
                 attempted_sql=explain_sql,
                 referenced_objects=referenced_sql_objects(sql_template),
+                helpstats_enabled=enable_helpstats,
             ),
         )
         return results
@@ -266,6 +286,7 @@ def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> lis
                     "recipe_title": recipe_title,
                     "parameters": list(bound_template.parameters),
                     "validation_mode": "EXPLAIN",
+                    "helpstats_enabled": enable_helpstats,
                 }
             ],
         ),
@@ -277,9 +298,20 @@ def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> lis
             recipe_title,
             explain_rows,
             referenced_sql_objects(sql_template),
+            enable_helpstats,
         )
     )
     return results
+
+
+def _fetch_explain_rows(adapter, explain_sql: str, enable_helpstats: bool) -> list[dict[str, object]]:
+    if not enable_helpstats:
+        return adapter.fetch_all(explain_sql)
+    return adapter.fetch_all_with_session_setup(
+        explain_sql,
+        setup_sql=HELPSTATS_ON_SQL,
+        teardown_sql=HELPSTATS_OFF_SQL,
+    )
 
 
 def is_interactive_recipe(row: dict[str, object]) -> bool:
@@ -313,6 +345,7 @@ def explain_performance_findings(
                     "repair_hint": repair_hint,
                 }
             )
+    findings.extend(_helpstats_findings(explain_text))
     return findings
 
 
@@ -325,6 +358,7 @@ def _failed_result(
     parameters: tuple[str, ...] = (),
     attempted_sql: str | None = None,
     referenced_objects: list[str] | None = None,
+    helpstats_enabled: bool = False,
 ) -> TestResult:
     if isinstance(evidence, str):
         evidence = {"issue_code": evidence}
@@ -334,6 +368,7 @@ def _failed_result(
         "parameters": list(parameters),
         "validation_mode": "EXPLAIN",
         "source_module": "query_templates.py",
+        "helpstats_enabled": helpstats_enabled,
         **evidence,
     }
     if attempted_sql:
@@ -489,6 +524,7 @@ def _run_recipe_explain_performance_validation(
     recipe_title: str,
     explain_rows: list[dict[str, object]],
     referenced_objects: list[str],
+    enable_helpstats: bool = False,
 ) -> TestResult:
     findings = explain_performance_findings(explain_rows)
     if not findings:
@@ -501,6 +537,7 @@ def _run_recipe_explain_performance_validation(
                     "recipe_id": recipe_id,
                     "recipe_title": recipe_title,
                     "validation_mode": "EXPLAIN_PERFORMANCE",
+                    "helpstats_enabled": enable_helpstats,
                 }
             ],
         )
@@ -513,6 +550,7 @@ def _run_recipe_explain_performance_validation(
                 "recipe_id": recipe_id,
                 "recipe_title": recipe_title,
                 "referenced_objects": referenced_objects,
+                "helpstats_enabled": enable_helpstats,
                 **finding,
             }
             for finding in findings[:10]
@@ -520,11 +558,40 @@ def _run_recipe_explain_performance_validation(
     )
 
 
+def _helpstats_findings(explain_text: str) -> list[dict[str, object]]:
+    suggestions = [
+        _compact_whitespace(match.group(0))
+        for match in HELPSTATS_COLLECT_STATISTICS_PATTERN.finditer(explain_text)
+    ]
+    if not suggestions:
+        match = HELPSTATS_RECOMMENDATION_PATTERN.search(explain_text)
+        if match:
+            suggestion_text = explain_text[match.start() : match.start() + 360]
+            suggestions.append(_compact_whitespace(suggestion_text))
+    findings = []
+    for suggestion in list(dict.fromkeys(suggestions)):
+        findings.append(
+            {
+                "issue_code": "EXPLAIN_HELPSTATS_SUGGESTION",
+                "finding": suggestion,
+                "repair_hint": (
+                    "Review HELPSTATS as advisory evidence; trial HIGH CONFIDENCE "
+                    "single-column statistics first, then rerun validation before promoting."
+                ),
+            }
+        )
+    return findings
+
+
 def _explain_text(explain_rows: list[dict[str, object]]) -> str:
     values: list[str] = []
     for row in explain_rows:
         values.extend(str(value) for value in row.values() if value is not None)
     return "\n".join(values)
+
+
+def _compact_whitespace(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def referenced_sql_objects(sql_template: str) -> list[str]:

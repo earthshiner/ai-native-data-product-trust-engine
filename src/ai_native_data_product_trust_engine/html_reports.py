@@ -126,6 +126,10 @@ _ISSUE_CONSEQUENCES = {
         "The plan may duplicate large data across AMPs, increasing spool, network and runtime "
         "risk."
     ),
+    "EXPLAIN_HELPSTATS_SUGGESTION": (
+        "The optimiser suggested statistics that may improve this recipe, but each suggestion "
+        "should be trialled and validated before promotion."
+    ),
     "EXPLAIN_LOW_CONFIDENCE": (
         "The optimiser estimates may be unreliable, so generated SQL performance may vary "
         "significantly."

@@ -109,6 +109,20 @@ python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --
 `--log-file` defaults to `INFO` level so the SQL statements are captured. Without `--log-file`, the
 default level is `WARNING`; pass `--log-level INFO` to stream SQL diagnostics to the console.
 
+For query cookbook performance diagnosis on Teradata, enable Optimizer HELPSTATS suggestions during
+recipe `EXPLAIN` validation:
+
+```powershell
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --enable-helpstats --log-file logs\trust-engine.log
+```
+
+This runs `DIAGNOSTIC HELPSTATS ON FOR SESSION`, the recipe `EXPLAIN`, and
+`DIAGNOSTIC HELPSTATS NOT ON FOR SESSION` on the same database session for each active cookbook
+recipe. Any `COLLECT STATISTICS` suggestions in the `EXPLAIN` output are reported as advisory
+`EXPLAIN_HELPSTATS_SUGGESTION` performance findings. The Trust Engine does not apply statistics
+automatically; trial high-confidence single-column suggestions first, then rerun validation before
+promoting them.
+
 To make trust evidence cheap for agents to read at interaction time, deploy a compact history table
 inside the data product and expose the latest row through the Semantic BUS_V access layer:
 
