@@ -52,6 +52,9 @@ def test_generate_metadata_tests_includes_core_contracts():
     )
     assert tests[14].expected == ExpectedResult.NON_EMPTY
     assert "COUNT(DISTINCT type_signature) > 1" in tests[4].sql
+    assert tests[4].name == "Similar table column names use consistent datatypes"
+    assert "tv.TableKind = 'T'" in tests[4].sql
+    assert "tv.TableKind IN ('T', 'V')" not in tests[4].sql
 
 
 def test_generated_metadata_tests_scope_to_deployed_modules():

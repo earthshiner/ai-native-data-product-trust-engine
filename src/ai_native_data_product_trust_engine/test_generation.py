@@ -255,7 +255,7 @@ ORDER BY 1, 18, 2, 3, 4;
         ),
         TestCase(
             test_id=f"{prefix.upper()}-STRUCT-001",
-            name="Similar column names use consistent datatypes",
+            name="Similar table column names use consistent datatypes",
             category=TestCategory.STRUCTURAL,
             severity=TestSeverity.WARNING,
             sql=f"""
@@ -280,7 +280,7 @@ WITH product_columns AS
         ON tv.DatabaseName = colv.DatabaseName
        AND tv.TableName = colv.TableName
     WHERE colv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
-      AND tv.TableKind IN ('T', 'V')
+      AND tv.TableKind = 'T'
       AND {deployed_module_database_filter(sem_db, 'colv.DatabaseName')}
       AND {backup_object_exclusion_sql('colv.TableName')}
 ),
@@ -309,9 +309,9 @@ INNER JOIN drifted_names dn
     ON dn.normalised_column_name = pc.normalised_column_name
 ORDER BY pc.normalised_column_name, pc.column_name, pc.database_name, pc.table_name;
 """.strip(),
-            expected_result="Returns zero rows.",
+            expected_result="Returns zero rows for table columns with inconsistent type signatures.",
             repair_strategy=(
-                "Review same/similar column names with different physical type signatures. "
+                "Review same/similar table column names with different physical type signatures. "
                 "Align datatypes where they participate in joins, filters or generated SQL."
             ),
         ),
