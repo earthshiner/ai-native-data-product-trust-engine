@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
-from ai_native_data_product_trust_engine.adapters import adapter_from_environment
+from ai_native_data_product_trust_engine.adapters import (
+    LoggingAdapter,
+    adapter_from_environment,
+    configure_logging,
+)
 from ai_native_data_product_trust_engine.capabilities import capability_test_cases
 from ai_native_data_product_trust_engine.html_reports import write_html_report
 from ai_native_data_product_trust_engine.query_templates import query_template_test_cases
@@ -19,10 +24,17 @@ from ai_native_data_product_trust_engine.repairs import (
     generate_repair_candidates,
     write_repair_reports,
 )
+from ai_native_data_product_trust_engine.rule_config import load_rule_config
 from ai_native_data_product_trust_engine.test_generation import generate_metadata_tests
 from ai_native_data_product_trust_engine.text_references import text_reference_test_cases
+from ai_native_data_product_trust_engine.trust_publish import (
+    default_trust_table,
+    publish_trust_result,
+)
 from ai_native_data_product_trust_engine.validators import run_validation
 from ai_native_data_product_trust_engine.view_contracts import view_contract_test_cases
+
+LOGGER = logging.getLogger("ai_native_data_product_trust_engine.cli")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,11 +46,33 @@ def build_parser() -> argparse.ArgumentParser:
 
     for command in ("discover", "generate-tests", "validate", "report"):
         subparser = subparsers.add_parser(command)
-        subparser.add_argument("--prefix", required=True, help="Data Product prefix, e.g. CallCentre")
+        subparser.add_argument("--prefix", required=True, help="Data Product prefix, e.g. ProductPrefix")
+        if command in {"generate-tests", "validate"}:
+            subparser.add_argument(
+                "--rules-config",
+                type=Path,
+                help="Optional JSON file with disabled_test_ids and disabled_scanners arrays.",
+            )
         if command == "validate":
             subparser.add_argument(
                 "--database-url",
                 help="SQLAlchemy database URL. Defaults to DATABASE_URI.",
+            )
+            subparser.add_argument(
+                "--log-file",
+                type=Path,
+                help=(
+                    "Optional log file for diagnostic detail, including SQL before execution "
+                    "and SQL that fails."
+                ),
+            )
+            subparser.add_argument(
+                "--log-level",
+                choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
+                help=(
+                    "Logging level. Defaults to INFO when --log-file is supplied, otherwise "
+                    "WARNING."
+                ),
             )
             subparser.add_argument(
                 "--output",
@@ -56,6 +90,15 @@ def build_parser() -> argparse.ArgumentParser:
                 default="proposal",
                 choices=("detect", "proposal", "safe-auto"),
                 help="Repair posture for validation failures.",
+            )
+            subparser.add_argument(
+                "--publish-trust-table",
+                nargs="?",
+                const="",
+                help=(
+                    "Publish a compact trust summary row for agent reads. Optional value is a "
+                    "two-part Teradata table name; defaults to <prefix>_SEM_STD_T.trust_engine_run."
+                ),
             )
 
     mcp_parser = subparsers.add_parser(
@@ -84,22 +127,49 @@ def _main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command == "generate-tests":
-        tests = [
-            *generate_metadata_tests(args.prefix),
-            *capability_test_cases(args.prefix),
-            *query_template_test_cases(args.prefix),
-            *relationship_health_test_cases(args.prefix),
-            *text_reference_test_cases(args.prefix),
-            *view_contract_test_cases(args.prefix),
-        ]
+        rule_config = load_rule_config(args.rules_config)
+        tests = [*generate_metadata_tests(args.prefix)]
+        if "CAPABILITY" not in rule_config.disabled_scanners:
+            tests.extend(capability_test_cases(args.prefix))
+        if "QUERY" not in rule_config.disabled_scanners:
+            tests.extend(query_template_test_cases(args.prefix))
+        if "RELATIONSHIP" not in rule_config.disabled_scanners:
+            tests.extend(relationship_health_test_cases(args.prefix))
+        if "TEXT" not in rule_config.disabled_scanners:
+            tests.extend(text_reference_test_cases(args.prefix))
+        if "VIEW" not in rule_config.disabled_scanners:
+            tests.extend(view_contract_test_cases(args.prefix))
+        tests = rule_config.filter_tests(tests)
         for test in tests:
             print(f"{test.test_id}\t{test.category.value}\t{test.name}")
         return 0
 
     if args.command == "validate":
-        tests = generate_metadata_tests(args.prefix)
-        adapter = adapter_from_environment(args.database_url)
-        run = run_validation(args.prefix, adapter, tests)
+        configure_logging(args.log_level, args.log_file)
+        LOGGER.info("Starting validation for product prefix %s.", args.prefix)
+        rule_config = load_rule_config(args.rules_config)
+        generated_tests = generate_metadata_tests(args.prefix)
+        tests = rule_config.filter_tests(generated_tests)
+        excluded_checks = rule_config.excluded_checks(generated_tests)
+        LOGGER.info(
+            "Prepared %s checks; %s checks excluded by configuration.",
+            len(tests),
+            len(excluded_checks),
+        )
+        adapter = LoggingAdapter(adapter_from_environment(args.database_url))
+        run = run_validation(
+            args.prefix,
+            adapter,
+            tests,
+            excluded_checks=excluded_checks,
+            **rule_config.scanner_kwargs(),
+        )
+        LOGGER.info(
+            "Validation completed: %s passed, %s failed, %s errors.",
+            run.passed_count,
+            run.failed_count,
+            run.error_count,
+        )
         write_json_report(run, args.output)
         repair_candidates = []
         if args.repair_mode in {"proposal", "safe-auto"}:
@@ -120,6 +190,10 @@ def _main(argv: list[str] | None = None) -> int:
         if args.html_output:
             write_html_report(run, args.html_output, repair_candidates)
             print(f"HTML report: {args.html_output}")
+        if args.publish_trust_table is not None:
+            trust_table = args.publish_trust_table or default_trust_table(args.prefix)
+            published_table = publish_trust_result(adapter, run, repair_candidates, trust_table)
+            print(f"Trust summary published: {published_table}")
         print(
             f"Validation complete: {run.passed_count} passed, "
             f"{run.failed_count} failed, {run.error_count} errors. "

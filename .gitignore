@@ -8,4 +8,16 @@ build/
 dist/
 .env
 .env.*
+*.log
+logs/
 reports/
+*.repairs.md
+*.repairs.sql
+.pytest_tmp/
+pytest_tmp/
+pytest-cache-files-*/
+pytest_cache_disabled/
+rule_config_test.json
+config/rules.json
+config/*_rules.json
+config/*.local.json

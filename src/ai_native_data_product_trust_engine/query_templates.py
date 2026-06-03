@@ -15,6 +15,12 @@ from ai_native_data_product_trust_engine.models import (
 )
 
 PARAMETER_PATTERN = re.compile(r"(?<!:):([A-Za-z][A-Za-z0-9_]*)")
+SQL_OBJECT_REFERENCE_PATTERN = re.compile(
+    r"\b(?:FROM|JOIN|UPDATE|INTO|MERGE\s+INTO|DELETE\s+FROM)\s+"
+    r"((?:[A-Za-z_][A-Za-z0-9_]*|\x22[^\x22]+\x22)"
+    r"(?:\s*\.\s*(?:[A-Za-z_][A-Za-z0-9_]*|\x22[^\x22]+\x22)){1,2})",
+    re.I,
+)
 MISSING_COLUMN_PATTERNS = (
     re.compile(r"Column/Parameter '([^']+)' does not exist", re.I),
     re.compile(r"Column ([A-Za-z0-9_.$]+) not found", re.I),
@@ -99,6 +105,8 @@ def classify_sql_error(message: str, sql_template: str = "") -> str:
     lower_message = message.lower()
     if _uses_native_vector_feature(sql_template):
         return "UNSUPPORTED_CAPABILITY"
+    if "ordered analytical functions can not be nested" in lower_message:
+        return "NESTED_ORDERED_ANALYTIC"
     if "column" in lower_message and "not found" in lower_message:
         return "MISSING_COLUMN"
     if "column/parameter" in lower_message and "does not exist" in lower_message:
@@ -142,6 +150,12 @@ def extract_sql_error_evidence(
         syntax_fragment = _syntax_fragment(message)
         if syntax_fragment:
             evidence["syntax_fragment"] = syntax_fragment
+    elif issue_code == "NESTED_ORDERED_ANALYTIC":
+        evidence["sql_pattern"] = "Nested ordered analytical function"
+        evidence["suggested_sql_shape"] = (
+            "Split the recipe into CTEs: aggregate first, calculate percentages second, then "
+            "calculate the ordered cumulative percentage in the outer query."
+        )
     return evidence
 
 
@@ -220,8 +234,9 @@ def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> lis
     results = [
         _run_recipe_bounds_validation(bounds_test_case, row, bound_template),
     ]
+    explain_sql = f"EXPLAIN {bound_template.sql}"
     try:
-        explain_rows = adapter.fetch_all(f"EXPLAIN {bound_template.sql}")
+        explain_rows = adapter.fetch_all(explain_sql)
     except Exception as exc:  # noqa: BLE001 - backend errors are classified for evidence.
         evidence = extract_sql_error_evidence(str(exc), sql_template)
         results.insert(
@@ -233,6 +248,8 @@ def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> lis
                 evidence,
                 error_message=str(exc),
                 parameters=bound_template.parameters,
+                attempted_sql=explain_sql,
+                referenced_objects=referenced_sql_objects(sql_template),
             ),
         )
         return results
@@ -259,6 +276,7 @@ def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> lis
             recipe_id,
             recipe_title,
             explain_rows,
+            referenced_sql_objects(sql_template),
         )
     )
     return results
@@ -305,6 +323,8 @@ def _failed_result(
     evidence: str | dict[str, object],
     error_message: str | None = None,
     parameters: tuple[str, ...] = (),
+    attempted_sql: str | None = None,
+    referenced_objects: list[str] | None = None,
 ) -> TestResult:
     if isinstance(evidence, str):
         evidence = {"issue_code": evidence}
@@ -312,8 +332,14 @@ def _failed_result(
         "recipe_id": recipe_id,
         "recipe_title": recipe_title,
         "parameters": list(parameters),
+        "validation_mode": "EXPLAIN",
+        "source_module": "query_templates.py",
         **evidence,
     }
+    if attempted_sql:
+        sample_row["attempted_sql"] = attempted_sql
+    if referenced_objects:
+        sample_row["referenced_objects"] = referenced_objects
     return TestResult(
         test_case=test_case,
         status=TestStatus.FAILED,
@@ -462,6 +488,7 @@ def _run_recipe_explain_performance_validation(
     recipe_id: str,
     recipe_title: str,
     explain_rows: list[dict[str, object]],
+    referenced_objects: list[str],
 ) -> TestResult:
     findings = explain_performance_findings(explain_rows)
     if not findings:
@@ -485,6 +512,7 @@ def _run_recipe_explain_performance_validation(
             {
                 "recipe_id": recipe_id,
                 "recipe_title": recipe_title,
+                "referenced_objects": referenced_objects,
                 **finding,
             }
             for finding in findings[:10]
@@ -497,6 +525,16 @@ def _explain_text(explain_rows: list[dict[str, object]]) -> str:
     for row in explain_rows:
         values.extend(str(value) for value in row.values() if value is not None)
     return "\n".join(values)
+
+
+def referenced_sql_objects(sql_template: str) -> list[str]:
+    objects: list[str] = []
+    for match in SQL_OBJECT_REFERENCE_PATTERN.finditer(sql_template):
+        object_name = re.sub(r"\s+", "", match.group(1)).replace('"', "")
+        if object_name.upper().startswith("SELECT."):
+            continue
+        objects.append(object_name)
+    return list(dict.fromkeys(objects))
 
 
 def _first_pattern_match(patterns: tuple[re.Pattern[str], ...], message: str) -> str | None:
@@ -524,6 +562,7 @@ def _repair_hint(issue_code: str) -> str:
         "MISSING_OBJECT": "Update the SQL template to a deployed object, create the missing view, or quarantine the recipe.",
         "UNSUPPORTED_FUNCTION": "Replace the function with a supported implementation or mark the required capability unavailable.",
         "UNSUPPORTED_CAPABILITY": "Use a capability-compatible recipe variant or mark the native capability unavailable.",
+        "NESTED_ORDERED_ANALYTIC": "Rewrite the recipe to calculate each analytic layer in a separate CTE or derived table before applying the next ordered analytic function.",
         "SQL_SYNTAX_ERROR": "Repair the SQL template syntax before publishing the recipe.",
         "SQL_VALIDATION_ERROR": "Inspect the backend error and add a specific classifier if the pattern is repeatable.",
     }

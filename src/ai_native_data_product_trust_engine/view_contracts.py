@@ -440,6 +440,7 @@ SELECT
 FROM DBC.TablesV
 WHERE DatabaseName LIKE '{escaped_prefix}\\_%' ESCAPE '\\'
   AND TableKind = 'V'
+  AND {_deployed_module_database_filter(prefix, 'DatabaseName')}
   AND {backup_object_exclusion_sql('TableName')}
 ORDER BY DatabaseName, TableName
 """.strip()
@@ -455,6 +456,7 @@ SELECT
 FROM DBC.TablesV
 WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_STD\\_V' ESCAPE '\\'
   AND TableKind = 'V'
+  AND {_deployed_module_database_filter(prefix, 'DatabaseName')}
   AND {backup_object_exclusion_sql('TableName')}
 ORDER BY DatabaseName, TableName
 """.strip()
@@ -470,6 +472,7 @@ SELECT
 FROM DBC.TablesV
 WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_BUS\\_V' ESCAPE '\\'
   AND TableKind = 'V'
+  AND {_deployed_module_database_filter(prefix, 'DatabaseName')}
   AND {backup_object_exclusion_sql('TableName')}
 ORDER BY DatabaseName, TableName
 """.strip()
@@ -489,6 +492,7 @@ WITH standard_tables AS
     FROM DBC.TablesV
     WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_STD\\_T' ESCAPE '\\'
       AND TableKind = 'T'
+      AND {_deployed_module_database_filter(prefix, 'DatabaseName')}
       AND {backup_object_exclusion_sql('TableName')}
 ),
 missing_views AS
@@ -529,9 +533,28 @@ SELECT
 FROM DBC.TablesV
 WHERE DatabaseName LIKE '{escaped_prefix}\\_%' ESCAPE '\\'
   AND TableKind = 'V'
+  AND {_deployed_module_database_filter(prefix, 'DatabaseName')}
   AND {backup_object_exclusion_sql('TableName')}
 ORDER BY DatabaseName, TableName
 """.strip()
+
+
+def _deployed_module_database_filter(prefix: str, database_expression: str) -> str:
+    sem_db = f"{prefix}_SEM_STD_V"
+    return f"""
+EXISTS (
+    SELECT 1
+    FROM {sem_db}.data_product_map module_scope
+    WHERE COALESCE(module_scope.is_active, 1) = 1
+      AND UPPER(COALESCE(TRIM(module_scope.deployment_status), 'DEPLOYED')) = 'DEPLOYED'
+      AND (
+          UPPER(TRIM(module_scope.database_name)) = UPPER(TRIM({database_expression}))
+          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_STD_V'), '_BUS_V', '_STD_V'))
+                = UPPER(TRIM({database_expression}))
+          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_BUS_V'), '_STD_V', '_BUS_V'))
+                = UPPER(TRIM({database_expression}))
+      )
+)""".strip()
 
 
 def _standard_view_column_contract_sql(

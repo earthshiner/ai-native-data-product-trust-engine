@@ -78,10 +78,10 @@ The first implementation will default to proposal mode. Automatic repair is only
 ## Initial CLI Shape
 
 ```powershell
-python -m ai_native_data_product_trust_engine discover --prefix CallCentre
-python -m ai_native_data_product_trust_engine generate-tests --prefix CallCentre
-python -m ai_native_data_product_trust_engine validate --prefix CallCentre --repair-mode proposal
-python -m ai_native_data_product_trust_engine report --prefix CallCentre
+python -m ai_native_data_product_trust_engine discover --prefix ProductPrefix
+python -m ai_native_data_product_trust_engine generate-tests --prefix ProductPrefix
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --repair-mode proposal
+python -m ai_native_data_product_trust_engine report --prefix ProductPrefix
 python -m ai_native_data_product_trust_engine mcp-server --reports-dir reports
 ```
 
@@ -89,14 +89,154 @@ During local development, run from the repository root with `src` on `PYTHONPATH
 
 ```powershell
 $env:PYTHONPATH='src'
-python -m ai_native_data_product_trust_engine generate-tests --prefix CallCentre
-python -m ai_native_data_product_trust_engine validate --prefix CallCentre --output reports\callcentre-validation.json
-python -m ai_native_data_product_trust_engine validate --prefix CallCentre --output reports\callcentre-validation.json --html-output reports\callcentre-validation.html
+python -m ai_native_data_product_trust_engine generate-tests --prefix ProductPrefix
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --output reports\productprefix-validation.json
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --output reports\productprefix-validation.json --html-output reports\productprefix-validation.html
 ```
 
 Live validation currently uses `DATABASE_URI` by default and writes JSON validation evidence. Use
 `--html-output` to also create a standalone interactive HTML report for human review. Generated
 reports are local artifacts and are not committed.
+
+For troubleshooting backend failures, enable diagnostic logging. SQL is logged immediately before
+execution, and failing SQL is logged again with the backend exception:
+
+```powershell
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --log-file logs\trust-engine.log
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --log-level INFO
+```
+
+`--log-file` defaults to `INFO` level so the SQL statements are captured. Without `--log-file`, the
+default level is `WARNING`; pass `--log-level INFO` to stream SQL diagnostics to the console.
+
+To make trust evidence cheap for agents to read at interaction time, deploy a compact history table
+inside the data product and expose the latest row through the Semantic BUS_V access layer:
+
+```sql
+CREATE MULTISET TABLE {ProductPrefix}_SEM_STD_T.trust_engine_run
+(
+    product_prefix VARCHAR(128) CHARACTER SET LATIN NOT NULL,
+    run_id VARCHAR(64) CHARACTER SET LATIN NOT NULL,
+    started_at VARCHAR(40) CHARACTER SET LATIN NOT NULL,
+    completed_at VARCHAR(40) CHARACTER SET LATIN NOT NULL,
+    trust_status VARCHAR(16) CHARACTER SET LATIN NOT NULL,
+    agent_use_allowed BYTEINT NOT NULL,
+    total_checks INTEGER NOT NULL,
+    passed_count INTEGER NOT NULL,
+    failed_count INTEGER NOT NULL,
+    error_count INTEGER NOT NULL,
+    critical_failure_count INTEGER NOT NULL,
+    error_failure_count INTEGER NOT NULL,
+    data_product_trust_score INTEGER,
+    performance_readiness_score INTEGER,
+    operational_readiness_score INTEGER,
+    repair_candidate_count INTEGER NOT NULL,
+    failed_checks_json JSON(32000) CHARACTER SET UNICODE,
+    repair_candidates_json JSON(32000) CHARACTER SET UNICODE
+)
+PRIMARY INDEX (product_prefix, completed_at);
+
+COLLECT STATISTICS COLUMN (product_prefix, completed_at)
+ON {ProductPrefix}_SEM_STD_T.trust_engine_run;
+
+CREATE VIEW {ProductPrefix}_SEM_BUS_V.trust_engine_latest
+(
+    product_prefix,
+    run_id,
+    started_at,
+    completed_at,
+    trust_status,
+    agent_use_allowed,
+    total_checks,
+    passed_count,
+    failed_count,
+    error_count,
+    critical_failure_count,
+    error_failure_count,
+    data_product_trust_score,
+    performance_readiness_score,
+    operational_readiness_score,
+    repair_candidate_count,
+    failed_checks_json,
+    repair_candidates_json
+)
+AS
+LOCKING ROW FOR ACCESS
+SELECT
+    product_prefix,
+    run_id,
+    started_at,
+    completed_at,
+    trust_status,
+    agent_use_allowed,
+    total_checks,
+    passed_count,
+    failed_count,
+    error_count,
+    critical_failure_count,
+    error_failure_count,
+    data_product_trust_score,
+    performance_readiness_score,
+    operational_readiness_score,
+    repair_candidate_count,
+    failed_checks_json,
+    repair_candidates_json
+FROM {ProductPrefix}_SEM_STD_T.trust_engine_run
+QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY product_prefix
+    ORDER BY completed_at DESC, run_id DESC
+) = 1;
+```
+
+Then publish after scheduled validation:
+
+```powershell
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --output reports\productprefix-validation.json --publish-trust-table
+```
+
+Passing `--publish-trust-table` without a value writes to
+`{prefix}_SEM_STD_T.trust_engine_run`. You can pass a two-part table name to override it. Agents
+should read `{prefix}_SEM_BUS_V.trust_engine_latest` and treat `agent_use_allowed = 0` or
+`trust_status = 'UNTRUSTED'` as a stop signal before generating SQL over the product.
+
+Optional rule configuration can disable specific generated tests or scanner families without
+changing code:
+
+```json
+{
+  "disabled_test_ids": ["PRODUCTPREFIX-SEM-008"],
+  "disabled_scanners": ["VIEW", "TEXT"]
+}
+```
+
+Keep rule config files under `config/`, for example copy `config/rules.example.json` to
+`config/rules.json`, then pass it to `generate-tests` or `validate`:
+
+```powershell
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --rules-config config\rules.json
+```
+
+Scanner names are:
+
+- `CAPABILITY`: checks whether metadata and recipes only claim platform features that the deployed
+  product actually exposes.
+- `QUERY`: validates active cookbook SQL templates, bounded-query safeguards, parameters and
+  EXPLAIN readiness.
+- `RELATIONSHIP`: samples declared relationship keys for orphan evidence, cardinality mismatches
+  and temporal current-record contract issues.
+- `TEXT`: checks glossary text, cookbook notes and metadata descriptions for stale object names,
+  aliases and free-text references.
+- `VIEW`: validates standard view contracts, business-view source layering, locking access patterns
+  and view compile/readiness checks.
+
+Disabled checks and scanner families are still shown in the JSON and HTML reports under
+`excluded_checks`, so reviewers can distinguish "passed" from "not run".
+
+Module deployment scope comes from `{Product}_SEM_STD_V.data_product_map`. A module is in scope
+only when `COALESCE(is_active, 1) = 1` and `deployment_status = 'DEPLOYED'`. To keep a module in the
+catalogue but exclude it from module-owned object checks, set `deployment_status` to a non-deployed
+state such as `NOT_DEPLOYED` or set `is_active = 0`. Query cookbook rows remain governed by their own
+`is_active` metadata because a recipe can intentionally be unavailable even when its module exists.
 
 ## Agent-Friendly MCP Orientation Layer
 
@@ -106,7 +246,7 @@ JSON reports, then start the server over the report directory:
 
 ```powershell
 pip install .[mcp]
-python -m ai_native_data_product_trust_engine validate --prefix CallCentre --output reports\callcentre-validation.json
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --output reports\productprefix-validation.json
 python -m ai_native_data_product_trust_engine mcp-server --reports-dir reports
 ```
 
@@ -128,14 +268,17 @@ data product access path is considered.
 
 ## First Working Slice
 
-The first implemented slice generates and executes ten metadata trust tests:
+The first implemented slice generates and executes metadata trust tests including:
 
 - Entity metadata references deployed objects.
 - Column metadata references deployed columns.
 - Relationship metadata references deployed join columns.
 - Relationship join columns have compatible datatype, length, precision, scale and character set.
 - Same/similar column names have consistent datatype, length, precision and scale.
-- `{Product}_SEM_STD_T.data_product_registry` exists for product-first MCP discovery.
+- Column metadata datatype declarations and coverage stay current with deployed entity columns.
+- Data product primary views, entity view names, relationship endpoints and lineage endpoints use
+  deployed BUS_V access-layer objects for governed agent access.
+- `DataProductsMaster_GOV_BUS_V.active_data_product_registry` exists for product-first MCP discovery.
 - Data product registry and orientation manifest match deployed metadata.
 - Active cookbook recipes exist for later SQL template validation.
 - Product tables stay within the initial AMP storage skew warning threshold.

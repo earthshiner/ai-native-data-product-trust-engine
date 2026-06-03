@@ -2,9 +2,46 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
 from urllib.parse import parse_qs, unquote, urlparse
+
+LOGGER = logging.getLogger("ai_native_data_product_trust_engine.sql")
+
+
+class DatabaseAdapter(Protocol):
+    def fetch_all(self, sql: str) -> list[dict[str, object]]:
+        """Run SQL and return rows as dictionaries."""
+
+    def execute(self, sql: str) -> None:
+        """Execute a non-query SQL statement."""
+
+
+@dataclass(frozen=True)
+class LoggingAdapter:
+    adapter: DatabaseAdapter
+
+    def fetch_all(self, sql: str) -> list[dict[str, object]]:
+        LOGGER.info("Executing SQL query:\n%s", sql)
+        try:
+            rows = self.adapter.fetch_all(sql)
+        except Exception:
+            LOGGER.exception("SQL query failed:\n%s", sql)
+            raise
+        LOGGER.info("SQL query returned %s rows.", len(rows))
+        return rows
+
+    def execute(self, sql: str) -> None:
+        LOGGER.info("Executing SQL statement:\n%s", sql)
+        try:
+            self.adapter.execute(sql)
+        except Exception:
+            LOGGER.exception("SQL statement failed:\n%s", sql)
+            raise
+        LOGGER.info("SQL statement completed.")
 
 
 @dataclass(frozen=True)
@@ -93,6 +130,33 @@ def adapter_from_environment(database_url: str | None = None):
         return TeradataSqlAdapter(resolved_url)
 
     return SqlAlchemyAdapter(resolved_url)
+
+
+def configure_logging(log_level: str | None = None, log_file: Path | None = None) -> None:
+    resolved_level = _log_level(log_level or ("INFO" if log_file else "WARNING"))
+    handlers: list[logging.Handler] = []
+    if log_file:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+    else:
+        handlers.append(logging.StreamHandler())
+    logging.basicConfig(
+        level=resolved_level,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        handlers=handlers,
+        force=True,
+    )
+
+
+def _log_level(value: str) -> int:
+    level_name = value.upper()
+    if level_name not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        msg = (
+            f"[ADPTrust.InvalidLogLevel] Unsupported log level {value}. "
+            "Suggested action: use DEBUG, INFO, WARNING, ERROR or CRITICAL."
+        )
+        raise ValueError(msg)
+    return int(getattr(logging, level_name))
 
 
 def _normalise_database_url(database_url: str) -> str:
