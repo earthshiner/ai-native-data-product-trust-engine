@@ -15,18 +15,51 @@ def semantic_database(prefix: str) -> str:
     return f"{prefix}_SEM_STD_V"
 
 
-def semantic_table_database(prefix: str) -> str:
-    return f"{prefix}_SEM_STD_T"
+def observability_view_database(prefix: str) -> str:
+    return f"{prefix}_OBS_STD_V"
+
+
+def business_view_database(physical_database_expression: str) -> str:
+    return (
+        f"OREPLACE(OREPLACE({physical_database_expression}, '_STD_T', '_BUS_V'), "
+        "'_STD_V', '_BUS_V')"
+    )
 
 
 def memory_database(prefix: str) -> str:
     return f"{prefix}_MEM_STD_V"
 
 
+def data_products_registry_database() -> str:
+    return "DataProductsMaster_GOV_BUS_V"
+
+
+def data_products_registry_view() -> str:
+    return "active_data_product_registry"
+
+
+def deployed_module_database_filter(sem_db: str, database_expression: str) -> str:
+    return f"""
+EXISTS (
+    SELECT 1
+    FROM {sem_db}.data_product_map module_scope
+    WHERE COALESCE(module_scope.is_active, 1) = 1
+      AND UPPER(COALESCE(TRIM(module_scope.deployment_status), 'DEPLOYED')) = 'DEPLOYED'
+      AND (
+          UPPER(TRIM(module_scope.database_name)) = UPPER(TRIM({database_expression}))
+          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_STD_V'), '_BUS_V', '_STD_V'))
+                = UPPER(TRIM({database_expression}))
+          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_BUS_V'), '_STD_V', '_BUS_V'))
+                = UPPER(TRIM({database_expression}))
+      )
+)""".strip()
+
+
 def generate_metadata_tests(prefix: str) -> list[TestCase]:
     sem_db = semantic_database(prefix)
-    sem_table_db = semantic_table_database(prefix)
     mem_db = memory_database(prefix)
+    registry_db = data_products_registry_database()
+    registry_view = data_products_registry_view()
 
     return [
         TestCase(
@@ -44,6 +77,7 @@ LEFT OUTER JOIN DBC.TablesV tv
    AND tv.TableName = em.table_name
 WHERE tv.TableName IS NULL
   AND COALESCE(em.is_active, 1) = 1
+  AND {deployed_module_database_filter(sem_db, 'em.database_name')}
   AND {backup_object_exclusion_sql('em.table_name')};
 """.strip(),
             expected_result="Returns zero rows.",
@@ -66,6 +100,7 @@ LEFT OUTER JOIN DBC.ColumnsV colv
    AND colv.ColumnName = cmeta.column_name
 WHERE colv.ColumnName IS NULL
   AND COALESCE(cmeta.is_active, 1) = 1
+  AND {deployed_module_database_filter(sem_db, 'cmeta.database_name')}
   AND {backup_object_exclusion_sql('cmeta.table_name')};
 """.strip(),
             expected_result="Returns zero rows.",
@@ -95,6 +130,8 @@ LEFT OUTER JOIN DBC.ColumnsV tgt
    AND tgt.TableName = tr.target_table
    AND tgt.ColumnName = tr.target_column
 WHERE COALESCE(tr.is_active, 1) = 1
+  AND {deployed_module_database_filter(sem_db, 'tr.source_database')}
+  AND {deployed_module_database_filter(sem_db, 'tr.target_database')}
   AND {backup_object_exclusion_sql('tr.source_table')}
   AND {backup_object_exclusion_sql('tr.target_table')}
   AND (src.ColumnName IS NULL OR tgt.ColumnName IS NULL);
@@ -138,6 +175,8 @@ WITH deployed_relationship_columns AS
        AND tgt.TableName = tr.target_table
        AND tgt.ColumnName = tr.target_column
     WHERE COALESCE(tr.is_active, 1) = 1
+      AND {deployed_module_database_filter(sem_db, 'tr.source_database')}
+      AND {deployed_module_database_filter(sem_db, 'tr.target_database')}
       AND {backup_object_exclusion_sql('tr.source_table')}
       AND {backup_object_exclusion_sql('tr.target_table')}
 ),
@@ -205,7 +244,7 @@ SELECT
    ,issue_code
    ,'Align relationship join column datatype, length, precision, scale and character set before generated SQL uses this join.' AS repair_hint
 FROM relationship_type_issues
-ORDER BY relationship_name, issue_code, source_database, source_table, source_column;
+ORDER BY 1, 18, 2, 3, 4;
 """.strip(),
             expected_result="Returns zero rows for relationship join columns with incompatible type signatures.",
             repair_strategy=(
@@ -242,6 +281,7 @@ WITH product_columns AS
        AND tv.TableName = colv.TableName
     WHERE colv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
       AND tv.TableKind IN ('T', 'V')
+      AND {deployed_module_database_filter(sem_db, 'colv.DatabaseName')}
       AND {backup_object_exclusion_sql('colv.TableName')}
 ),
 drifted_names AS
@@ -276,34 +316,310 @@ ORDER BY pc.normalised_column_name, pc.column_name, pc.database_name, pc.table_n
             ),
         ),
         TestCase(
-            test_id=f"{prefix.upper()}-DISCOVERY-001",
-            name="Data product registry table exists",
+            test_id=f"{prefix.upper()}-SEM-005",
+            name="Column metadata datatypes match deployed columns",
+            category=TestCategory.SEMANTIC,
+            severity=TestSeverity.WARNING,
+            sql=f"""
+SELECT
+    cmeta.database_name
+   ,cmeta.table_name
+   ,cmeta.column_name
+   ,cmeta.data_type AS metadata_data_type
+   ,TRIM(colv.ColumnType) AS deployed_column_type
+   ,'COLUMN_METADATA_DATATYPE_MISMATCH' AS issue_code
+   ,'Refresh column_metadata.data_type from DBC.ColumnsV.' AS repair_hint
+FROM {sem_db}.column_metadata cmeta
+INNER JOIN DBC.ColumnsV colv
+    ON colv.DatabaseName = cmeta.database_name
+   AND colv.TableName = cmeta.table_name
+   AND colv.ColumnName = cmeta.column_name
+WHERE COALESCE(cmeta.is_active, 1) = 1
+  AND {deployed_module_database_filter(sem_db, 'cmeta.database_name')}
+  AND {backup_object_exclusion_sql('cmeta.table_name')}
+  AND UPPER(cmeta.data_type) NOT LIKE
+    CASE TRIM(colv.ColumnType)
+        WHEN 'I' THEN '%INTEGER%'
+        WHEN 'I1' THEN '%BYTEINT%'
+        WHEN 'I2' THEN '%SMALLINT%'
+        WHEN 'I8' THEN '%BIGINT%'
+        WHEN 'D' THEN '%DECIMAL%'
+        WHEN 'F' THEN '%FLOAT%'
+        WHEN 'DA' THEN '%DATE%'
+        WHEN 'TS' THEN '%TIMESTAMP%'
+        WHEN 'TZ' THEN '%TIME%'
+        WHEN 'AT' THEN '%TIME%'
+        WHEN 'CV' THEN '%VARCHAR%'
+        WHEN 'CF' THEN '%CHAR%'
+        WHEN 'CO' THEN '%CLOB%'
+        WHEN 'BO' THEN '%BLOB%'
+        ELSE '%' || UPPER(TRIM(colv.ColumnType)) || '%'
+    END
+ORDER BY cmeta.database_name, cmeta.table_name, cmeta.column_name;
+""".strip(),
+            expected_result="Returns zero rows when semantic column datatypes match deployed columns.",
+            repair_strategy="Refresh column_metadata.data_type from the deployed column catalogue.",
+        ),
+        TestCase(
+            test_id=f"{prefix.upper()}-SEM-006",
+            name="Column metadata covers active entity columns",
+            category=TestCategory.SEMANTIC,
+            severity=TestSeverity.WARNING,
+            sql=f"""
+SELECT
+    em.database_name
+   ,em.table_name
+   ,colv.ColumnName AS column_name
+   ,'MISSING_COLUMN_METADATA' AS issue_code
+   ,'Add active column_metadata for this deployed entity column.' AS repair_hint
+FROM {sem_db}.entity_metadata em
+INNER JOIN DBC.ColumnsV colv
+    ON colv.DatabaseName = em.database_name
+   AND colv.TableName = em.table_name
+LEFT OUTER JOIN {sem_db}.column_metadata cmeta
+    ON cmeta.database_name = colv.DatabaseName
+   AND cmeta.table_name = colv.TableName
+   AND cmeta.column_name = colv.ColumnName
+   AND COALESCE(cmeta.is_active, 1) = 1
+WHERE COALESCE(em.is_active, 1) = 1
+  AND {deployed_module_database_filter(sem_db, 'em.database_name')}
+  AND {backup_object_exclusion_sql('em.table_name')}
+  AND {backup_object_exclusion_sql('colv.TableName')}
+  AND cmeta.column_name IS NULL
+ORDER BY em.database_name, em.table_name, colv.ColumnId;
+""".strip(),
+            expected_result="Returns zero rows when active entities have metadata for every deployed column.",
+            repair_strategy="Generate or refresh column_metadata for active entity columns.",
+        ),
+        TestCase(
+            test_id=f"{prefix.upper()}-SEM-007",
+            name="Data product primary views are deployed in BUS_V databases",
+            category=TestCategory.SEMANTIC,
+            severity=TestSeverity.CRITICAL,
+            sql=f"""
+WITH module_primary_views AS
+(
+    SELECT
+        dpm.module_name
+       ,dpm.database_name AS physical_database_name
+       ,{business_view_database('dpm.database_name')} AS business_database_name
+       ,TRIM(REGEXP_SUBSTR(dpm.primary_views, '[^,]+', 1, token_numbers.token_number))
+            AS primary_view_name
+    FROM {sem_db}.data_product_map dpm
+    CROSS JOIN
+    (
+        SELECT 1 AS token_number FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 2 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 3 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 4 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 5 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 6 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 7 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 8 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 9 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 10 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    ) token_numbers
+    WHERE COALESCE(dpm.is_active, 1) = 1
+      AND UPPER(COALESCE(TRIM(dpm.deployment_status), 'DEPLOYED')) = 'DEPLOYED'
+      AND COALESCE(dpm.primary_views, '') NOT IN ('', 'None')
+      AND REGEXP_SUBSTR(dpm.primary_views, '[^,]+', 1, token_numbers.token_number) IS NOT NULL
+)
+SELECT
+    module_name
+   ,business_database_name
+   ,primary_view_name
+   ,'PRIMARY_VIEW_NOT_DEPLOYED' AS issue_code
+   ,'Create the BUS_V view or update data_product_map.primary_views to the deployed view name.' AS repair_hint
+FROM module_primary_views mpv
+LEFT OUTER JOIN DBC.TablesV tv
+    ON tv.DatabaseName = mpv.business_database_name
+   AND tv.TableName = mpv.primary_view_name
+   AND tv.TableKind IN ('V', 'O', 'Q')
+WHERE tv.TableName IS NULL
+ORDER BY module_name, business_database_name, primary_view_name;
+""".strip(),
+            expected_result="Returns zero rows when each primary view is deployed in its BUS_V database.",
+            repair_strategy="Create missing BUS_V views or refresh data_product_map.primary_views.",
+        ),
+        TestCase(
+            test_id=f"{prefix.upper()}-SEM-008",
+            name="Entity metadata publishes BUS_V view names",
+            category=TestCategory.SEMANTIC,
+            severity=TestSeverity.CRITICAL,
+            sql=f"""
+WITH active_entities AS
+(
+    SELECT
+        em.entity_metadata_id
+       ,em.entity_name
+       ,em.database_name
+       ,em.table_name
+       ,em.view_name
+       ,{business_view_database('em.database_name')} AS business_database_name
+    FROM {sem_db}.entity_metadata em
+    WHERE COALESCE(em.is_active, 1) = 1
+      AND {deployed_module_database_filter(sem_db, 'em.database_name')}
+      AND {backup_object_exclusion_sql('em.table_name')}
+)
+SELECT
+    entity_metadata_id
+   ,entity_name
+   ,business_database_name
+   ,view_name
+   ,CASE
+        WHEN COALESCE(view_name, '') IN ('', 'None') THEN 'ENTITY_VIEW_NAME_MISSING'
+        ELSE 'ENTITY_VIEW_NAME_NOT_DEPLOYED'
+    END AS issue_code
+   ,'Populate entity_metadata.view_name with the approved BUS_V view for agent access.' AS repair_hint
+FROM active_entities ae
+LEFT OUTER JOIN DBC.TablesV tv
+    ON tv.DatabaseName = ae.business_database_name
+   AND tv.TableName = ae.view_name
+   AND tv.TableKind IN ('V', 'O', 'Q')
+WHERE COALESCE(ae.view_name, '') IN ('', 'None')
+   OR tv.TableName IS NULL
+ORDER BY entity_name, business_database_name, view_name;
+""".strip(),
+            expected_result="Returns zero rows when active entities point agents at deployed BUS_V views.",
+            repair_strategy="Populate entity_metadata.view_name and deploy the referenced BUS_V views.",
+        ),
+        TestCase(
+            test_id=f"{prefix.upper()}-SEM-009",
+            name="Entity deleted flag metadata is populated and deployed",
+            category=TestCategory.SEMANTIC,
+            severity=TestSeverity.WARNING,
+            sql=f"""
+SELECT
+    em.entity_metadata_id
+   ,em.entity_name
+   ,em.database_name
+   ,em.table_name
+   ,em.deleted_flag_column
+   ,CASE
+        WHEN COALESCE(em.deleted_flag_column, '') IN ('', 'None')
+            THEN 'ENTITY_DELETED_FLAG_MISSING'
+        ELSE 'ENTITY_DELETED_FLAG_NOT_DEPLOYED'
+    END AS issue_code
+   ,'Populate deleted_flag_column where delete tracking exists, or explicitly mark the entity as not delete-tracked.' AS repair_hint
+FROM {sem_db}.entity_metadata em
+LEFT OUTER JOIN DBC.ColumnsV colv
+    ON colv.DatabaseName = em.database_name
+   AND colv.TableName = em.table_name
+   AND colv.ColumnName = em.deleted_flag_column
+WHERE COALESCE(em.is_active, 1) = 1
+  AND {deployed_module_database_filter(sem_db, 'em.database_name')}
+  AND COALESCE(em.temporal_pattern, '') NOT IN ('', 'None')
+  AND {backup_object_exclusion_sql('em.table_name')}
+  AND (
+      COALESCE(em.deleted_flag_column, '') IN ('', 'None')
+      OR colv.ColumnName IS NULL
+  )
+ORDER BY em.entity_name, em.database_name, em.table_name;
+""".strip(),
+            expected_result="Returns zero rows when temporal entity delete flags are complete and valid.",
+            repair_strategy="Refresh deleted_flag_column metadata or document entities without delete tracking.",
+        ),
+        TestCase(
+            test_id=f"{prefix.upper()}-SEM-010",
+            name="Relationship metadata uses BUS_V access endpoints",
             category=TestCategory.SEMANTIC,
             severity=TestSeverity.CRITICAL,
             sql=f"""
 SELECT
-    '{sem_table_db}' AS database_name
-   ,'data_product_registry' AS table_name
-   ,'MISSING_DATA_PRODUCT_REGISTRY_TABLE' AS issue_code
-   ,'{sem_table_db}.data_product_registry is required for the Data Product Orientation Layer.' AS issue_detail
-   ,'Create and comment {sem_table_db}.data_product_registry before publishing MCP product discovery resources.' AS repair_hint
+    tr.relationship_name
+   ,tr.source_database AS database_name
+   ,tr.source_table AS object_name
+   ,tr.source_column AS column_name
+   ,'RELATIONSHIP_SOURCE_NOT_BUS_V' AS issue_code
+   ,'Update source_database/source_table to the approved BUS_V database and view.' AS repair_hint
+FROM {sem_db}.table_relationship tr
+WHERE COALESCE(tr.is_active, 1) = 1
+  AND {deployed_module_database_filter(sem_db, 'tr.source_database')}
+  AND {backup_object_exclusion_sql('tr.source_table')}
+  AND UPPER(tr.source_database) NOT LIKE '%\\_BUS\\_V' ESCAPE '\\'
+UNION ALL
+SELECT
+    tr.relationship_name
+   ,tr.target_database AS database_name
+   ,tr.target_table AS object_name
+   ,tr.target_column AS column_name
+   ,'RELATIONSHIP_TARGET_NOT_BUS_V' AS issue_code
+   ,'Update target_database/target_table to the approved BUS_V database and view.' AS repair_hint
+FROM {sem_db}.table_relationship tr
+WHERE COALESCE(tr.is_active, 1) = 1
+  AND {deployed_module_database_filter(sem_db, 'tr.target_database')}
+  AND {backup_object_exclusion_sql('tr.target_table')}
+  AND UPPER(tr.target_database) NOT LIKE '%\\_BUS\\_V' ESCAPE '\\'
+ORDER BY 1, 5, 2, 3, 4;
+""".strip(),
+            expected_result="Returns zero rows when generated joins use governed BUS_V endpoints.",
+            repair_strategy="Move relationship metadata to BUS_V databases and view names for agent access.",
+            inspection_scope=(
+                f"{sem_db}.table_relationship source_database/source_table/source_column and "
+                "target_database/target_table/target_column"
+            ),
+        ),
+        TestCase(
+            test_id=f"{prefix.upper()}-SEM-011",
+            name="Lineage metadata exposes BUS_V access endpoints",
+            category=TestCategory.SEMANTIC,
+            severity=TestSeverity.WARNING,
+            sql=f"""
+SELECT
+    dl.lineage_id
+   ,dl.source_database AS database_name
+   ,dl.source_table AS object_name
+   ,'LINEAGE_SOURCE_NOT_BUS_V' AS issue_code
+   ,'Expose source lineage through BUS_V database and view names for agent-facing consumption.' AS repair_hint
+FROM {observability_view_database(prefix)}.data_lineage dl
+WHERE UPPER(dl.source_database) NOT LIKE '%\\_BUS\\_V' ESCAPE '\\'
+UNION ALL
+SELECT
+    dl.lineage_id
+   ,dl.target_database AS database_name
+   ,dl.target_table AS object_name
+   ,'LINEAGE_TARGET_NOT_BUS_V' AS issue_code
+   ,'Expose target lineage through BUS_V database and view names for agent-facing consumption.' AS repair_hint
+FROM {observability_view_database(prefix)}.data_lineage dl
+WHERE UPPER(dl.target_database) NOT LIKE '%\\_BUS\\_V' ESCAPE '\\'
+ORDER BY 1, 4, 2, 3;
+""".strip(),
+            expected_result="Returns zero rows when lineage consumed by agents references BUS_V endpoints.",
+            repair_strategy="Publish agent-facing lineage through BUS_V databases and views.",
+            inspection_scope=(
+                f"{observability_view_database(prefix)}.data_lineage "
+                "source_database/source_table and target_database/target_table"
+            ),
+        ),
+        TestCase(
+            test_id=f"{prefix.upper()}-DISCOVERY-001",
+            name="Central active data product registry view exists",
+            category=TestCategory.SEMANTIC,
+            severity=TestSeverity.CRITICAL,
+            sql=f"""
+SELECT
+    '{registry_db}' AS database_name
+   ,'{registry_view}' AS view_name
+   ,'MISSING_ACTIVE_DATA_PRODUCT_REGISTRY_VIEW' AS issue_code
+   ,'{registry_db}.{registry_view} is required for the Data Product Orientation Layer.' AS issue_detail
+   ,'Create or grant access to the central active data product registry view before publishing MCP discovery resources.' AS repair_hint
 WHERE NOT EXISTS (
     SELECT 1
     FROM DBC.TablesV tv
-    WHERE tv.DatabaseName = '{sem_table_db}'
-      AND tv.TableName = 'data_product_registry'
-      AND tv.TableKind = 'T'
+    WHERE tv.DatabaseName = '{registry_db}'
+      AND tv.TableName = '{registry_view}'
+      AND tv.TableKind IN ('V', 'O', 'Q')
 );
 """.strip(),
-            expected_result=f"Returns zero rows when {sem_table_db}.data_product_registry exists.",
+            expected_result=f"Returns zero rows when {registry_db}.{registry_view} exists.",
             repair_strategy=(
-                f"Create {sem_table_db}.data_product_registry with table and column comments so "
-                "the MCP Data Product Orientation Layer has a persistent backing catalogue."
+                f"Create or grant access to {registry_db}.{registry_view} so the MCP Data Product "
+                "Orientation Layer can discover active products from the governed registry."
             ),
         ),
         TestCase(
             test_id=f"{prefix.upper()}-DISCOVERY-002",
-            name="Data product registry matches orientation metadata",
+            name="Central registry matches orientation metadata",
             category=TestCategory.SEMANTIC,
             severity=TestSeverity.CRITICAL,
             sql=f"""
@@ -314,8 +630,11 @@ WITH active_registry AS
        ,product_name
        ,product_version
        ,semantic_database
+       ,semantic_view_database
        ,memory_database
+       ,memory_view_database
        ,observability_database
+       ,observability_view_database
        ,manifest_json
        ,contract_uri
        ,semantic_uri
@@ -324,16 +643,24 @@ WITH active_registry AS
        ,policy_uri
        ,approved_entrypoint
        ,approved_access_mode
-    FROM {sem_table_db}.data_product_registry
-    WHERE COALESCE(is_active, 1) = 1
-      AND COALESCE(is_deleted, 0) = 0
-      AND semantic_database = '{sem_table_db}'
+    FROM {registry_db}.{registry_view}
+    WHERE UPPER(TRIM(product_status)) = 'ACTIVE'
+      AND (
+          UPPER(TRIM(product_id)) = UPPER('{prefix}')
+          OR UPPER(TRIM(product_name)) LIKE UPPER('{prefix}%')
+          OR semantic_database = '{sem_db}'
+          OR semantic_view_database = '{sem_db}'
+      )
 ),
 module_map AS
 (
     SELECT
         UPPER(TRIM(module_name)) AS module_name
        ,TRIM(database_name) AS database_name
+       ,OREPLACE(OREPLACE(TRIM(database_name), '_STD_T', '_STD_V'), '_BUS_V', '_STD_V')
+            AS standard_view_database_name
+       ,OREPLACE(OREPLACE(TRIM(database_name), '_STD_T', '_BUS_V'), '_STD_V', '_BUS_V')
+            AS business_view_database_name
     FROM {sem_db}.data_product_map
     WHERE COALESCE(is_active, 1) = 1
 ),
@@ -342,9 +669,11 @@ registry_issues AS
     SELECT
         CAST(NULL AS VARCHAR(128)) AS product_id
        ,'MISSING_PRODUCT_REGISTRY_ROW' AS issue_code
-       ,'No active, non-deleted data_product_registry row points to {sem_table_db}.' AS issue_detail
-       ,'Insert or refresh {sem_table_db}.data_product_registry for this data product.' AS repair_hint
-    WHERE NOT EXISTS (SELECT 1 FROM active_registry)
+       ,'No active central registry row points to this data product.' AS issue_detail
+       ,'Insert or refresh {registry_db}.{registry_view} for this data product.' AS repair_hint
+    FROM DBC.DBCInfoV
+    WHERE InfoKey = 'VERSION'
+      AND NOT EXISTS (SELECT 1 FROM active_registry)
 
     UNION ALL
 
@@ -403,13 +732,20 @@ registry_issues AS
         ar.product_id
        ,'SEMANTIC_DATABASE_NOT_IN_MODULE_MAP' AS issue_code
        ,'Registry semantic_database does not match an active Semantic module in data_product_map.' AS issue_detail
-       ,'Refresh data_product_registry.semantic_database or Semantic.data_product_map.' AS repair_hint
+       ,'Refresh active_data_product_registry.semantic_database or Semantic.data_product_map.' AS repair_hint
     FROM active_registry ar
     WHERE NOT EXISTS (
         SELECT 1
         FROM module_map mm
         WHERE mm.module_name = 'SEMANTIC'
-          AND mm.database_name = ar.semantic_database
+          AND (
+              mm.database_name = ar.semantic_database
+              OR mm.database_name = ar.semantic_view_database
+              OR mm.standard_view_database_name = ar.semantic_database
+              OR mm.standard_view_database_name = ar.semantic_view_database
+              OR mm.business_view_database_name = ar.semantic_database
+              OR mm.business_view_database_name = ar.semantic_view_database
+          )
     )
 
     UNION ALL
@@ -418,7 +754,7 @@ registry_issues AS
         ar.product_id
        ,'MEMORY_DATABASE_NOT_IN_MODULE_MAP' AS issue_code
        ,'Registry memory_database does not match an active Memory module in data_product_map.' AS issue_detail
-       ,'Refresh data_product_registry.memory_database or Semantic.data_product_map.' AS repair_hint
+       ,'Refresh active_data_product_registry.memory_database or Semantic.data_product_map.' AS repair_hint
     FROM active_registry ar
     WHERE EXISTS (
         SELECT 1
@@ -429,7 +765,14 @@ registry_issues AS
         SELECT 1
         FROM module_map mm
         WHERE mm.module_name = 'MEMORY'
-          AND mm.database_name = ar.memory_database
+          AND (
+              mm.database_name = ar.memory_database
+              OR mm.database_name = ar.memory_view_database
+              OR mm.standard_view_database_name = ar.memory_database
+              OR mm.standard_view_database_name = ar.memory_view_database
+              OR mm.business_view_database_name = ar.memory_database
+              OR mm.business_view_database_name = ar.memory_view_database
+          )
     )
 
     UNION ALL
@@ -438,7 +781,7 @@ registry_issues AS
         ar.product_id
        ,'OBSERVABILITY_DATABASE_NOT_IN_MODULE_MAP' AS issue_code
        ,'Registry observability_database does not match an active Observability module in data_product_map.' AS issue_detail
-       ,'Refresh data_product_registry.observability_database or Semantic.data_product_map.' AS repair_hint
+       ,'Refresh active_data_product_registry.observability_database or Semantic.data_product_map.' AS repair_hint
     FROM active_registry ar
     WHERE EXISTS (
         SELECT 1
@@ -449,7 +792,14 @@ registry_issues AS
         SELECT 1
         FROM module_map mm
         WHERE mm.module_name = 'OBSERVABILITY'
-          AND mm.database_name = ar.observability_database
+          AND (
+              mm.database_name = ar.observability_database
+              OR mm.database_name = ar.observability_view_database
+              OR mm.standard_view_database_name = ar.observability_database
+              OR mm.standard_view_database_name = ar.observability_view_database
+              OR mm.business_view_database_name = ar.observability_database
+              OR mm.business_view_database_name = ar.observability_view_database
+          )
     )
 
     UNION ALL
@@ -483,13 +833,16 @@ SELECT
    ,issue_detail
    ,repair_hint
 FROM registry_issues
-ORDER BY issue_code, product_id;
+ORDER BY 2, 1;
 """.strip(),
-            expected_result="Returns zero rows when the registry and orientation manifest match deployed metadata.",
+            expected_result=(
+                "Returns zero rows when the central registry and orientation manifest match "
+                "deployed metadata."
+            ),
             repair_strategy=(
-                f"Refresh {sem_table_db}.data_product_registry and its manifest_json so MCP clients "
-                "discover the product, contract, semantic model, policy, quality, lineage and "
-                "approved access path before querying data."
+                f"Refresh {registry_db}.{registry_view} and its manifest_json so MCP clients discover "
+                "the product, contract, semantic model, policy, quality, lineage and approved access "
+                "path before querying data."
             ),
         ),
         TestCase(
@@ -528,6 +881,7 @@ WITH table_amp_usage AS
        AND tv.TableName = tsv.TableName
     WHERE tsv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
       AND tv.TableKind = 'T'
+      AND {deployed_module_database_filter(sem_db, 'tsv.DatabaseName')}
       AND {backup_object_exclusion_sql('tsv.TableName')}
 ),
 table_skew AS
@@ -584,6 +938,7 @@ WITH product_tables AS
     FROM DBC.TablesV tv
     WHERE tv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
       AND tv.TableKind = 'T'
+      AND {deployed_module_database_filter(sem_db, 'tv.DatabaseName')}
       AND {backup_object_exclusion_sql('tv.TableName')}
 ),
 table_size AS
@@ -603,29 +958,18 @@ table_size AS
             )
         END AS skew_percent
     FROM DBC.TableSizeV tsv
-    WHERE {backup_object_exclusion_sql('tsv.TableName')}
+    WHERE {deployed_module_database_filter(sem_db, 'tsv.DatabaseName')}
+      AND {backup_object_exclusion_sql('tsv.TableName')}
     GROUP BY TRIM(tsv.DatabaseName), TRIM(tsv.TableName)
 ),
-primary_index_columns AS
+primary_index_column_rows AS
 (
     SELECT
         TRIM(iv.DatabaseName) AS database_name
        ,TRIM(iv.TableName) AS table_name
-       ,LISTAGG(TRIM(iv.ColumnName), ',') WITHIN GROUP (ORDER BY iv.ColumnPosition)
-            AS primary_index_columns
-       ,COUNT(*) AS primary_index_column_count
-       ,SUM(CASE WHEN colv.Nullable = 'Y' THEN 1 ELSE 0 END) AS nullable_pi_column_count
-       ,MAX(
-            CASE
-                WHEN UPPER(TRIM(iv.ColumnName)) LIKE '%STATUS%'
-                  OR UPPER(TRIM(iv.ColumnName)) LIKE '%TYPE%'
-                  OR UPPER(TRIM(iv.ColumnName)) LIKE '%FLAG%'
-                  OR UPPER(TRIM(iv.ColumnName)) LIKE '%GENDER%'
-                  OR UPPER(TRIM(iv.ColumnName)) LIKE '%CATEGORY%'
-                THEN 1
-                ELSE 0
-            END
-        ) AS suspicious_low_cardinality_name
+       ,TRIM(iv.ColumnName) AS column_name
+       ,iv.ColumnPosition AS column_position
+       ,COALESCE(colv.Nullable, 'N') AS nullable_flag
     FROM DBC.IndicesV iv
     LEFT OUTER JOIN DBC.ColumnsV colv
         ON colv.DatabaseName = iv.DatabaseName
@@ -634,8 +978,30 @@ primary_index_columns AS
     WHERE iv.IndexNumber = 1
       AND iv.IndexType IN ('P', 'Q', 'A', 'K')
       AND iv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+      AND {deployed_module_database_filter(sem_db, 'iv.DatabaseName')}
       AND {backup_object_exclusion_sql('iv.TableName')}
-    GROUP BY TRIM(iv.DatabaseName), TRIM(iv.TableName)
+),
+primary_index_columns AS
+(
+    SELECT
+        picr.database_name
+       ,picr.table_name
+       ,MIN(picr.column_name) AS primary_index_columns
+       ,COUNT(*) AS primary_index_column_count
+       ,SUM(CASE WHEN picr.nullable_flag = 'Y' THEN 1 ELSE 0 END) AS nullable_pi_column_count
+       ,MAX(
+            CASE
+                WHEN UPPER(picr.column_name) LIKE '%STATUS%'
+                  OR UPPER(picr.column_name) LIKE '%TYPE%'
+                  OR UPPER(picr.column_name) LIKE '%FLAG%'
+                  OR UPPER(picr.column_name) LIKE '%GENDER%'
+                  OR UPPER(picr.column_name) LIKE '%CATEGORY%'
+                THEN 1
+                ELSE 0
+            END
+        ) AS suspicious_low_cardinality_name
+    FROM primary_index_column_rows picr
+    GROUP BY picr.database_name, picr.table_name
 ),
 primary_index_issues AS
 (
@@ -726,7 +1092,7 @@ SELECT
    ,issue_code
    ,repair_hint
 FROM primary_index_issues
-ORDER BY issue_code, skew_percent DESC, total_perm_bytes DESC, database_name, table_name;
+ORDER BY 6, 5 DESC, 4 DESC, 1, 2;
 """.strip(),
             expected_result="Returns zero rows for product tables with suspicious primary index health.",
             repair_strategy=(
@@ -751,6 +1117,7 @@ WITH required_stats AS
        ,'RELATIONSHIP_SOURCE_JOIN' AS usage_type
     FROM {sem_db}.table_relationship tr
     WHERE COALESCE(tr.is_active, 1) = 1
+      AND {deployed_module_database_filter(sem_db, 'tr.source_database')}
       AND tr.source_database IS NOT NULL
       AND tr.source_table IS NOT NULL
       AND tr.source_column IS NOT NULL
@@ -764,6 +1131,7 @@ WITH required_stats AS
        ,'RELATIONSHIP_TARGET_JOIN' AS usage_type
     FROM {sem_db}.table_relationship tr
     WHERE COALESCE(tr.is_active, 1) = 1
+      AND {deployed_module_database_filter(sem_db, 'tr.target_database')}
       AND tr.target_database IS NOT NULL
       AND tr.target_table IS NOT NULL
       AND tr.target_column IS NOT NULL
@@ -842,7 +1210,9 @@ observability_issues AS
        ,'MISSING_OBSERVABILITY_MODULE' AS issue_code
        ,'No active Observability module is registered in data_product_map.' AS issue_detail
        ,'Register and deploy the Observability module so operational readiness can track lineage, freshness, quality and usage evidence.' AS repair_hint
-    WHERE NOT EXISTS (SELECT 1 FROM observability_module)
+    FROM DBC.DBCInfoV
+    WHERE InfoKey = 'VERSION'
+      AND NOT EXISTS (SELECT 1 FROM observability_module)
 
     UNION ALL
 
@@ -862,7 +1232,7 @@ SELECT
    ,issue_detail
    ,repair_hint
 FROM observability_issues
-ORDER BY issue_code, observability_database;
+ORDER BY 2, 1;
 """.strip(),
             expected_result="Returns zero rows when an active Observability module is registered and deployed.",
             repair_strategy=(
@@ -886,15 +1256,21 @@ WITH observability_module AS
 ),
 required_tables AS
 (
-    SELECT 'change_event' AS object_name
-    UNION ALL SELECT 'data_quality_metric'
-    UNION ALL SELECT 'data_lineage'
-    UNION ALL SELECT 'lineage_run'
+    SELECT CAST('change_event' AS VARCHAR(128)) AS object_name
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('data_quality_metric' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('data_lineage' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('lineage_run' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
 ),
 required_semantic_views AS
 (
-    SELECT 'lineage_graph' AS object_name
-    UNION ALL SELECT 'lineage_run_latest'
+    SELECT CAST('lineage_graph' AS VARCHAR(128)) AS object_name
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('lineage_run_latest' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
 ),
 missing_table_issues AS
 (
@@ -942,7 +1318,7 @@ SELECT
    ,issue_detail
    ,repair_hint
 FROM missing_view_issues
-ORDER BY issue_code, observability_database, object_name;
+ORDER BY 3, 1, 2;
 """.strip(),
             expected_result=(
                 "Returns zero rows when required Observability evidence tables and Semantic "
@@ -951,6 +1327,52 @@ ORDER BY issue_code, observability_database, object_name;
             repair_strategy=(
                 "Deploy the Observability evidence tables and Semantic lineage views so agents "
                 "can inspect operational health before relying on the product."
+            ),
+            inspection_scope=(
+                f"{sem_db}.data_product_map Observability module, Observability tables "
+                "change_event/data_quality_metric/data_lineage/lineage_run, and Semantic views "
+                "lineage_graph/lineage_run_latest"
+            ),
+        ),
+        TestCase(
+            test_id=f"{prefix.upper()}-OPS-003",
+            name="Observability BUS_V access views are deployed",
+            category=TestCategory.OPERATIONAL,
+            severity=TestSeverity.CRITICAL,
+            sql=f"""
+WITH required_observability_views AS
+(
+    SELECT CAST('change_event' AS VARCHAR(128)) AS object_name
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('data_quality_metric' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('data_lineage' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('model_performance' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('agent_outcome' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+)
+SELECT
+    '{prefix}_OBS_BUS_V' AS database_name
+   ,rov.object_name
+   ,'MISSING_OBSERVABILITY_BUS_VIEW' AS issue_code
+   ,'Required Observability BUS_V view is not deployed for governed agent access.' AS issue_detail
+   ,'Create the Observability BUS_V database and expose this object as a governed access view.' AS repair_hint
+FROM required_observability_views rov
+LEFT OUTER JOIN DBC.TablesV tv
+    ON tv.DatabaseName = '{prefix}_OBS_BUS_V'
+   AND tv.TableName = rov.object_name
+   AND tv.TableKind IN ('V', 'O', 'Q')
+WHERE tv.TableName IS NULL
+ORDER BY rov.object_name;
+""".strip(),
+            expected_result=(
+                "Returns zero rows when the Observability module has governed BUS_V access views."
+            ),
+            repair_strategy=(
+                "Create the Observability BUS_V database and publish governed views for "
+                "observability objects consumed by agents."
             ),
         ),
     ]

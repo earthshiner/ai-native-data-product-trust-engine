@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ai_native_data_product_trust_engine.error_formatting import concise_backend_error
 from ai_native_data_product_trust_engine.models import (
+    ExcludedCheck,
     TestResult,
     TestSeverity,
     TestStatus,
@@ -332,6 +333,7 @@ def render_html_report(
     scorecards = calculate_scorecards(results)
     dimension_scores = calculate_dimension_scores(results)
     duration = format_duration(validation_run_duration_seconds(run))
+    last_run_at = run.completed_at
     dependency_index = _dependency_index(results)
     root_cause_groups = _root_cause_groups(results, dependency_index)
     safe_auto_count = sum(1 for candidate in repair_candidates if not candidate.requires_approval)
@@ -804,6 +806,7 @@ def render_html_report(
         <span class="meta-chip"><span class="meta-dot" aria-hidden="true"></span>Product <b>{_h(run.prefix)}</b></span>
         <span class="meta-chip"><b>{total_checks}</b>&nbsp;checks carried out</span>
         <span class="meta-chip"><b>{run.passed_count}</b>&nbsp;passed&nbsp;&middot;&nbsp;<b>{run.failed_count}</b>&nbsp;failed&nbsp;&middot;&nbsp;<b>{run.error_count}</b>&nbsp;errors</span>
+        <span class="meta-chip">Last run <b>{_h(last_run_at)}</b></span>
         <span class="meta-chip">Run duration <b>{_h(duration)}</b></span>
       </div>
     </div>
@@ -811,11 +814,11 @@ def render_html_report(
   <main>
     <nav class="tabs" role="tablist" aria-label="Report sections">
       {_tab_button("overview", "Overview", True)}
-      {_tab_button("checks", "Checks", False)}
-      {_tab_button("root-causes", "Root causes", False)}
+      {_tab_button("results", "Validation Results", False)}
+      {_tab_button("root-causes", "Root Causes", False)}
       {_tab_button("repairs", "Repairs", False)}
+      {_tab_button("checks", "Checks", False)}
       {_tab_button("glossary", "Glossary", False)}
-      {_tab_button("results", "Validation results", False)}
     </nav>
 
     <section
@@ -863,6 +866,7 @@ def render_html_report(
           {_metric("Passed", run.passed_count, "Checks with no failed evidence.")}
           {_metric("Failed", run.failed_count, "Checks that returned failed evidence rows.")}
           {_metric("Errors", run.error_count, "Checks that could not complete because the backend returned an error.")}
+          {_metric("Excluded", len(run.excluded_checks), "Checks or scanner families skipped by rule configuration.")}
           {_metric("Duration", duration, "Elapsed wall-clock time for this validation run.")}
         </div>
       </section>
@@ -893,28 +897,54 @@ def render_html_report(
     </section>
 
     <section
-      id="panel-checks"
+      id="panel-results"
       class="tab-panel"
       role="tabpanel"
-      aria-labelledby="tab-checks"
+      aria-labelledby="tab-results"
       hidden
     >
       <section class="panel">
-        <h2>Checks carried out</h2>
+        <h2>Validation results</h2>
+        <div class="toolbar">
+          <select id="statusFilter" aria-label="Filter by status">
+            <option value="">All statuses</option>
+            <option value="PASSED">Passed</option>
+            <option value="FAILED">Failed</option>
+            <option value="ERROR">Error</option>
+          </select>
+          <select id="categoryFilter" aria-label="Filter by category">
+            <option value="">All categories</option>
+            {_category_options(results)}
+          </select>
+          <select id="severityFilter" aria-label="Filter by severity">
+            <option value="">All severities</option>
+            {_severity_options(results)}
+          </select>
+          <input
+            id="searchFilter"
+            type="search"
+            placeholder="Search test, issue, object, hint"
+            aria-label="Search results"
+          />
+        </div>
         <table>
           <thead>
             <tr>
-              <th>Check</th>
+              <th>Status</th>
+              <th>Test</th>
               <th>Category</th>
               <th>Severity</th>
-              <th>Status</th>
-              <th>What is tested</th>
+              <th>Evidence</th>
             </tr>
           </thead>
-          <tbody>
-            {_check_rows(results)}
+          <tbody id="resultsBody">
+            {_result_rows(results, dependency_index)}
           </tbody>
         </table>
+      </section>
+      <section class="panel">
+        <h2>Checks excluded by configuration</h2>
+        {_excluded_check_table(run.excluded_checks)}
       </section>
     </section>
 
@@ -961,48 +991,26 @@ def render_html_report(
     </section>
 
     <section
-      id="panel-results"
+      id="panel-checks"
       class="tab-panel"
       role="tabpanel"
-      aria-labelledby="tab-results"
+      aria-labelledby="tab-checks"
       hidden
     >
       <section class="panel">
-        <h2>Validation results</h2>
-        <div class="toolbar">
-          <select id="statusFilter" aria-label="Filter by status">
-            <option value="">All statuses</option>
-            <option value="PASSED">Passed</option>
-            <option value="FAILED">Failed</option>
-            <option value="ERROR">Error</option>
-          </select>
-          <select id="categoryFilter" aria-label="Filter by category">
-            <option value="">All categories</option>
-            {_category_options(results)}
-          </select>
-          <select id="severityFilter" aria-label="Filter by severity">
-            <option value="">All severities</option>
-            {_severity_options(results)}
-          </select>
-          <input
-            id="searchFilter"
-            type="search"
-            placeholder="Search test, issue, object, hint"
-            aria-label="Search results"
-          />
-        </div>
+        <h2>Checks carried out</h2>
         <table>
           <thead>
             <tr>
-              <th>Status</th>
-              <th>Test</th>
+              <th>Check</th>
               <th>Category</th>
               <th>Severity</th>
-              <th>Evidence</th>
+              <th>Status</th>
+              <th>What is tested</th>
             </tr>
           </thead>
-          <tbody id="resultsBody">
-            {_result_rows(results, dependency_index)}
+          <tbody>
+            {_check_rows(results)}
           </tbody>
         </table>
       </section>
@@ -1147,6 +1155,34 @@ def _check_row(result: TestResult) -> str:
       <td>{_h(test_case.severity.value)}</td>
       <td><span class="status {result.status.value.lower()}">{_h(result.status.value)}</span></td>
       <td>{_h(description)}</td>
+    </tr>"""
+
+
+def _excluded_check_table(excluded_checks: list[ExcludedCheck]) -> str:
+    if not excluded_checks:
+        return "<p>No checks were excluded by rule configuration for this run.</p>"
+    return f"""<table>
+      <thead>
+        <tr>
+          <th>Check</th>
+          <th>Category</th>
+          <th>Reason excluded</th>
+        </tr>
+      </thead>
+      <tbody>
+        {"".join(_excluded_check_row(check) for check in excluded_checks)}
+      </tbody>
+    </table>"""
+
+
+def _excluded_check_row(check: ExcludedCheck) -> str:
+    return f"""<tr>
+      <td>
+        <strong>{_h(check.name)}</strong><br>
+        <code>{_h(check.check_id)}</code>
+      </td>
+      <td>{_h(check.category)}</td>
+      <td>{_h(check.reason)}</td>
     </tr>"""
 
 

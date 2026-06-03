@@ -72,6 +72,18 @@ def test_relationship_health_test_cases_are_listed_for_cli_generation():
     assert tests[0].category.value == "DATA_QUALITY"
 
 
+def test_relationship_metadata_queries_scope_to_deployed_modules():
+    relationship_sql = relationship_health._relationship_metadata_sql("CallCentre")
+    temporal_sql = relationship_health._temporal_entity_metadata_sql("CallCentre")
+
+    assert "deployment_status" in relationship_sql
+    assert "data_product_map module_scope" in relationship_sql
+    assert "source_database" in relationship_sql
+    assert "target_database" in relationship_sql
+    assert "deployment_status" in temporal_sql
+    assert "data_product_map module_scope" in temporal_sql
+
+
 def test_run_relationship_orphan_validations_reports_bounded_orphans():
     adapter = RelationshipStubAdapter(
         relationship_rows=[RELATIONSHIP_ROW],

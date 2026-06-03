@@ -461,6 +461,8 @@ FROM {sem_db}.table_relationship
 WHERE COALESCE(is_active, 1) = 1
   AND source_database IS NOT NULL
   AND target_database IS NOT NULL
+  AND {_deployed_module_database_filter(sem_db, 'source_database')}
+  AND {_deployed_module_database_filter(sem_db, 'target_database')}
 ORDER BY relationship_id
 """.strip()
 
@@ -482,11 +484,29 @@ FROM {sem_db}.entity_metadata
 WHERE COALESCE(is_active, 1) = 1
   AND database_name IS NOT NULL
   AND table_name IS NOT NULL
+  AND {_deployed_module_database_filter(sem_db, 'database_name')}
   AND natural_key_column IS NOT NULL
   AND current_flag_column IS NOT NULL
   AND COALESCE(UPPER(TRIM(temporal_pattern)), 'NONE') <> 'NONE'
 ORDER BY entity_metadata_id
 """.strip()
+
+
+def _deployed_module_database_filter(sem_db: str, database_expression: str) -> str:
+    return f"""
+EXISTS (
+    SELECT 1
+    FROM {sem_db}.data_product_map module_scope
+    WHERE COALESCE(module_scope.is_active, 1) = 1
+      AND UPPER(COALESCE(TRIM(module_scope.deployment_status), 'DEPLOYED')) = 'DEPLOYED'
+      AND (
+          UPPER(TRIM(module_scope.database_name)) = UPPER(TRIM({database_expression}))
+          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_STD_V'), '_BUS_V', '_STD_V'))
+                = UPPER(TRIM({database_expression}))
+          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_BUS_V'), '_STD_V', '_BUS_V'))
+                = UPPER(TRIM({database_expression}))
+      )
+)""".strip()
 
 
 def _view_text_sql(database_name: str, view_name: str) -> str:

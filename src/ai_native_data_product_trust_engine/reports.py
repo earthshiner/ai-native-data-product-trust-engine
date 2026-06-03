@@ -29,11 +29,14 @@ def validation_run_to_dict(run: ValidationRun) -> dict[str, object]:
             "passed": run.passed_count,
             "failed": run.failed_count,
             "errors": run.error_count,
+            "excluded": len(run.excluded_checks),
+            "last_run_at": run.completed_at,
             "duration_seconds": duration_seconds,
             "duration": format_duration(duration_seconds),
         },
         "scores": scorecards(run.results),
         "dimension_scores": dimension_scores(run.results),
+        "excluded_checks": [asdict(check) for check in run.excluded_checks],
         "results": [_result_to_dict(result) for result in run.results],
     }
 
