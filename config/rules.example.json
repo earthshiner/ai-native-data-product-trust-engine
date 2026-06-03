@@ -1,0 +1,9 @@
+{
+  "disabled_test_ids": [
+    "PRODUCTPREFIX-SEM-008"
+  ],
+  "disabled_scanners": [
+    "VIEW",
+    "TEXT"
+  ]
+}

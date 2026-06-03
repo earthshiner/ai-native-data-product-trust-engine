@@ -1,5 +1,6 @@
 from ai_native_data_product_trust_engine.html_reports import write_html_report
 from ai_native_data_product_trust_engine.models import (
+    ExcludedCheck,
     ExpectedResult,
     RepairMode,
     TestCase,
@@ -64,6 +65,14 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
                 ],
             ),
         ],
+        excluded_checks=[
+            ExcludedCheck(
+                check_id="SCANNER:TEXT",
+                name="Free-text reference scans",
+                category="FREE_TEXT",
+                reason="Disabled by disabled_scanners rule configuration.",
+            )
+        ],
     )
     repairs = [
         RepairCandidate(
@@ -83,6 +92,10 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "Performance readiness score" in html
     assert "Operational readiness score" in html
     assert "Checks carried out" in html
+    assert "Checks excluded by configuration" in html
+    assert "Free-text reference scans" in html
+    assert "SCANNER:TEXT" in html
+    assert "Disabled by disabled_scanners rule configuration." in html
     assert "Glossary" in html
     assert 'role="tablist"' in html
     assert 'aria-controls="panel-checks"' in html
@@ -90,6 +103,15 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert 'id="tab-overview"' in html
     assert 'aria-controls="panel-results"' in html
     assert 'id="panel-results"' in html
+    tab_order = [
+        html.index('id="tab-overview"'),
+        html.index('id="tab-results"'),
+        html.index('id="tab-root-causes"'),
+        html.index('id="tab-repairs"'),
+        html.index('id="tab-checks"'),
+        html.index('id="tab-glossary"'),
+    ]
+    assert tab_order == sorted(tab_order)
     assert 'class="tab-panel"' in html
     assert "document.querySelectorAll(&quot;[role=&#x27;tab&#x27;]&quot;)" not in html
     assert "document.querySelectorAll(\"[role='tab']\")" in html
@@ -101,6 +123,10 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "#00233C" in html
     assert "trust-report-data" in html
     assert "Duration" in html
+    assert "Last run" in html
+    assert "2026-05-29T00:00:01+00:00" in html
+    assert "Timestamp when this validation run completed." not in html
+    assert '<span class="meta-chip">Last run <b>2026-05-29T00:00:01+00:00</b></span>' in html
     assert '<div class="metric-value">1s</div>' in html
     assert "How to read the numbers" in html
     assert "passed + failed + errors = total checks" in html
@@ -111,6 +137,7 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "Category scores" in html
     assert "not counts and should not be added together" in html
     assert '<div class="metric-value">4</div>' in html
+    assert "Excluded" in html
     assert '<span class="metric-suffix">/100</span>' in html
     assert "CALLCENTRE-SEM-001" in html
     assert "Returns zero rows." in html
@@ -270,6 +297,14 @@ def test_json_report_includes_separate_score_families():
                 category=TestCategory.PERFORMANCE,
             ),
         ],
+        excluded_checks=[
+            ExcludedCheck(
+                check_id="SCANNER:TEXT",
+                name="Free-text reference scans",
+                category="FREE_TEXT",
+                reason="Disabled by disabled_scanners rule configuration.",
+            )
+        ],
     )
 
     report = validation_run_to_dict(run)
@@ -279,6 +314,9 @@ def test_json_report_includes_separate_score_families():
     assert report["scores"]["operational_readiness"]["assessed"] is False
     assert report["summary"]["duration_seconds"] == 1.0
     assert report["summary"]["duration"] == "1s"
+    assert report["summary"]["last_run_at"] == "2026-05-29T00:00:01+00:00"
+    assert report["summary"]["excluded"] == 1
+    assert report["excluded_checks"][0]["check_id"] == "SCANNER:TEXT"
 
 
 def test_json_report_uses_friendly_backend_error_message():

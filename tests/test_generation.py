@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from ai_native_data_product_trust_engine.adapters import _teradatasql_args_from_url
 from ai_native_data_product_trust_engine.cli import _summarise_error, main
@@ -9,6 +10,7 @@ from ai_native_data_product_trust_engine.models import (
     TestSeverity,
 )
 from ai_native_data_product_trust_engine.repairs import classify_stale_relationship_path_name
+from ai_native_data_product_trust_engine.rule_config import RuleConfig, load_rule_config
 from ai_native_data_product_trust_engine.test_generation import generate_metadata_tests
 from ai_native_data_product_trust_engine.validators import run_test_case, run_validation
 
@@ -22,6 +24,13 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-SEM-003",
         "CALLCENTRE-SEM-004",
         "CALLCENTRE-STRUCT-001",
+        "CALLCENTRE-SEM-005",
+        "CALLCENTRE-SEM-006",
+        "CALLCENTRE-SEM-007",
+        "CALLCENTRE-SEM-008",
+        "CALLCENTRE-SEM-009",
+        "CALLCENTRE-SEM-010",
+        "CALLCENTRE-SEM-011",
         "CALLCENTRE-DISCOVERY-001",
         "CALLCENTRE-DISCOVERY-002",
         "CALLCENTRE-QUERY-001",
@@ -30,33 +39,75 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-PERF-001",
         "CALLCENTRE-OPS-001",
         "CALLCENTRE-OPS-002",
+        "CALLCENTRE-OPS-003",
     ]
-    assert all("CallCentre" in test.sql for test in tests)
-    assert tests[7].expected == ExpectedResult.NON_EMPTY
+    assert all(
+        "CallCentre" in test.sql
+        for test in tests
+        if test.test_id != "CALLCENTRE-DISCOVERY-001"
+    )
+    assert tests[14].expected == ExpectedResult.NON_EMPTY
     assert "COUNT(DISTINCT type_signature) > 1" in tests[4].sql
 
 
-def test_generate_metadata_tests_includes_data_product_registry_table_contract():
+def test_generated_metadata_tests_scope_to_deployed_modules():
+    tests = generate_metadata_tests("CallCentre")
+    scoped_test_ids = {
+        "CALLCENTRE-SEM-001",
+        "CALLCENTRE-SEM-002",
+        "CALLCENTRE-SEM-003",
+        "CALLCENTRE-SEM-004",
+        "CALLCENTRE-STRUCT-001",
+        "CALLCENTRE-SEM-005",
+        "CALLCENTRE-SEM-006",
+        "CALLCENTRE-SEM-007",
+        "CALLCENTRE-SEM-008",
+        "CALLCENTRE-SEM-009",
+        "CALLCENTRE-SEM-010",
+        "CALLCENTRE-STRUCT-002",
+        "CALLCENTRE-STRUCT-003",
+        "CALLCENTRE-PERF-001",
+    }
+
+    scoped_tests = [test for test in tests if test.test_id in scoped_test_ids]
+
+    assert scoped_tests
+    assert all("deployment_status" in test.sql for test in scoped_tests)
+    assert all(
+        "data_product_map module_scope" in test.sql
+        for test in scoped_tests
+        if test.test_id != "CALLCENTRE-SEM-007"
+    )
+
+
+def test_generate_metadata_tests_includes_central_registry_view_contract():
     tests = generate_metadata_tests("CallCentre")
     registry_table_test = next(test for test in tests if test.test_id == "CALLCENTRE-DISCOVERY-001")
 
     assert registry_table_test.category == TestCategory.SEMANTIC
     assert registry_table_test.severity == TestSeverity.CRITICAL
     assert "FROM DBC.TablesV tv" in registry_table_test.sql
-    assert "CallCentre_SEM_STD_T.data_product_registry" in registry_table_test.sql
-    assert "tv.DatabaseName = 'CallCentre_SEM_STD_T'" in registry_table_test.sql
-    assert "MISSING_DATA_PRODUCT_REGISTRY_TABLE" in registry_table_test.sql
-    assert "TableKind = 'T'" in registry_table_test.sql
+    assert "DataProductsMaster_GOV_BUS_V" in registry_table_test.sql
+    assert "active_data_product_registry" in registry_table_test.sql
+    assert "MISSING_ACTIVE_DATA_PRODUCT_REGISTRY_VIEW" in registry_table_test.sql
+    assert "TableKind IN ('V', 'O', 'Q')" in registry_table_test.sql
 
 
-def test_generate_metadata_tests_includes_data_product_registry_contract():
+def test_generate_metadata_tests_includes_central_registry_contract():
     tests = generate_metadata_tests("CallCentre")
     registry_test = next(test for test in tests if test.test_id == "CALLCENTRE-DISCOVERY-002")
 
     assert registry_test.category == TestCategory.SEMANTIC
     assert registry_test.severity == TestSeverity.CRITICAL
-    assert "FROM CallCentre_SEM_STD_T.data_product_registry" in registry_test.sql
-    assert "semantic_database = 'CallCentre_SEM_STD_T'" in registry_test.sql
+    assert "FROM DataProductsMaster_GOV_BUS_V.active_data_product_registry" in registry_test.sql
+    assert "UPPER(TRIM(product_status)) = 'ACTIVE'" in registry_test.sql
+    assert "semantic_view_database = 'CallCentre_SEM_STD_V'" in registry_test.sql
+    assert "       ,semantic_view_database" in registry_test.sql
+    assert "       ,memory_view_database" in registry_test.sql
+    assert "       ,observability_view_database" in registry_test.sql
+    assert "FROM DBC.DBCInfoV\n    WHERE InfoKey = 'VERSION'\n      AND NOT EXISTS" in (
+        registry_test.sql
+    )
     assert "manifest_json" in registry_test.sql
     assert "MISSING_PRODUCT_REGISTRY_ROW" in registry_test.sql
     assert "SEMANTIC_DATABASE_NOT_IN_MODULE_MAP" in registry_test.sql
@@ -77,6 +128,54 @@ def test_generate_metadata_tests_includes_statistics_coverage_contract():
     assert "COLLECT STATISTICS COLUMN" in stats_test.sql
 
 
+def test_generate_metadata_tests_include_semantic_access_layer_contracts():
+    tests = generate_metadata_tests("CallCentre")
+    datatype_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-005")
+    coverage_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-006")
+    primary_views_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-007")
+    entity_view_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-008")
+    deleted_flag_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-009")
+    relationship_access_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-010")
+    lineage_access_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-011")
+
+    assert datatype_test.severity == TestSeverity.WARNING
+    assert "COLUMN_METADATA_DATATYPE_MISMATCH" in datatype_test.sql
+    assert "DBC.ColumnsV colv" in datatype_test.sql
+    assert "Refresh column_metadata.data_type" in datatype_test.repair_strategy
+
+    assert "MISSING_COLUMN_METADATA" in coverage_test.sql
+    assert "CallCentre_SEM_STD_V.column_metadata" in coverage_test.sql
+
+    assert primary_views_test.severity == TestSeverity.CRITICAL
+    assert "STRTOK_SPLIT_TO_TABLE" not in primary_views_test.sql
+    assert "REGEXP_SUBSTR(dpm.primary_views" in primary_views_test.sql
+    assert "FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'" in primary_views_test.sql
+    assert "PRIMARY_VIEW_NOT_DEPLOYED" in primary_views_test.sql
+    assert "_BUS_V" in primary_views_test.sql
+
+    assert entity_view_test.severity == TestSeverity.CRITICAL
+    assert "ENTITY_VIEW_NAME_MISSING" in entity_view_test.sql
+    assert "ENTITY_VIEW_NAME_NOT_DEPLOYED" in entity_view_test.sql
+
+    assert deleted_flag_test.severity == TestSeverity.WARNING
+    assert "ENTITY_DELETED_FLAG_MISSING" in deleted_flag_test.sql
+    assert "ENTITY_DELETED_FLAG_NOT_DEPLOYED" in deleted_flag_test.sql
+
+    assert relationship_access_test.severity == TestSeverity.CRITICAL
+    assert "RELATIONSHIP_SOURCE_NOT_BUS_V" in relationship_access_test.sql
+    assert "RELATIONSHIP_TARGET_NOT_BUS_V" in relationship_access_test.sql
+    assert "ORDER BY 1, 5, 2, 3, 4" in relationship_access_test.sql
+    assert "table_relationship source_database/source_table/source_column" in (
+        relationship_access_test.inspection_scope
+    )
+
+    assert lineage_access_test.severity == TestSeverity.WARNING
+    assert "FROM CallCentre_OBS_STD_V.data_lineage" in lineage_access_test.sql
+    assert "LINEAGE_SOURCE_NOT_BUS_V" in lineage_access_test.sql
+    assert "LINEAGE_TARGET_NOT_BUS_V" in lineage_access_test.sql
+    assert "ORDER BY 1, 4, 2, 3" in lineage_access_test.sql
+
+
 def test_generate_metadata_tests_exclude_backup_objects():
     tests = generate_metadata_tests("CallCentre")
     inventory_test_ids = {
@@ -85,6 +184,11 @@ def test_generate_metadata_tests_exclude_backup_objects():
         "CALLCENTRE-SEM-003",
         "CALLCENTRE-SEM-004",
         "CALLCENTRE-STRUCT-001",
+        "CALLCENTRE-SEM-005",
+        "CALLCENTRE-SEM-006",
+        "CALLCENTRE-SEM-008",
+        "CALLCENTRE-SEM-009",
+        "CALLCENTRE-SEM-010",
         "CALLCENTRE-STRUCT-002",
         "CALLCENTRE-STRUCT-003",
         "CALLCENTRE-PERF-001",
@@ -103,6 +207,7 @@ def test_generate_metadata_tests_includes_relationship_datatype_contract():
     assert datatype_test.category == TestCategory.SEMANTIC
     assert datatype_test.severity == TestSeverity.CRITICAL
     assert "FROM CallCentre_SEM_STD_V.table_relationship tr" in datatype_test.sql
+    assert "ORDER BY 1, 18, 2, 3, 4" in datatype_test.sql
     assert "INNER JOIN DBC.ColumnsV src" in datatype_test.sql
     assert "INNER JOIN DBC.ColumnsV tgt" in datatype_test.sql
     assert "JOIN_COLUMN_TYPE_MISMATCH" in datatype_test.sql
@@ -131,13 +236,17 @@ def test_generate_metadata_tests_includes_primary_index_health_contract():
 
     assert pi_test.category == TestCategory.STRUCTURAL
     assert pi_test.severity == TestSeverity.WARNING
+    assert "primary_index_column_rows AS" in pi_test.sql
     assert "FROM DBC.IndicesV iv" in pi_test.sql
     assert "iv.IndexNumber = 1" in pi_test.sql
     assert "iv.IndexType IN ('P', 'Q', 'A', 'K')" in pi_test.sql
+    assert "MIN(picr.column_name) AS primary_index_columns" in pi_test.sql
+    assert "LISTAGG(" not in pi_test.sql
     assert "PRIMARY_INDEX_NOT_DEFINED" in pi_test.sql
     assert "PRIMARY_INDEX_NULLABLE_COLUMN" in pi_test.sql
     assert "PRIMARY_INDEX_LOW_CARDINALITY_SUSPECT" in pi_test.sql
     assert "PRIMARY_INDEX_SKEW_HIGH" in pi_test.sql
+    assert "ORDER BY 6, 5 DESC, 4 DESC, 1, 2" in pi_test.sql
     assert "primary_index_columns" in pi_test.sql
     assert "intentional designs" in pi_test.repair_strategy
 
@@ -146,11 +255,16 @@ def test_generate_metadata_tests_includes_operational_readiness_contracts():
     tests = generate_metadata_tests("CallCentre")
     module_test = next(test for test in tests if test.test_id == "CALLCENTRE-OPS-001")
     objects_test = next(test for test in tests if test.test_id == "CALLCENTRE-OPS-002")
+    bus_views_test = next(test for test in tests if test.test_id == "CALLCENTRE-OPS-003")
 
     assert module_test.category == TestCategory.OPERATIONAL
     assert module_test.severity == TestSeverity.WARNING
     assert "MISSING_OBSERVABILITY_MODULE" in module_test.sql
     assert "OBSERVABILITY_DATABASE_NOT_DEPLOYED" in module_test.sql
+    assert "FROM DBC.DBCInfoV\n    WHERE InfoKey = 'VERSION'\n      AND NOT EXISTS" in (
+        module_test.sql
+    )
+    assert "ORDER BY 2, 1" in module_test.sql
     assert "FROM CallCentre_SEM_STD_V.data_product_map" in module_test.sql
 
     assert objects_test.category == TestCategory.OPERATIONAL
@@ -163,6 +277,67 @@ def test_generate_metadata_tests_includes_operational_readiness_contracts():
     assert "lineage_run_latest" in objects_test.sql
     assert "MISSING_OBSERVABILITY_TABLE" in objects_test.sql
     assert "MISSING_OBSERVABILITY_SEMANTIC_VIEW" in objects_test.sql
+    assert "CAST('change_event' AS VARCHAR(128)) AS object_name" in objects_test.sql
+    assert "UNION ALL SELECT CAST('lineage_run_latest' AS VARCHAR(128))" in objects_test.sql
+
+    assert bus_views_test.category == TestCategory.OPERATIONAL
+    assert bus_views_test.severity == TestSeverity.CRITICAL
+    assert "CallCentre_OBS_BUS_V" in bus_views_test.sql
+    assert "MISSING_OBSERVABILITY_BUS_VIEW" in bus_views_test.sql
+    assert "CAST('change_event' AS VARCHAR(128)) AS object_name" in bus_views_test.sql
+    assert "UNION ALL SELECT CAST('agent_outcome' AS VARCHAR(128))" in bus_views_test.sql
+    assert "ORDER BY 3, 1, 2" in objects_test.sql
+    assert "change_event/data_quality_metric/data_lineage/lineage_run" in (
+        objects_test.inspection_scope
+    )
+
+
+def test_rule_config_filters_disabled_test_ids_and_scanners(monkeypatch):
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda self, encoding=None: json.dumps(
+            {
+                "disabled_test_ids": ["callcentre-sem-008"],
+                "disabled_scanners": ["view", "text"],
+            }
+        ),
+    )
+
+    config = load_rule_config(Path("config/rules.json"))
+    filtered_tests = config.filter_tests(generate_metadata_tests("CallCentre"))
+
+    assert "CALLCENTRE-SEM-008" not in {test.test_id for test in filtered_tests}
+    assert config.scanner_kwargs()["include_view_contract_scans"] is False
+    assert config.scanner_kwargs()["include_text_reference_scans"] is False
+    assert config.scanner_kwargs()["include_capability_scans"] is True
+    excluded_checks = config.excluded_checks(generate_metadata_tests("CallCentre"))
+    excluded_ids = {check.check_id for check in excluded_checks}
+    assert "CALLCENTRE-SEM-008" in excluded_ids
+    assert "SCANNER:TEXT" in excluded_ids
+    assert "SCANNER:VIEW" in excluded_ids
+    assert any("glossary text" in check.reason for check in excluded_checks)
+
+
+def test_generate_tests_cli_applies_rule_config(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "ai_native_data_product_trust_engine.cli.load_rule_config",
+        lambda path: RuleConfig(
+            disabled_test_ids=frozenset({"CALLCENTRE-SEM-008"}),
+            disabled_scanners=frozenset({"VIEW", "TEXT"}),
+        ),
+    )
+
+    exit_code = main(
+        ["generate-tests", "--prefix", "CallCentre", "--rules-config", "config/rules.json"]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "CALLCENTRE-SEM-008" not in captured.out
+    assert "CALLCENTRE-TEXT-001" not in captured.out
+    assert "CALLCENTRE-VIEW-COLUMNS" not in captured.out
+    assert "CALLCENTRE-CAP-003" in captured.out
 
 
 def test_generate_tests_cli_includes_free_text_cases(capsys):
@@ -214,6 +389,31 @@ def test_run_test_case_fails_non_empty_expectation():
     assert result.row_count == 0
 
 
+def test_run_test_case_backend_error_includes_inspection_context():
+    test_case = TestCase(
+        test_id="CALLCENTRE-SEM-010",
+        name="Relationship metadata uses BUS_V access endpoints",
+        category=TestCategory.SEMANTIC,
+        severity=TestSeverity.CRITICAL,
+        sql="SELECT 1 FROM CallCentre_SEM_STD_V.table_relationship;",
+        expected_result="Returns zero rows.",
+        repair_strategy="Move relationship metadata to BUS_V databases.",
+        inspection_scope="CallCentre_SEM_STD_V.table_relationship source and target endpoints",
+    )
+    result = run_test_case(FailingScannerAdapter(), test_case)
+
+    assert result.status.value == "ERROR"
+    assert result.sample_rows[0]["issue_code"] == "BACKEND_ERROR"
+    assert (
+        result.sample_rows[0]["inspection_scope"]
+        == "CallCentre_SEM_STD_V.table_relationship source and target endpoints"
+    )
+    assert result.sample_rows[0]["inspected_objects"] == [
+        "CallCentre_SEM_STD_V.table_relationship"
+    ]
+    assert result.sample_rows[0]["repair_hint"] == "Move relationship metadata to BUS_V databases."
+
+
 def test_validate_cli_writes_report(monkeypatch, tmp_path):
     report_path = tmp_path / "report.json"
     html_path = tmp_path / "report.html"
@@ -255,7 +455,7 @@ def test_validate_cli_traps_uncaught_backend_errors(monkeypatch, capsys):
         lambda prefix: [_test_case(ExpectedResult.ZERO_ROWS)],
     )
 
-    def fail_validation(prefix, adapter, tests):
+    def fail_validation(prefix, adapter, tests, **kwargs):
         raise RuntimeError(
             "[Version 20.0.0.56] [Session 0] [Teradata SQL Driver] "
             "Failed to connect to example.teradata.com\n at gosqldriver/stack"
