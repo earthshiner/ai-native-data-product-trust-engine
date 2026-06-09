@@ -234,6 +234,8 @@ def _relationship_test_case(
 def _relationship_orphan_sql(row: dict[str, object]) -> str:
     source_db, source_table, source_col = _relationship_source(row)
     target_db, target_table, target_col = _relationship_target(row)
+    source_db = _governed_access_database(source_db)
+    target_db = _governed_access_database(target_db)
     relationship_name = _sql_string(row.get("relationship_name"))
     return f"""
 WITH source_sample AS
@@ -296,6 +298,8 @@ WHERE orphan_count > 0
 def _relationship_cardinality_sql(row: dict[str, object], cardinality: str) -> str:
     source_db, source_table, source_col = _relationship_source(row)
     target_db, target_table, target_col = _relationship_target(row)
+    source_db = _governed_access_database(source_db)
+    target_db = _governed_access_database(target_db)
     relationship_name = _sql_string(row.get("relationship_name"))
     source_unique_required = "1" if cardinality in {"1:1", "1:M"} else "0"
     target_unique_required = "1" if cardinality in {"1:1", "M:1"} else "0"
@@ -359,7 +363,7 @@ HAVING COUNT(*) > 0
 
 
 def _temporal_current_duplicate_sql(row: dict[str, object]) -> str:
-    database_name = _required_text(row, "database_name")
+    database_name = _governed_access_database(_required_text(row, "database_name"))
     table_name = _required_text(row, "table_name")
     natural_key_column = _required_text(row, "natural_key_column")
     current_flag_column = _required_text(row, "current_flag_column")
@@ -368,7 +372,7 @@ def _temporal_current_duplicate_sql(row: dict[str, object]) -> str:
     if deleted_flag_column:
         deleted_filter = f"\n      AND COALESCE({_qi(deleted_flag_column)}, 0) = 0"
     entity_name = _sql_string(row.get("entity_name") or table_name)
-    # Aggregate over the FULL table — never a sample. Duplicate-current rows are sparse
+    # Aggregate over the full access view - never a sample. Duplicate-current rows are sparse
     # (a handful of keys among millions), so a TOP-N sample of the input misses them
     # almost every time. The GROUP BY/HAVING is a single bounded pass; only the evidence
     # list of offending keys is capped, by TOP on the result of the aggregation.
@@ -461,6 +465,8 @@ FROM {sem_db}.table_relationship
 WHERE COALESCE(is_active, 1) = 1
   AND source_database IS NOT NULL
   AND target_database IS NOT NULL
+  AND {_deployed_module_database_filter(sem_db, 'source_database')}
+  AND {_deployed_module_database_filter(sem_db, 'target_database')}
 ORDER BY relationship_id
 """.strip()
 
@@ -482,11 +488,29 @@ FROM {sem_db}.entity_metadata
 WHERE COALESCE(is_active, 1) = 1
   AND database_name IS NOT NULL
   AND table_name IS NOT NULL
+  AND {_deployed_module_database_filter(sem_db, 'database_name')}
   AND natural_key_column IS NOT NULL
   AND current_flag_column IS NOT NULL
   AND COALESCE(UPPER(TRIM(temporal_pattern)), 'NONE') <> 'NONE'
 ORDER BY entity_metadata_id
 """.strip()
+
+
+def _deployed_module_database_filter(sem_db: str, database_expression: str) -> str:
+    return f"""
+EXISTS (
+    SELECT 1
+    FROM {sem_db}.data_product_map module_scope
+    WHERE COALESCE(module_scope.is_active, 1) = 1
+      AND UPPER(COALESCE(TRIM(module_scope.deployment_status), 'DEPLOYED')) = 'DEPLOYED'
+      AND (
+          UPPER(TRIM(module_scope.database_name)) = UPPER(TRIM({database_expression}))
+          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_STD_V'), '_BUS_V', '_STD_V'))
+                = UPPER(TRIM({database_expression}))
+          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_BUS_V'), '_STD_V', '_BUS_V'))
+                = UPPER(TRIM({database_expression}))
+      )
+)""".strip()
 
 
 def _view_text_sql(database_name: str, view_name: str) -> str:
@@ -516,6 +540,12 @@ def _relationship_target(row: dict[str, object]) -> tuple[str, str, str]:
         _required_text(row, "target_table"),
         _required_text(row, "target_column"),
     )
+
+
+def _governed_access_database(database_name: str) -> str:
+    if database_name.upper().endswith("_STD_T"):
+        return database_name[:-6] + "_STD_V"
+    return database_name
 
 
 def _normalise_cardinality(value: object) -> str:

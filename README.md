@@ -98,6 +98,127 @@ Live validation currently uses `DATABASE_URI` by default and writes JSON validat
 `--html-output` to also create a standalone interactive HTML report for human review. Generated
 reports are local artifacts and are not committed.
 
+To make trust evidence cheap for agents to read at interaction time, deploy a compact history table
+inside the data product and expose the latest row through the Semantic BUS_V access layer:
+
+```sql
+CREATE MULTISET TABLE CallCentre_SEM_STD_T.trust_engine_run
+(
+    product_prefix VARCHAR(128) CHARACTER SET LATIN NOT NULL,
+    run_id VARCHAR(64) CHARACTER SET LATIN NOT NULL,
+    started_at VARCHAR(40) CHARACTER SET LATIN NOT NULL,
+    completed_at VARCHAR(40) CHARACTER SET LATIN NOT NULL,
+    trust_status VARCHAR(16) CHARACTER SET LATIN NOT NULL,
+    agent_use_allowed BYTEINT NOT NULL,
+    total_checks INTEGER NOT NULL,
+    passed_count INTEGER NOT NULL,
+    failed_count INTEGER NOT NULL,
+    error_count INTEGER NOT NULL,
+    critical_failure_count INTEGER NOT NULL,
+    error_failure_count INTEGER NOT NULL,
+    data_product_trust_score INTEGER,
+    performance_readiness_score INTEGER,
+    operational_readiness_score INTEGER,
+    repair_candidate_count INTEGER NOT NULL,
+    failed_checks_json VARCHAR(32000) CHARACTER SET UNICODE,
+    repair_candidates_json VARCHAR(32000) CHARACTER SET UNICODE
+)
+PRIMARY INDEX (product_prefix, completed_at);
+
+COLLECT STATISTICS COLUMN (product_prefix, completed_at)
+ON CallCentre_SEM_STD_T.trust_engine_run;
+
+CREATE VIEW CallCentre_SEM_BUS_V.trust_engine_latest
+(
+    product_prefix,
+    run_id,
+    started_at,
+    completed_at,
+    trust_status,
+    agent_use_allowed,
+    total_checks,
+    passed_count,
+    failed_count,
+    error_count,
+    critical_failure_count,
+    error_failure_count,
+    data_product_trust_score,
+    performance_readiness_score,
+    operational_readiness_score,
+    repair_candidate_count,
+    failed_checks_json,
+    repair_candidates_json
+)
+AS
+LOCKING ROW FOR ACCESS
+SELECT
+    product_prefix,
+    run_id,
+    started_at,
+    completed_at,
+    trust_status,
+    agent_use_allowed,
+    total_checks,
+    passed_count,
+    failed_count,
+    error_count,
+    critical_failure_count,
+    error_failure_count,
+    data_product_trust_score,
+    performance_readiness_score,
+    operational_readiness_score,
+    repair_candidate_count,
+    failed_checks_json,
+    repair_candidates_json
+FROM CallCentre_SEM_STD_T.trust_engine_run
+QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY product_prefix
+    ORDER BY completed_at DESC, run_id DESC
+) = 1;
+```
+
+Then publish after scheduled validation:
+
+```powershell
+python -m ai_native_data_product_trust_engine validate --prefix CallCentre --output reports\callcentre-validation.json --publish-trust-table
+```
+
+Passing `--publish-trust-table` without a value writes to
+`{prefix}_SEM_STD_T.trust_engine_run`. You can pass a two-part table name to override it. Agents
+should read `{prefix}_SEM_BUS_V.trust_engine_latest` and treat `agent_use_allowed = 0` or
+`trust_status = 'UNTRUSTED'` as a stop signal before generating SQL over the product.
+
+Optional rule configuration can disable specific generated tests or scanner families without
+changing code:
+
+```json
+{
+  "disabled_test_ids": ["CALLCENTRE-SEM-007", "CALLCENTRE-SEM-008"],
+  "disabled_scanners": ["VIEW", "TEXT"]
+}
+```
+
+Keep rule config files under `config/`, for example copy `config/rules.example.json` to
+`config/rules.json`, then pass it to `generate-tests` or `validate`:
+
+```powershell
+python -m ai_native_data_product_trust_engine validate --prefix CallCentre --rules-config config\rules.json
+```
+
+Scanner names are `CAPABILITY`, `QUERY`, `RELATIONSHIP`, `TEXT`, and `VIEW`.
+
+Module deployment scope comes from `{Product}_SEM_STD_V.data_product_map`. A module is in scope
+only when `COALESCE(is_active, 1) = 1` and `deployment_status = 'DEPLOYED'`. To keep a module in the
+catalogue but exclude it from module-owned object checks, set `deployment_status` to a non-deployed
+state such as `NOT_DEPLOYED` or set `is_active = 0`. Query cookbook rows remain governed by their own
+`is_active` metadata because a recipe can intentionally be unavailable even when its module exists.
+The generated metadata contracts also require comments on every deployed module object and column.
+The central registry's `memory_database` must identify the Memory `STD_V` or `BUS_V` access database;
+pointing it at the physical `STD_T` database is a critical security and locking-model violation.
+`SEM-007` validates every comma-separated `primary_views` entry against deployed product views.
+Entries may be unqualified names or explicit `database.view` references; the rule does not impose
+an object-name prefix or assume the view is stored in the module's `database_name`.
+
 ## Agent-Friendly MCP Orientation Layer
 
 The Trust Engine can expose local report evidence through an optional MCP server so agents do not
@@ -128,14 +249,19 @@ data product access path is considered.
 
 ## First Working Slice
 
-The first implemented slice generates and executes ten metadata trust tests:
+The first implemented slice generates and executes metadata trust tests including:
 
 - Entity metadata references deployed objects.
 - Column metadata references deployed columns.
 - Relationship metadata references deployed join columns.
 - Relationship join columns have compatible datatype, length, precision, scale and character set.
 - Same/similar column names have consistent datatype, length, precision and scale.
-- `{Product}_SEM_STD_T.data_product_registry` exists for product-first MCP discovery.
+- Column metadata datatype declarations and coverage stay current with deployed entity columns.
+- Data product primary view names resolve to deployed product views without imposing a naming
+  prefix or single-database layout.
+- Entity view names, relationship endpoints and lineage endpoints use deployed BUS_V access-layer
+  objects for governed agent access.
+- `DataProductsMaster_GOV_BUS_V.active_data_product_registry` exists for product-first MCP discovery.
 - Data product registry and orientation manifest match deployed metadata.
 - Active cookbook recipes exist for later SQL template validation.
 - Product tables stay within the initial AMP storage skew warning threshold.

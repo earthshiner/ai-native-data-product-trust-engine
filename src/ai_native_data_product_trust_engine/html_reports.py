@@ -811,11 +811,11 @@ def render_html_report(
   <main>
     <nav class="tabs" role="tablist" aria-label="Report sections">
       {_tab_button("overview", "Overview", True)}
-      {_tab_button("checks", "Checks", False)}
-      {_tab_button("root-causes", "Root causes", False)}
+      {_tab_button("results", "Validation Results", False)}
+      {_tab_button("root-causes", "Root Causes", False)}
       {_tab_button("repairs", "Repairs", False)}
+      {_tab_button("checks", "Checks", False)}
       {_tab_button("glossary", "Glossary", False)}
-      {_tab_button("results", "Validation results", False)}
     </nav>
 
     <section
@@ -893,26 +893,48 @@ def render_html_report(
     </section>
 
     <section
-      id="panel-checks"
+      id="panel-results"
       class="tab-panel"
       role="tabpanel"
-      aria-labelledby="tab-checks"
+      aria-labelledby="tab-results"
       hidden
     >
       <section class="panel">
-        <h2>Checks carried out</h2>
+        <h2>Validation results</h2>
+        <div class="toolbar">
+          <select id="statusFilter" aria-label="Filter by status">
+            <option value="">All statuses</option>
+            <option value="PASSED">Passed</option>
+            <option value="FAILED">Failed</option>
+            <option value="ERROR">Error</option>
+          </select>
+          <select id="categoryFilter" aria-label="Filter by category">
+            <option value="">All categories</option>
+            {_category_options(results)}
+          </select>
+          <select id="severityFilter" aria-label="Filter by severity">
+            <option value="">All severities</option>
+            {_severity_options(results)}
+          </select>
+          <input
+            id="searchFilter"
+            type="search"
+            placeholder="Search test, issue, object, hint"
+            aria-label="Search results"
+          />
+        </div>
         <table>
           <thead>
             <tr>
-              <th>Check</th>
+              <th>Status</th>
+              <th>Test</th>
               <th>Category</th>
               <th>Severity</th>
-              <th>Status</th>
-              <th>What is tested</th>
+              <th>Evidence</th>
             </tr>
           </thead>
-          <tbody>
-            {_check_rows(results)}
+          <tbody id="resultsBody">
+            {_result_rows(results, dependency_index)}
           </tbody>
         </table>
       </section>
@@ -961,48 +983,26 @@ def render_html_report(
     </section>
 
     <section
-      id="panel-results"
+      id="panel-checks"
       class="tab-panel"
       role="tabpanel"
-      aria-labelledby="tab-results"
+      aria-labelledby="tab-checks"
       hidden
     >
       <section class="panel">
-        <h2>Validation results</h2>
-        <div class="toolbar">
-          <select id="statusFilter" aria-label="Filter by status">
-            <option value="">All statuses</option>
-            <option value="PASSED">Passed</option>
-            <option value="FAILED">Failed</option>
-            <option value="ERROR">Error</option>
-          </select>
-          <select id="categoryFilter" aria-label="Filter by category">
-            <option value="">All categories</option>
-            {_category_options(results)}
-          </select>
-          <select id="severityFilter" aria-label="Filter by severity">
-            <option value="">All severities</option>
-            {_severity_options(results)}
-          </select>
-          <input
-            id="searchFilter"
-            type="search"
-            placeholder="Search test, issue, object, hint"
-            aria-label="Search results"
-          />
-        </div>
+        <h2>Checks carried out</h2>
         <table>
           <thead>
             <tr>
-              <th>Status</th>
-              <th>Test</th>
+              <th>Check</th>
               <th>Category</th>
               <th>Severity</th>
-              <th>Evidence</th>
+              <th>Status</th>
+              <th>What is tested</th>
             </tr>
           </thead>
-          <tbody id="resultsBody">
-            {_result_rows(results, dependency_index)}
+          <tbody>
+            {_check_rows(results)}
           </tbody>
         </table>
       </section>

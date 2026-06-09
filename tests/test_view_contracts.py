@@ -28,6 +28,8 @@ def test_view_contract_inventory_sql_excludes_backup_objects():
         if "DBC.TablesV" in test.sql:
             assert "_BKP" in test.sql
             assert "_BK" in test.sql
+            assert "deployment_status" in test.sql
+            assert "data_product_map module_scope" in test.sql
 
 
 def test_run_view_contract_validations_resolves_each_product_view():

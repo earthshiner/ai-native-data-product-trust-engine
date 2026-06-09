@@ -1,0 +1,174 @@
+import pytest
+
+from ai_native_data_product_trust_engine.cli import main
+from ai_native_data_product_trust_engine.models import (
+    ExpectedResult,
+    RepairMode,
+    TestCase,
+    TestCategory,
+    TestResult,
+    TestSeverity,
+    TestStatus,
+    ValidationRun,
+)
+from ai_native_data_product_trust_engine.repairs import RepairCandidate
+from ai_native_data_product_trust_engine.trust_publish import (
+    default_trust_table,
+    default_trust_view,
+    publish_trust_result,
+    trust_latest_view_ddl,
+    trust_result_insert_sql,
+    trust_table_ddl,
+)
+
+
+def test_trust_publish_defaults_to_semantic_standard_table_and_business_view():
+    assert default_trust_table("CallCentre") == "CallCentre_SEM_STD_T.trust_engine_run"
+    assert default_trust_view("CallCentre") == "CallCentre_SEM_BUS_V.trust_engine_latest"
+
+
+def test_trust_table_ddl_defines_compact_agent_evidence_table():
+    ddl = trust_table_ddl("CallCentre")
+
+    assert ddl.startswith("CREATE MULTISET TABLE CallCentre_SEM_STD_T.trust_engine_run")
+    assert "trust_status VARCHAR(16)" in ddl
+    assert "agent_use_allowed BYTEINT NOT NULL" in ddl
+    assert "failed_checks_json VARCHAR(32000) CHARACTER SET UNICODE" in ddl
+    assert "PRIMARY INDEX (product_prefix, completed_at)" in ddl
+
+
+def test_trust_latest_view_ddl_uses_bus_v_latest_row_contract():
+    ddl = trust_latest_view_ddl("CallCentre")
+
+    assert ddl.startswith("CREATE VIEW CallCentre_SEM_BUS_V.trust_engine_latest")
+    assert "LOCKING ROW FOR ACCESS" in ddl
+    assert "FROM CallCentre_SEM_STD_T.trust_engine_run" in ddl
+    assert "QUALIFY ROW_NUMBER() OVER" in ddl
+    assert "ORDER BY completed_at DESC, run_id DESC" in ddl
+
+
+def test_trust_result_insert_sql_summarises_failed_checks_and_repairs():
+    run = _run(
+        [
+            _result("CALLCENTRE-SEM-001", TestStatus.PASSED),
+            _result(
+                "CALLCENTRE-SEM-002",
+                TestStatus.FAILED,
+                severity=TestSeverity.WARNING,
+                sample_rows=[{"issue_code": "STALE_METADATA", "object_name": "Bad'Name"}],
+            ),
+        ]
+    )
+    repairs = [
+        RepairCandidate(
+            candidate_id="REPAIR-001",
+            issue_code="STALE_METADATA",
+            summary="Refresh stale metadata.",
+            mode=RepairMode.PROPOSAL,
+            requires_approval=True,
+            sql="UPDATE x SET y = 'z';",
+        )
+    ]
+
+    sql = trust_result_insert_sql(run, repairs)
+
+    assert sql.startswith("INSERT INTO CallCentre_SEM_STD_T.trust_engine_run")
+    assert "'UNTRUSTED'" in sql
+    assert "CALLCENTRE-SEM-002" in sql
+    assert "Bad''Name" in sql
+    assert "REPAIR-001" in sql
+    assert "UPDATE x SET y = ''z'';" in sql
+
+
+def test_publish_trust_result_executes_insert_sql():
+    adapter = _RecordingAdapter()
+    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+
+    table_name = publish_trust_result(adapter, run, [])
+
+    assert table_name == "CallCentre_SEM_STD_T.trust_engine_run"
+    assert len(adapter.sql) == 1
+    assert "INSERT INTO CallCentre_SEM_STD_T.trust_engine_run" in adapter.sql[0]
+    assert "'TRUSTED'" in adapter.sql[0]
+
+
+def test_validate_cli_can_publish_trust_summary(monkeypatch, capsys):
+    adapter = _RecordingValidationAdapter()
+    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+
+    monkeypatch.setattr(
+        "ai_native_data_product_trust_engine.cli.adapter_from_environment",
+        lambda database_url=None: adapter,
+    )
+    monkeypatch.setattr(
+        "ai_native_data_product_trust_engine.cli.generate_metadata_tests",
+        lambda prefix: [],
+    )
+    monkeypatch.setattr(
+        "ai_native_data_product_trust_engine.cli.run_validation",
+        lambda prefix, adapter, tests, **kwargs: run,
+    )
+    monkeypatch.setattr(
+        "ai_native_data_product_trust_engine.cli.write_json_report",
+        lambda run, output_path: None,
+    )
+
+    exit_code = main(["validate", "--prefix", "CallCentre", "--publish-trust-table"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Trust summary published: CallCentre_SEM_STD_T.trust_engine_run" in captured.out
+    assert len(adapter.sql) == 1
+    assert "INSERT INTO CallCentre_SEM_STD_T.trust_engine_run" in adapter.sql[0]
+
+
+def test_trust_publish_rejects_unqualified_or_unsafe_table_names():
+    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+
+    with pytest.raises(ValueError, match="ADPTrust.InvalidTrustTable"):
+        trust_result_insert_sql(run, [], "trust_engine_run")
+
+
+def _run(results):
+    return ValidationRun(
+        prefix="CallCentre",
+        started_at="2026-06-01T10:00:00+10:00",
+        completed_at="2026-06-01T10:00:01+10:00",
+        results=results,
+    )
+
+
+def _result(
+    test_id,
+    status,
+    severity=TestSeverity.WARNING,
+    sample_rows=None,
+):
+    return TestResult(
+        test_case=TestCase(
+            test_id=test_id,
+            name="Metadata stays current",
+            category=TestCategory.SEMANTIC,
+            severity=severity,
+            sql="SELECT 1;",
+            expected_result="No stale metadata rows.",
+            expected=ExpectedResult.ZERO_ROWS,
+            repair_strategy="Refresh metadata.",
+        ),
+        status=status,
+        row_count=0 if status == TestStatus.PASSED else 1,
+        sample_rows=sample_rows or [],
+    )
+
+
+class _RecordingAdapter:
+    def __init__(self):
+        self.sql = []
+
+    def execute(self, sql):
+        self.sql.append(sql)
+
+
+class _RecordingValidationAdapter(_RecordingAdapter):
+    def fetch_all(self, sql):
+        return []

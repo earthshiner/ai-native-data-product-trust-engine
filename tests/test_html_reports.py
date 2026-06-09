@@ -90,6 +90,15 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert 'id="tab-overview"' in html
     assert 'aria-controls="panel-results"' in html
     assert 'id="panel-results"' in html
+    tab_order = [
+        html.index('id="tab-overview"'),
+        html.index('id="tab-results"'),
+        html.index('id="tab-root-causes"'),
+        html.index('id="tab-repairs"'),
+        html.index('id="tab-checks"'),
+        html.index('id="tab-glossary"'),
+    ]
+    assert tab_order == sorted(tab_order)
     assert 'class="tab-panel"' in html
     assert "document.querySelectorAll(&quot;[role=&#x27;tab&#x27;]&quot;)" not in html
     assert "document.querySelectorAll(\"[role='tab']\")" in html
