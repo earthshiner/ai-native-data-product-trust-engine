@@ -59,6 +59,7 @@ class TestCase:
     expected_result: str
     expected: ExpectedResult = ExpectedResult.ZERO_ROWS
     repair_strategy: str | None = None
+    inspection_scope: str | None = None
 
 
 @dataclass(frozen=True)
@@ -73,11 +74,22 @@ class TestResult:
 
 
 @dataclass(frozen=True)
+class ExcludedCheck:
+    __test__ = False
+
+    check_id: str
+    name: str
+    category: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class ValidationRun:
     prefix: str
     started_at: str
     completed_at: str
     results: list[TestResult]
+    excluded_checks: list[ExcludedCheck] = field(default_factory=list)
 
     @property
     def passed_count(self) -> int:

@@ -78,10 +78,10 @@ The first implementation will default to proposal mode. Automatic repair is only
 ## Initial CLI Shape
 
 ```powershell
-python -m ai_native_data_product_trust_engine discover --prefix CallCentre
-python -m ai_native_data_product_trust_engine generate-tests --prefix CallCentre
-python -m ai_native_data_product_trust_engine validate --prefix CallCentre --repair-mode proposal
-python -m ai_native_data_product_trust_engine report --prefix CallCentre
+python -m ai_native_data_product_trust_engine discover --prefix ProductPrefix
+python -m ai_native_data_product_trust_engine generate-tests --prefix ProductPrefix
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --repair-mode proposal
+python -m ai_native_data_product_trust_engine report --prefix ProductPrefix
 python -m ai_native_data_product_trust_engine mcp-server --reports-dir reports
 ```
 
@@ -89,20 +89,45 @@ During local development, run from the repository root with `src` on `PYTHONPATH
 
 ```powershell
 $env:PYTHONPATH='src'
-python -m ai_native_data_product_trust_engine generate-tests --prefix CallCentre
-python -m ai_native_data_product_trust_engine validate --prefix CallCentre --output reports\callcentre-validation.json
-python -m ai_native_data_product_trust_engine validate --prefix CallCentre --output reports\callcentre-validation.json --html-output reports\callcentre-validation.html
+python -m ai_native_data_product_trust_engine generate-tests --prefix ProductPrefix
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --output reports\productprefix-validation.json
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --output reports\productprefix-validation.json --html-output reports\productprefix-validation.html
 ```
 
 Live validation currently uses `DATABASE_URI` by default and writes JSON validation evidence. Use
 `--html-output` to also create a standalone interactive HTML report for human review. Generated
 reports are local artifacts and are not committed.
 
+For troubleshooting backend failures, enable diagnostic logging. SQL is logged immediately before
+execution, and failing SQL is logged again with the backend exception:
+
+```powershell
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --log-file logs\trust-engine.log
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --log-level INFO
+```
+
+`--log-file` defaults to `INFO` level so the SQL statements are captured. Without `--log-file`, the
+default level is `WARNING`; pass `--log-level INFO` to stream SQL diagnostics to the console.
+
+For query cookbook performance diagnosis on Teradata, enable Optimizer HELPSTATS suggestions during
+recipe `EXPLAIN` validation:
+
+```powershell
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --enable-helpstats --log-file logs\trust-engine.log
+```
+
+This runs `DIAGNOSTIC HELPSTATS ON FOR SESSION`, the recipe `EXPLAIN`, and
+`DIAGNOSTIC HELPSTATS NOT ON FOR SESSION` on the same database session for each active cookbook
+recipe. Any `COLLECT STATISTICS` suggestions in the `EXPLAIN` output are reported as advisory
+`EXPLAIN_HELPSTATS_SUGGESTION` performance findings. The Trust Engine does not apply statistics
+automatically; trial high-confidence single-column suggestions first, then rerun validation before
+promoting them.
+
 To make trust evidence cheap for agents to read at interaction time, deploy a compact history table
 inside the data product and expose the latest row through the Semantic BUS_V access layer:
 
 ```sql
-CREATE MULTISET TABLE CallCentre_SEM_STD_T.trust_engine_run
+CREATE MULTISET TABLE {ProductPrefix}_SEM_STD_T.trust_engine_run
 (
     product_prefix VARCHAR(128) CHARACTER SET LATIN NOT NULL,
     run_id VARCHAR(64) CHARACTER SET LATIN NOT NULL,
@@ -120,15 +145,15 @@ CREATE MULTISET TABLE CallCentre_SEM_STD_T.trust_engine_run
     performance_readiness_score INTEGER,
     operational_readiness_score INTEGER,
     repair_candidate_count INTEGER NOT NULL,
-    failed_checks_json VARCHAR(32000) CHARACTER SET UNICODE,
-    repair_candidates_json VARCHAR(32000) CHARACTER SET UNICODE
+    failed_checks_json JSON(32000) CHARACTER SET UNICODE,
+    repair_candidates_json JSON(32000) CHARACTER SET UNICODE
 )
 PRIMARY INDEX (product_prefix, completed_at);
 
 COLLECT STATISTICS COLUMN (product_prefix, completed_at)
-ON CallCentre_SEM_STD_T.trust_engine_run;
+ON {ProductPrefix}_SEM_STD_T.trust_engine_run;
 
-CREATE VIEW CallCentre_SEM_BUS_V.trust_engine_latest
+CREATE VIEW {ProductPrefix}_SEM_BUS_V.trust_engine_latest
 (
     product_prefix,
     run_id,
@@ -170,7 +195,7 @@ SELECT
     repair_candidate_count,
     failed_checks_json,
     repair_candidates_json
-FROM CallCentre_SEM_STD_T.trust_engine_run
+FROM {ProductPrefix}_SEM_STD_T.trust_engine_run
 QUALIFY ROW_NUMBER() OVER (
     PARTITION BY product_prefix
     ORDER BY completed_at DESC, run_id DESC
@@ -180,7 +205,7 @@ QUALIFY ROW_NUMBER() OVER (
 Then publish after scheduled validation:
 
 ```powershell
-python -m ai_native_data_product_trust_engine validate --prefix CallCentre --output reports\callcentre-validation.json --publish-trust-table
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --output reports\productprefix-validation.json --publish-trust-table
 ```
 
 Passing `--publish-trust-table` without a value writes to
@@ -193,7 +218,7 @@ changing code:
 
 ```json
 {
-  "disabled_test_ids": ["CALLCENTRE-SEM-007", "CALLCENTRE-SEM-008"],
+  "disabled_test_ids": ["PRODUCTPREFIX-SEM-008"],
   "disabled_scanners": ["VIEW", "TEXT"]
 }
 ```
@@ -202,22 +227,30 @@ Keep rule config files under `config/`, for example copy `config/rules.example.j
 `config/rules.json`, then pass it to `generate-tests` or `validate`:
 
 ```powershell
-python -m ai_native_data_product_trust_engine validate --prefix CallCentre --rules-config config\rules.json
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --rules-config config\rules.json
 ```
 
-Scanner names are `CAPABILITY`, `QUERY`, `RELATIONSHIP`, `TEXT`, and `VIEW`.
+Scanner names are:
+
+- `CAPABILITY`: checks whether metadata and recipes only claim platform features that the deployed
+  product actually exposes.
+- `QUERY`: validates active cookbook SQL templates, bounded-query safeguards, parameters and
+  EXPLAIN readiness.
+- `RELATIONSHIP`: samples declared relationship keys for orphan evidence, cardinality mismatches
+  and temporal current-record contract issues.
+- `TEXT`: checks glossary text, cookbook notes and metadata descriptions for stale object names,
+  aliases and free-text references.
+- `VIEW`: validates standard view contracts, business-view source layering, locking access patterns
+  and view compile/readiness checks.
+
+Disabled checks and scanner families are still shown in the JSON and HTML reports under
+`excluded_checks`, so reviewers can distinguish "passed" from "not run".
 
 Module deployment scope comes from `{Product}_SEM_STD_V.data_product_map`. A module is in scope
 only when `COALESCE(is_active, 1) = 1` and `deployment_status = 'DEPLOYED'`. To keep a module in the
 catalogue but exclude it from module-owned object checks, set `deployment_status` to a non-deployed
 state such as `NOT_DEPLOYED` or set `is_active = 0`. Query cookbook rows remain governed by their own
 `is_active` metadata because a recipe can intentionally be unavailable even when its module exists.
-The generated metadata contracts also require comments on every deployed module object and column.
-The central registry's `memory_database` must identify the Memory `STD_V` or `BUS_V` access database;
-pointing it at the physical `STD_T` database is a critical security and locking-model violation.
-`SEM-007` validates every comma-separated `primary_views` entry against deployed product views.
-Entries may be unqualified names or explicit `database.view` references; the rule does not impose
-an object-name prefix or assume the view is stored in the module's `database_name`.
 
 ## Agent-Friendly MCP Orientation Layer
 
@@ -227,7 +260,7 @@ JSON reports, then start the server over the report directory:
 
 ```powershell
 pip install .[mcp]
-python -m ai_native_data_product_trust_engine validate --prefix CallCentre --output reports\callcentre-validation.json
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --output reports\productprefix-validation.json
 python -m ai_native_data_product_trust_engine mcp-server --reports-dir reports
 ```
 
@@ -255,12 +288,10 @@ The first implemented slice generates and executes metadata trust tests includin
 - Column metadata references deployed columns.
 - Relationship metadata references deployed join columns.
 - Relationship join columns have compatible datatype, length, precision, scale and character set.
-- Same/similar column names have consistent datatype, length, precision and scale.
+- Same/similar table column names have consistent datatype, length, precision and scale.
 - Column metadata datatype declarations and coverage stay current with deployed entity columns.
-- Data product primary view names resolve to deployed product views without imposing a naming
-  prefix or single-database layout.
-- Entity view names, relationship endpoints and lineage endpoints use deployed BUS_V access-layer
-  objects for governed agent access.
+- Data product primary views, entity view names, relationship endpoints and lineage endpoints use
+  deployed BUS_V access-layer objects for governed agent access.
 - `DataProductsMaster_GOV_BUS_V.active_data_product_registry` exists for product-first MCP discovery.
 - Data product registry and orientation manifest match deployed metadata.
 - Active cookbook recipes exist for later SQL template validation.
@@ -270,10 +301,12 @@ The first implemented slice generates and executes metadata trust tests includin
 The validator supports `ZERO_ROWS` and `NON_EMPTY` expectations, records pass/fail/error
 evidence, and returns a non-zero exit code when any generated test fails.
 
-Column type consistency validation normalises column names by case and underscores, then flags
-normalised names with multiple physical type signatures across the data product. This catches
-join-risk patterns such as the same business key being defined with different datatypes, lengths,
-precision or scale in different modules or views.
+Table column type consistency validation normalises column names by case and underscores, then
+flags normalised names with multiple physical type signatures across deployed product tables. This
+catches join-risk patterns such as the same business key being defined with different datatypes,
+lengths, precision or scale in different table modules. View output column metadata is resolved
+through `HELP COLUMN`, not `DBC.ColumnsV`, because Teradata does not expose view datatypes through
+the table column catalogue in the same way.
 
 Relationship join column compatibility validation checks active `table_relationship` rows against
 `DBC.ColumnsV` for both sides of each declared join. It reports type, length, precision, scale and
@@ -326,9 +359,11 @@ the operational readiness score reflect whether freshness, lineage, quality and 
 be captured and inspected.
 
 View contract validation discovers deployed product views from `DBC.TablesV` and runs `HELP COLUMN`
-against a zero-row subquery for each view. Teradata resolves the view and returns authoritative
-output-column metadata, validating that source objects, projected columns, join columns, aliases and
-predicates still compile without scanning business data.
+against an aliased zero-row subquery for each view:
+`HELP COLUMN dt01.* FROM (SELECT viw.* FROM <database>.<view> AS viw WHERE 1=2) AS dt01`.
+Teradata resolves the view and returns authoritative output-column metadata, validating that source
+objects, projected columns, join columns, aliases and predicates still compile without scanning
+business data.
 
 Standard view-layer validation enforces `%_STD_V` as a thin 1:1 agent contract over `%_STD_T`
 tables. A standard view must declare its view column list before `AS`, use `LOCKING ROW FOR ACCESS`,

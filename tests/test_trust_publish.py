@@ -33,7 +33,8 @@ def test_trust_table_ddl_defines_compact_agent_evidence_table():
     assert ddl.startswith("CREATE MULTISET TABLE CallCentre_SEM_STD_T.trust_engine_run")
     assert "trust_status VARCHAR(16)" in ddl
     assert "agent_use_allowed BYTEINT NOT NULL" in ddl
-    assert "failed_checks_json VARCHAR(32000) CHARACTER SET UNICODE" in ddl
+    assert "failed_checks_json JSON(32000) CHARACTER SET UNICODE" in ddl
+    assert "repair_candidates_json JSON(32000) CHARACTER SET UNICODE" in ddl
     assert "PRIMARY INDEX (product_prefix, completed_at)" in ddl
 
 
@@ -78,6 +79,7 @@ def test_trust_result_insert_sql_summarises_failed_checks_and_repairs():
     assert "Bad''Name" in sql
     assert "REPAIR-001" in sql
     assert "UPDATE x SET y = ''z'';" in sql
+    assert sql.count(" AS JSON)") == 2
 
 
 def test_publish_trust_result_executes_insert_sql():

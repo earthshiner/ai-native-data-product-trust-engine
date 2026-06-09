@@ -54,11 +54,11 @@ def test_run_view_contract_validations_resolves_each_product_view():
     assert results[1].test_case.test_id == "CALLCENTRE-STD-TABLE-VIEW-COVERAGE"
     assert adapter.help_column_sql == [
         (
-            'HELP COLUMN dt.* FROM (\n'
-            '    SELECT *\n'
-            '    FROM "CallCentre_DOM_BUS_V"."Call_Enriched"\n'
-            '    WHERE 1 = 0\n'
-            ') AS dt'
+            'HELP COLUMN dt01.* FROM (\n'
+            '    SELECT viw.*\n'
+            '    FROM "CallCentre_DOM_BUS_V"."Call_Enriched" AS viw\n'
+            '    WHERE 1 = 2\n'
+            ') AS dt01'
         )
     ]
     assert results[0].sample_rows[0]["resolved_column_count"] == 1

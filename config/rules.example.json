@@ -1,6 +1,6 @@
 {
   "disabled_test_ids": [
-    "CALLCENTRE-SEM-008"
+    "PRODUCTPREFIX-SEM-008"
   ],
   "disabled_scanners": [
     "VIEW",

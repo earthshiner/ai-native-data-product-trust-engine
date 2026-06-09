@@ -7,15 +7,55 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
-from ai_native_data_product_trust_engine.models import TestCase
+from ai_native_data_product_trust_engine.models import ExcludedCheck, TestCase
 
 
 SCANNER_IDS = {
-    "CAPABILITY": "include_capability_scans",
-    "QUERY": "include_query_template_scans",
-    "RELATIONSHIP": "include_relationship_health_scans",
-    "TEXT": "include_text_reference_scans",
-    "VIEW": "include_view_contract_scans",
+    "CAPABILITY": {
+        "kwarg": "include_capability_scans",
+        "name": "Capability discovery scans",
+        "category": "CAPABILITY",
+        "description": (
+            "Checks whether metadata and recipes only claim platform features that the deployed "
+            "product actually exposes."
+        ),
+    },
+    "QUERY": {
+        "kwarg": "include_query_template_scans",
+        "name": "Query template scans",
+        "category": "QUERY",
+        "description": (
+            "Validates active cookbook SQL templates, bounded-query safeguards, parameters and "
+            "EXPLAIN readiness."
+        ),
+    },
+    "RELATIONSHIP": {
+        "kwarg": "include_relationship_health_scans",
+        "name": "Relationship health scans",
+        "category": "DATA_QUALITY",
+        "description": (
+            "Samples declared relationship keys for orphan evidence, cardinality mismatches and "
+            "temporal current-record contract issues."
+        ),
+    },
+    "TEXT": {
+        "kwarg": "include_text_reference_scans",
+        "name": "Free-text reference scans",
+        "category": "FREE_TEXT",
+        "description": (
+            "Checks glossary text, cookbook notes and metadata descriptions for stale object "
+            "names, aliases and free-text references."
+        ),
+    },
+    "VIEW": {
+        "kwarg": "include_view_contract_scans",
+        "name": "View contract scans",
+        "category": "STRUCTURAL",
+        "description": (
+            "Validates standard view contracts, business-view source layering, locking access "
+            "patterns and view compile/readiness checks."
+        ),
+    },
 }
 
 
@@ -27,10 +67,47 @@ class RuleConfig:
     def filter_tests(self, tests: Iterable[TestCase]) -> list[TestCase]:
         return [test for test in tests if test.test_id.upper() not in self.disabled_test_ids]
 
+    def excluded_checks(self, tests: Iterable[TestCase]) -> list[ExcludedCheck]:
+        generated_tests = list(tests)
+        generated_by_id = {test.test_id.upper(): test for test in generated_tests}
+        excluded = [
+            ExcludedCheck(
+                check_id=test.test_id,
+                name=test.name,
+                category=test.category.value,
+                reason="Disabled by disabled_test_ids rule configuration.",
+            )
+            for test in generated_tests
+            if test.test_id.upper() in self.disabled_test_ids
+        ]
+        for test_id in sorted(self.disabled_test_ids - set(generated_by_id)):
+            excluded.append(
+                ExcludedCheck(
+                    check_id=test_id,
+                    name="Configured check id was not generated",
+                    category="UNKNOWN",
+                    reason="Configured in disabled_test_ids but no generated check matched.",
+                )
+            )
+        for scanner_id in sorted(self.disabled_scanners):
+            scanner = SCANNER_IDS[scanner_id]
+            excluded.append(
+                ExcludedCheck(
+                    check_id=f"SCANNER:{scanner_id}",
+                    name=str(scanner["name"]),
+                    category=str(scanner["category"]),
+                    reason=(
+                        f"Disabled by disabled_scanners rule configuration. "
+                        f"{scanner['description']}"
+                    ),
+                )
+            )
+        return excluded
+
     def scanner_kwargs(self) -> dict[str, bool]:
         return {
-            kwarg_name: scanner_id not in self.disabled_scanners
-            for scanner_id, kwarg_name in SCANNER_IDS.items()
+            str(scanner["kwarg"]): scanner_id not in self.disabled_scanners
+            for scanner_id, scanner in SCANNER_IDS.items()
         }
 
 

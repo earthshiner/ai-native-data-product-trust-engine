@@ -6,10 +6,12 @@ unit-tested without a live Teradata connection.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Protocol
 
 from ai_native_data_product_trust_engine.models import (
+    ExcludedCheck,
     ExpectedResult,
     TestCase,
     TestCategory,
@@ -31,6 +33,14 @@ class DatabaseAdapter(Protocol):
     def fetch_all(self, sql: str) -> list[dict[str, object]]:
         """Run SQL and return rows as dictionaries."""
 
+    def fetch_all_with_session_setup(
+        self,
+        sql: str,
+        setup_sql: str | None = None,
+        teardown_sql: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Run SQL with optional setup/teardown statements on the same session."""
+
     def execute(self, sql: str) -> None:
         """Execute a non-query SQL statement."""
 
@@ -43,6 +53,7 @@ def run_test_case(adapter: DatabaseAdapter, test_case: TestCase) -> TestResult:
             test_case=test_case,
             status=TestStatus.ERROR,
             row_count=0,
+            sample_rows=[_backend_error_evidence(test_case)],
             error_message=str(exc),
         )
 
@@ -64,6 +75,8 @@ def run_validation(
     include_relationship_health_scans: bool = True,
     include_text_reference_scans: bool = True,
     include_view_contract_scans: bool = True,
+    enable_helpstats: bool = False,
+    excluded_checks: list[ExcludedCheck] | None = None,
 ) -> ValidationRun:
     started_at = _utc_now()
     results = [run_test_case(adapter, test_case) for test_case in tests]
@@ -87,6 +100,7 @@ def run_validation(
                 TestCategory.QUERY,
                 run_query_template_validations,
                 adapter,
+                enable_helpstats=enable_helpstats,
             )
         )
     if include_relationship_health_scans:
@@ -128,6 +142,7 @@ def run_validation(
         started_at=started_at,
         completed_at=completed_at,
         results=results,
+        excluded_checks=excluded_checks or [],
     )
 
 
@@ -141,6 +156,38 @@ def _status_from_rows(expected: ExpectedResult, row_count: int) -> TestStatus:
     raise ValueError(msg)
 
 
+def _backend_error_evidence(test_case: TestCase) -> dict[str, object]:
+    evidence = {
+        "issue_code": "BACKEND_ERROR",
+        "check_id": test_case.test_id,
+        "check_name": test_case.name,
+        "repair_hint": (
+            test_case.repair_strategy
+            or "Inspect the check SQL and referenced objects, then rerun validation."
+        ),
+    }
+    if test_case.inspection_scope:
+        evidence["inspection_scope"] = test_case.inspection_scope
+    inspected_objects = _referenced_objects(test_case.sql)
+    if inspected_objects:
+        evidence["inspected_objects"] = inspected_objects
+    return evidence
+
+
+def _referenced_objects(sql: str) -> list[str]:
+    matches = re.findall(
+        r"\b(?:FROM|JOIN)\s+([A-Za-z][A-Za-z0-9_]*)\.([A-Za-z][A-Za-z0-9_]*)",
+        sql,
+        flags=re.IGNORECASE,
+    )
+    objects = [
+        f"{database_name}.{object_name}"
+        for database_name, object_name in matches
+        if database_name.upper() != "DBC"
+    ]
+    return list(dict.fromkeys(objects))
+
+
 def _run_scanner(
     prefix: str,
     scanner_id: str,
@@ -148,9 +195,10 @@ def _run_scanner(
     category: TestCategory,
     scanner,
     adapter: DatabaseAdapter,
+    **scanner_kwargs,
 ) -> list[TestResult]:
     try:
-        return scanner(prefix, adapter)
+        return scanner(prefix, adapter, **scanner_kwargs)
     except Exception as exc:  # noqa: BLE001 - scanner failures are validation evidence.
         test_case = TestCase(
             test_id=f"{prefix.upper()}-{scanner_id}",

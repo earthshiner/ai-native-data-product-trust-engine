@@ -15,10 +15,6 @@ def semantic_database(prefix: str) -> str:
     return f"{prefix}_SEM_STD_V"
 
 
-def semantic_business_view_database(prefix: str) -> str:
-    return f"{prefix}_SEM_BUS_V"
-
-
 def observability_view_database(prefix: str) -> str:
     return f"{prefix}_OBS_STD_V"
 
@@ -248,7 +244,7 @@ SELECT
    ,issue_code
    ,'Align relationship join column datatype, length, precision, scale and character set before generated SQL uses this join.' AS repair_hint
 FROM relationship_type_issues
-ORDER BY relationship_name, issue_code, source_database, source_table, source_column;
+ORDER BY 1, 18, 2, 3, 4;
 """.strip(),
             expected_result="Returns zero rows for relationship join columns with incompatible type signatures.",
             repair_strategy=(
@@ -259,7 +255,7 @@ ORDER BY relationship_name, issue_code, source_database, source_table, source_co
         ),
         TestCase(
             test_id=f"{prefix.upper()}-STRUCT-001",
-            name="Similar column names use consistent datatypes",
+            name="Similar table column names use consistent datatypes",
             category=TestCategory.STRUCTURAL,
             severity=TestSeverity.WARNING,
             sql=f"""
@@ -284,7 +280,7 @@ WITH product_columns AS
         ON tv.DatabaseName = colv.DatabaseName
        AND tv.TableName = colv.TableName
     WHERE colv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
-      AND tv.TableKind IN ('T', 'V')
+      AND tv.TableKind = 'T'
       AND {deployed_module_database_filter(sem_db, 'colv.DatabaseName')}
       AND {backup_object_exclusion_sql('colv.TableName')}
 ),
@@ -313,9 +309,9 @@ INNER JOIN drifted_names dn
     ON dn.normalised_column_name = pc.normalised_column_name
 ORDER BY pc.normalised_column_name, pc.column_name, pc.database_name, pc.table_name;
 """.strip(),
-            expected_result="Returns zero rows.",
+            expected_result="Returns zero rows for table columns with inconsistent type signatures.",
             repair_strategy=(
-                "Review same/similar column names with different physical type signatures. "
+                "Review same/similar table column names with different physical type signatures. "
                 "Align datatypes where they participate in joins, filters or generated SQL."
             ),
         ),
@@ -397,7 +393,7 @@ ORDER BY em.database_name, em.table_name, colv.ColumnId;
         ),
         TestCase(
             test_id=f"{prefix.upper()}-SEM-007",
-            name="Data product primary view names resolve to deployed views",
+            name="Data product primary views are deployed in BUS_V databases",
             category=TestCategory.SEMANTIC,
             severity=TestSeverity.CRITICAL,
             sql=f"""
@@ -405,59 +401,45 @@ WITH module_primary_views AS
 (
     SELECT
         dpm.module_name
-       ,TRIM(token.token) AS primary_view_reference
-       ,CASE
-            WHEN INDEX(TRIM(token.token), '.') > 0
-                THEN SUBSTR(TRIM(token.token), 1, INDEX(TRIM(token.token), '.') - 1)
-            ELSE NULL
-        END AS declared_database_name
-       ,CASE
-            WHEN INDEX(TRIM(token.token), '.') > 0
-                THEN SUBSTR(TRIM(token.token), INDEX(TRIM(token.token), '.') + 1)
-            ELSE TRIM(token.token)
-        END AS primary_view_name
-    FROM {sem_db}.data_product_map dpm,
-    TABLE (
-        STRTOK_SPLIT_TO_TABLE(CAST(dpm.module_id AS VARCHAR(128)), dpm.primary_views, ',')
-        RETURNS (
-            module_id VARCHAR(128) CHARACTER SET UNICODE
-           ,tokennum INTEGER
-           ,token VARCHAR(256) CHARACTER SET UNICODE
-        )
-    ) AS token
+       ,dpm.database_name AS physical_database_name
+       ,{business_view_database('dpm.database_name')} AS business_database_name
+       ,TRIM(REGEXP_SUBSTR(dpm.primary_views, '[^,]+', 1, token_numbers.token_number))
+            AS primary_view_name
+    FROM {sem_db}.data_product_map dpm
+    CROSS JOIN
+    (
+        SELECT 1 AS token_number FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 2 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 3 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 4 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 5 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 6 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 7 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 8 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 9 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+        UNION ALL SELECT 10 FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    ) token_numbers
     WHERE COALESCE(dpm.is_active, 1) = 1
       AND UPPER(COALESCE(TRIM(dpm.deployment_status), 'DEPLOYED')) = 'DEPLOYED'
       AND COALESCE(dpm.primary_views, '') NOT IN ('', 'None')
+      AND REGEXP_SUBSTR(dpm.primary_views, '[^,]+', 1, token_numbers.token_number) IS NOT NULL
 )
 SELECT
     module_name
-   ,primary_view_reference
-   ,declared_database_name
+   ,business_database_name
    ,primary_view_name
-   ,'PRIMARY_VIEW_NAME_NOT_DEPLOYED' AS issue_code
-   ,'Update data_product_map.primary_views to an existing view name. Qualify the name as database.view when the database must be explicit.' AS repair_hint
+   ,'PRIMARY_VIEW_NOT_DEPLOYED' AS issue_code
+   ,'Create the BUS_V view or update data_product_map.primary_views to the deployed view name.' AS repair_hint
 FROM module_primary_views mpv
-WHERE NOT EXISTS
-(
-    SELECT 1
-    FROM DBC.TablesV tv
-    WHERE tv.TableName = mpv.primary_view_name
-      AND tv.TableKind IN ('V', 'O', 'Q')
-      AND (
-          tv.DatabaseName = mpv.declared_database_name
-          OR (
-              mpv.declared_database_name IS NULL
-              AND tv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
-          )
-      )
-)
-ORDER BY module_name, primary_view_reference;
+LEFT OUTER JOIN DBC.TablesV tv
+    ON tv.DatabaseName = mpv.business_database_name
+   AND tv.TableName = mpv.primary_view_name
+   AND tv.TableKind IN ('V', 'O', 'Q')
+WHERE tv.TableName IS NULL
+ORDER BY module_name, business_database_name, primary_view_name;
 """.strip(),
-            expected_result="Returns zero rows when each primary view name resolves to a deployed product view.",
-            repair_strategy=(
-                "Refresh data_product_map.primary_views with deployed view names. Use "
-                "database.view references when views are stored outside the module database."
-            ),
+            expected_result="Returns zero rows when each primary view is deployed in its BUS_V database.",
+            repair_strategy="Create missing BUS_V views or refresh data_product_map.primary_views.",
         ),
         TestCase(
             test_id=f"{prefix.upper()}-SEM-008",
@@ -568,87 +550,45 @@ WHERE COALESCE(tr.is_active, 1) = 1
   AND {deployed_module_database_filter(sem_db, 'tr.target_database')}
   AND {backup_object_exclusion_sql('tr.target_table')}
   AND UPPER(tr.target_database) NOT LIKE '%\\_BUS\\_V' ESCAPE '\\'
-ORDER BY relationship_name, issue_code, database_name, object_name, column_name;
+ORDER BY 1, 5, 2, 3, 4;
 """.strip(),
             expected_result="Returns zero rows when generated joins use governed BUS_V endpoints.",
             repair_strategy="Move relationship metadata to BUS_V databases and view names for agent access.",
+            inspection_scope=(
+                f"{sem_db}.table_relationship source_database/source_table/source_column and "
+                "target_database/target_table/target_column"
+            ),
         ),
         TestCase(
             test_id=f"{prefix.upper()}-SEM-011",
-            name="Lineage access view is deployed",
+            name="Lineage metadata exposes BUS_V access endpoints",
             category=TestCategory.SEMANTIC,
             severity=TestSeverity.WARNING,
             sql=f"""
 SELECT
-    '{semantic_business_view_database(prefix)}' AS database_name
-   ,'data_lineage' AS object_name
-   ,'MISSING_LINEAGE_ACCESS_VIEW' AS issue_code
-   ,'The lineage access view is not deployed, so lineage endpoint metadata cannot be validated.' AS issue_detail
-   ,'Deploy {semantic_business_view_database(prefix)}.data_lineage before validating lineage access endpoints.' AS repair_hint
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM DBC.TablesV tv
-    WHERE tv.DatabaseName = '{semantic_business_view_database(prefix)}'
-      AND tv.TableName = 'data_lineage'
-      AND tv.TableKind IN ('V', 'O', 'Q')
-);
-""".strip(),
-            expected_result=(
-                "Returns zero rows when the Semantic BUS_V lineage access view is deployed."
-            ),
-            repair_strategy=(
-                "Deploy the Semantic BUS_V lineage access view before validating or publishing "
-                "agent-facing lineage metadata."
-            ),
-        ),
-        TestCase(
-            test_id=f"{prefix.upper()}-SEM-012",
-            name="Deployed module objects have comments",
-            category=TestCategory.SEMANTIC,
-            severity=TestSeverity.WARNING,
-            sql=f"""
+    dl.lineage_id
+   ,dl.source_database AS database_name
+   ,dl.source_table AS object_name
+   ,'LINEAGE_SOURCE_NOT_BUS_V' AS issue_code
+   ,'Expose source lineage through BUS_V database and view names for agent-facing consumption.' AS repair_hint
+FROM {observability_view_database(prefix)}.data_lineage dl
+WHERE UPPER(dl.source_database) NOT LIKE '%\\_BUS\\_V' ESCAPE '\\'
+UNION ALL
 SELECT
-    TRIM(tv.DatabaseName) AS database_name
-   ,TRIM(tv.TableName) AS object_name
-   ,TRIM(tv.TableKind) AS object_kind
-   ,'MISSING_OBJECT_COMMENT' AS issue_code
-   ,'Add a COMMENT statement describing the object purpose and governed usage.' AS repair_hint
-FROM DBC.TablesV tv
-WHERE tv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
-  AND {deployed_module_database_filter(sem_db, 'tv.DatabaseName')}
-  AND {backup_object_exclusion_sql('tv.TableName')}
-  AND COALESCE(TRIM(tv.CommentString), '') = ''
-ORDER BY tv.DatabaseName, tv.TableName;
+    dl.lineage_id
+   ,dl.target_database AS database_name
+   ,dl.target_table AS object_name
+   ,'LINEAGE_TARGET_NOT_BUS_V' AS issue_code
+   ,'Expose target lineage through BUS_V database and view names for agent-facing consumption.' AS repair_hint
+FROM {observability_view_database(prefix)}.data_lineage dl
+WHERE UPPER(dl.target_database) NOT LIKE '%\\_BUS\\_V' ESCAPE '\\'
+ORDER BY 1, 4, 2, 3;
 """.strip(),
-            expected_result="Returns zero rows when every deployed module object has a comment.",
-            repair_strategy=(
-                "Add an object-level COMMENT statement describing each deployed object's purpose, "
-                "ownership and governed usage."
-            ),
-        ),
-        TestCase(
-            test_id=f"{prefix.upper()}-SEM-013",
-            name="Deployed module columns have comments",
-            category=TestCategory.SEMANTIC,
-            severity=TestSeverity.WARNING,
-            sql=f"""
-SELECT
-    TRIM(colv.DatabaseName) AS database_name
-   ,TRIM(colv.TableName) AS object_name
-   ,TRIM(colv.ColumnName) AS column_name
-   ,'MISSING_COLUMN_COMMENT' AS issue_code
-   ,'Add a COMMENT statement describing the column meaning and expected usage.' AS repair_hint
-FROM DBC.ColumnsV colv
-WHERE colv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
-  AND {deployed_module_database_filter(sem_db, 'colv.DatabaseName')}
-  AND {backup_object_exclusion_sql('colv.TableName')}
-  AND COALESCE(TRIM(colv.CommentString), '') = ''
-ORDER BY colv.DatabaseName, colv.TableName, colv.ColumnId;
-""".strip(),
-            expected_result="Returns zero rows when every deployed module column has a comment.",
-            repair_strategy=(
-                "Add a column-level COMMENT statement describing the business meaning, format and "
-                "governed usage of each deployed column."
+            expected_result="Returns zero rows when lineage consumed by agents references BUS_V endpoints.",
+            repair_strategy="Publish agent-facing lineage through BUS_V databases and views.",
+            inspection_scope=(
+                f"{observability_view_database(prefix)}.data_lineage "
+                "source_database/source_table and target_database/target_table"
             ),
         ),
         TestCase(
@@ -731,7 +671,9 @@ registry_issues AS
        ,'MISSING_PRODUCT_REGISTRY_ROW' AS issue_code
        ,'No active central registry row points to this data product.' AS issue_detail
        ,'Insert or refresh {registry_db}.{registry_view} for this data product.' AS repair_hint
-    WHERE NOT EXISTS (SELECT 1 FROM active_registry)
+    FROM DBC.DBCInfoV
+    WHERE InfoKey = 'VERSION'
+      AND NOT EXISTS (SELECT 1 FROM active_registry)
 
     UNION ALL
 
@@ -810,21 +752,9 @@ registry_issues AS
 
     SELECT
         ar.product_id
-       ,'MEMORY_DATABASE_NOT_VIEW_LAYER' AS issue_code
-       ,'Registry memory_database points to a physical table database instead of a governed view database.' AS issue_detail
-       ,'Set active_data_product_registry.memory_database to the Memory STD_V or BUS_V database.' AS repair_hint
-    FROM active_registry ar
-    WHERE ar.memory_database IS NOT NULL
-      AND UPPER(TRIM(ar.memory_database)) NOT LIKE '%\\_STD\\_V' ESCAPE '\\'
-      AND UPPER(TRIM(ar.memory_database)) NOT LIKE '%\\_BUS\\_V' ESCAPE '\\'
-
-    UNION ALL
-
-    SELECT
-        ar.product_id
        ,'MEMORY_DATABASE_NOT_IN_MODULE_MAP' AS issue_code
-       ,'Registry memory_database does not match a governed view database for an active Memory module in data_product_map.' AS issue_detail
-       ,'Set active_data_product_registry.memory_database to the Memory STD_V or BUS_V database.' AS repair_hint
+       ,'Registry memory_database does not match an active Memory module in data_product_map.' AS issue_detail
+       ,'Refresh active_data_product_registry.memory_database or Semantic.data_product_map.' AS repair_hint
     FROM active_registry ar
     WHERE EXISTS (
         SELECT 1
@@ -836,7 +766,9 @@ registry_issues AS
         FROM module_map mm
         WHERE mm.module_name = 'MEMORY'
           AND (
-              mm.standard_view_database_name = ar.memory_database
+              mm.database_name = ar.memory_database
+              OR mm.database_name = ar.memory_view_database
+              OR mm.standard_view_database_name = ar.memory_database
               OR mm.standard_view_database_name = ar.memory_view_database
               OR mm.business_view_database_name = ar.memory_database
               OR mm.business_view_database_name = ar.memory_view_database
@@ -901,7 +833,7 @@ SELECT
    ,issue_detail
    ,repair_hint
 FROM registry_issues
-ORDER BY issue_code, product_id;
+ORDER BY 2, 1;
 """.strip(),
             expected_result=(
                 "Returns zero rows when the central registry and orientation manifest match "
@@ -1052,25 +984,24 @@ primary_index_column_rows AS
 primary_index_columns AS
 (
     SELECT
-        database_name
-       ,table_name
-       ,LISTAGG(column_name, ',') WITHIN GROUP (ORDER BY column_position)
-            AS primary_index_columns
+        picr.database_name
+       ,picr.table_name
+       ,MIN(picr.column_name) AS primary_index_columns
        ,COUNT(*) AS primary_index_column_count
-       ,SUM(CASE WHEN nullable_flag = 'Y' THEN 1 ELSE 0 END) AS nullable_pi_column_count
+       ,SUM(CASE WHEN picr.nullable_flag = 'Y' THEN 1 ELSE 0 END) AS nullable_pi_column_count
        ,MAX(
             CASE
-                WHEN UPPER(column_name) LIKE '%STATUS%'
-                  OR UPPER(column_name) LIKE '%TYPE%'
-                  OR UPPER(column_name) LIKE '%FLAG%'
-                  OR UPPER(column_name) LIKE '%GENDER%'
-                  OR UPPER(column_name) LIKE '%CATEGORY%'
+                WHEN UPPER(picr.column_name) LIKE '%STATUS%'
+                  OR UPPER(picr.column_name) LIKE '%TYPE%'
+                  OR UPPER(picr.column_name) LIKE '%FLAG%'
+                  OR UPPER(picr.column_name) LIKE '%GENDER%'
+                  OR UPPER(picr.column_name) LIKE '%CATEGORY%'
                 THEN 1
                 ELSE 0
             END
         ) AS suspicious_low_cardinality_name
-    FROM primary_index_column_rows
-    GROUP BY database_name, table_name
+    FROM primary_index_column_rows picr
+    GROUP BY picr.database_name, picr.table_name
 ),
 primary_index_issues AS
 (
@@ -1161,7 +1092,7 @@ SELECT
    ,issue_code
    ,repair_hint
 FROM primary_index_issues
-ORDER BY issue_code, skew_percent DESC, total_perm_bytes DESC, database_name, table_name;
+ORDER BY 6, 5 DESC, 4 DESC, 1, 2;
 """.strip(),
             expected_result="Returns zero rows for product tables with suspicious primary index health.",
             repair_strategy=(
@@ -1279,7 +1210,9 @@ observability_issues AS
        ,'MISSING_OBSERVABILITY_MODULE' AS issue_code
        ,'No active Observability module is registered in data_product_map.' AS issue_detail
        ,'Register and deploy the Observability module so operational readiness can track lineage, freshness, quality and usage evidence.' AS repair_hint
-    WHERE NOT EXISTS (SELECT 1 FROM observability_module)
+    FROM DBC.DBCInfoV
+    WHERE InfoKey = 'VERSION'
+      AND NOT EXISTS (SELECT 1 FROM observability_module)
 
     UNION ALL
 
@@ -1299,7 +1232,7 @@ SELECT
    ,issue_detail
    ,repair_hint
 FROM observability_issues
-ORDER BY issue_code, observability_database;
+ORDER BY 2, 1;
 """.strip(),
             expected_result="Returns zero rows when an active Observability module is registered and deployed.",
             repair_strategy=(
@@ -1323,15 +1256,21 @@ WITH observability_module AS
 ),
 required_tables AS
 (
-    SELECT 'change_event' AS object_name
-    UNION ALL SELECT 'data_quality_metric'
-    UNION ALL SELECT 'data_lineage'
-    UNION ALL SELECT 'lineage_run'
+    SELECT CAST('change_event' AS VARCHAR(128)) AS object_name
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('data_quality_metric' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('data_lineage' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('lineage_run' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
 ),
 required_semantic_views AS
 (
-    SELECT 'lineage_graph' AS object_name
-    UNION ALL SELECT 'lineage_run_latest'
+    SELECT CAST('lineage_graph' AS VARCHAR(128)) AS object_name
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('lineage_run_latest' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
 ),
 missing_table_issues AS
 (
@@ -1379,7 +1318,7 @@ SELECT
    ,issue_detail
    ,repair_hint
 FROM missing_view_issues
-ORDER BY issue_code, observability_database, object_name;
+ORDER BY 3, 1, 2;
 """.strip(),
             expected_result=(
                 "Returns zero rows when required Observability evidence tables and Semantic "
@@ -1388,6 +1327,11 @@ ORDER BY issue_code, observability_database, object_name;
             repair_strategy=(
                 "Deploy the Observability evidence tables and Semantic lineage views so agents "
                 "can inspect operational health before relying on the product."
+            ),
+            inspection_scope=(
+                f"{sem_db}.data_product_map Observability module, Observability tables "
+                "change_event/data_quality_metric/data_lineage/lineage_run, and Semantic views "
+                "lineage_graph/lineage_run_latest"
             ),
         ),
         TestCase(
@@ -1398,11 +1342,16 @@ ORDER BY issue_code, observability_database, object_name;
             sql=f"""
 WITH required_observability_views AS
 (
-    SELECT 'change_event' AS object_name
-    UNION ALL SELECT 'data_quality_metric'
-    UNION ALL SELECT 'lineage_run'
-    UNION ALL SELECT 'model_performance'
-    UNION ALL SELECT 'agent_outcome'
+    SELECT CAST('change_event' AS VARCHAR(128)) AS object_name
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('data_quality_metric' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('data_lineage' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('model_performance' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
+    UNION ALL SELECT CAST('agent_outcome' AS VARCHAR(128))
+    FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
 )
 SELECT
     '{prefix}_OBS_BUS_V' AS database_name

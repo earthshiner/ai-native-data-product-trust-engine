@@ -755,11 +755,11 @@ def _qualified_name(database_name: str, object_name: str) -> str:
 
 def _help_column_sql(qualified_view: str) -> str:
     return f"""
-HELP COLUMN dt.* FROM (
-    SELECT *
-    FROM {qualified_view}
-    WHERE 1 = 0
-) AS dt
+HELP COLUMN dt01.* FROM (
+    SELECT viw.*
+    FROM {qualified_view} AS viw
+    WHERE 1 = 2
+) AS dt01
 """.strip()
 
 

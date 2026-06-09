@@ -67,8 +67,8 @@ def trust_table_ddl(prefix: str, table_name: str | None = None) -> str:
     performance_readiness_score INTEGER,
     operational_readiness_score INTEGER,
     repair_candidate_count INTEGER NOT NULL,
-    failed_checks_json VARCHAR(32000) CHARACTER SET UNICODE,
-    repair_candidates_json VARCHAR(32000) CHARACTER SET UNICODE
+    failed_checks_json JSON(32000) CHARACTER SET UNICODE,
+    repair_candidates_json JSON(32000) CHARACTER SET UNICODE
 )
 PRIMARY INDEX (product_prefix, completed_at);"""
 
@@ -133,7 +133,7 @@ def trust_result_insert_sql(
     qualified_table = _qualified_identifier(table_name or default_trust_table(run.prefix))
     row = _publish_row(run, repair_candidates)
     columns = ", ".join(_PUBLISH_COLUMNS)
-    values = ", ".join(_sql_literal(row[column]) for column in _PUBLISH_COLUMNS)
+    values = ", ".join(_sql_value(column, row[column]) for column in _PUBLISH_COLUMNS)
     return f"INSERT INTO {qualified_table} ({columns}) VALUES ({values});"
 
 
@@ -250,6 +250,12 @@ def _score_value(scores: object, key: str) -> int | None:
     return value if isinstance(value, int) else None
 
 
+def _sql_value(column_name: str, value: object | None) -> str:
+    if column_name in {"failed_checks_json", "repair_candidates_json"}:
+        return f"CAST({_sql_literal(value)} AS JSON)"
+    return _sql_literal(value)
+
+
 def _sql_literal(value: object | None) -> str:
     if value is None:
         return "NULL"
@@ -267,7 +273,7 @@ def _qualified_identifier(value: str) -> str:
         msg = (
             f"[ADPTrust.InvalidTrustTable] Invalid trust table or view name {value}. "
             "Suggested action: use a two-part Teradata name such as "
-            "CallCentre_SEM_STD_T.trust_engine_run."
+            "{ProductPrefix}_SEM_STD_T.trust_engine_run."
         )
         raise ValueError(msg)
     return value
