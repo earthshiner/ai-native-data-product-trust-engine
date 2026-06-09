@@ -1,7 +1,11 @@
 import json
+import logging
 from pathlib import Path
 
-from ai_native_data_product_trust_engine.adapters import _teradatasql_args_from_url
+from ai_native_data_product_trust_engine.adapters import (
+    LoggingAdapter,
+    _teradatasql_args_from_url,
+)
 from ai_native_data_product_trust_engine.cli import _summarise_error, main
 from ai_native_data_product_trust_engine.models import (
     ExpectedResult,
@@ -48,6 +52,9 @@ def test_generate_metadata_tests_includes_core_contracts():
     )
     assert tests[14].expected == ExpectedResult.NON_EMPTY
     assert "COUNT(DISTINCT type_signature) > 1" in tests[4].sql
+    assert tests[4].name == "Similar table column names use consistent datatypes"
+    assert "tv.TableKind = 'T'" in tests[4].sql
+    assert "tv.TableKind IN ('T', 'V')" not in tests[4].sql
 
 
 def test_generated_metadata_tests_scope_to_deployed_modules():
@@ -412,6 +419,36 @@ def test_run_test_case_backend_error_includes_inspection_context():
         "CallCentre_SEM_STD_V.table_relationship"
     ]
     assert result.sample_rows[0]["repair_hint"] == "Move relationship metadata to BUS_V databases."
+
+
+def test_logging_adapter_records_sql_success_and_failure(caplog):
+    caplog.set_level(logging.INFO, logger="ai_native_data_product_trust_engine.sql")
+    adapter = LoggingAdapter(StubAdapter([{"answer": 1}]))
+
+    rows = adapter.fetch_all("SELECT 1 AS answer;")
+
+    assert rows == [{"answer": 1}]
+    assert "Executing SQL query:\nSELECT 1 AS answer;" in caplog.text
+    assert "SQL query returned 1 rows." in caplog.text
+
+    caplog.clear()
+    run_test_case(
+        LoggingAdapter(FailingScannerAdapter()),
+        TestCase(
+            test_id="CALLCENTRE-SEM-001",
+            name="Generated check",
+            category=TestCategory.SEMANTIC,
+            severity=TestSeverity.CRITICAL,
+            sql="SELECT 1 FROM CallCentre_SEM_STD_V.data_product_map;",
+            expected_result="Returns zero rows.",
+            expected=ExpectedResult.ZERO_ROWS,
+        ),
+    )
+
+    assert (
+        "SQL query failed:\nSELECT 1 FROM CallCentre_SEM_STD_V.data_product_map;"
+        in caplog.text
+    )
 
 
 def test_validate_cli_writes_report(monkeypatch, tmp_path):

@@ -32,3 +32,24 @@ The metadata model records evidence about the correctness of the data product co
 avoid broad raw-data profiling tables unless the observations directly support metadata trust, such
 as relationship validity, current-record semantics, allowed values or required reference
 populations.
+
+## Data Product Object Mapping
+
+`data_product_map.database_name` cannot identify the database for both `primary_tables` and
+`primary_views` when a module stores physical tables and access views in different databases.
+Comma-separated object lists also prevent database-level referential validation.
+
+The compatible short-term contract allows `primary_views` entries to use either `view_name` or
+`database_name.view_name`. A future breaking migration should replace `primary_tables` and
+`primary_views` with a child table containing one row per object:
+
+- `module_id`
+- `object_database_name`
+- `object_name`
+- `object_type`
+- `object_role`
+- `is_primary`
+- `is_active`
+
+This keeps module metadata in `data_product_map` while giving every mapped object its own database,
+type and lifecycle state.

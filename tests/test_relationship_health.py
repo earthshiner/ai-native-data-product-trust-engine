@@ -34,6 +34,8 @@ def test_duplicate_current_sql_scans_full_table_not_a_sample():
     # Still emits the issue code and keys on the declared business key
     assert "DUPLICATE_CURRENT_RECORD" in sql
     assert "is_deleted" in sql
+    assert '"CallCentre_DOM_STD_V"."Call_Summary_H"' in sql
+    assert '"CallCentre_DOM_STD_T"."Call_Summary_H"' not in sql
 
 
 RELATIONSHIP_ROW = {
@@ -106,6 +108,20 @@ def test_run_relationship_orphan_validations_reports_bounded_orphans():
     assert adapter.executed_sql[1].startswith("WITH source_sample AS")
 
 
+def test_relationship_orphan_sql_queries_governed_access_views():
+    sql = relationship_health._relationship_orphan_sql(
+        {
+            **RELATIONSHIP_ROW,
+            "source_database": "CallCentre_SCH_STD_T",
+            "source_table": "call_embedding",
+        }
+    )
+
+    assert '"CallCentre_SCH_STD_V"."call_embedding"' in sql
+    assert '"CallCentre_DOM_STD_V"."Customer_H"' in sql
+    assert "_STD_T" not in sql
+
+
 def test_run_relationship_cardinality_validations_reports_declared_mismatch():
     adapter = RelationshipStubAdapter(
         relationship_rows=[RELATIONSHIP_ROW],
@@ -123,6 +139,21 @@ def test_run_relationship_cardinality_validations_reports_declared_mismatch():
     assert results[0].status.value == "FAILED"
     assert results[0].sample_rows[0]["issue_code"] == "CARDINALITY_TARGET_NOT_UNIQUE"
     assert "M:1" in adapter.executed_sql[1]
+
+
+def test_relationship_cardinality_sql_preserves_existing_view_databases():
+    sql = relationship_health._relationship_cardinality_sql(
+        {
+            **RELATIONSHIP_ROW,
+            "source_database": "CallCentre_SCH_BUS_V",
+            "source_table": "call_embedding",
+            "target_database": "CallCentre_DOM_STD_V",
+        },
+        "M:1",
+    )
+
+    assert '"CallCentre_SCH_BUS_V"."call_embedding"' in sql
+    assert '"CallCentre_DOM_STD_V"."Customer_H"' in sql
 
 
 def test_run_temporal_current_validations_reports_duplicate_current_records():

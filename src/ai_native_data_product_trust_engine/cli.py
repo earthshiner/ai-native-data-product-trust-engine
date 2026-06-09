@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
-from ai_native_data_product_trust_engine.adapters import adapter_from_environment
+from ai_native_data_product_trust_engine.adapters import (
+    LoggingAdapter,
+    adapter_from_environment,
+    configure_logging,
+)
 from ai_native_data_product_trust_engine.capabilities import capability_test_cases
 from ai_native_data_product_trust_engine.html_reports import write_html_report
 from ai_native_data_product_trust_engine.query_templates import query_template_test_cases
@@ -29,6 +34,8 @@ from ai_native_data_product_trust_engine.trust_publish import (
 from ai_native_data_product_trust_engine.validators import run_validation
 from ai_native_data_product_trust_engine.view_contracts import view_contract_test_cases
 
+LOGGER = logging.getLogger("ai_native_data_product_trust_engine.cli")
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -50,6 +57,22 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument(
                 "--database-url",
                 help="SQLAlchemy database URL. Defaults to DATABASE_URI.",
+            )
+            subparser.add_argument(
+                "--log-file",
+                type=Path,
+                help=(
+                    "Optional log file for diagnostic detail, including SQL before execution "
+                    "and SQL that fails."
+                ),
+            )
+            subparser.add_argument(
+                "--log-level",
+                choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
+                help=(
+                    "Logging level. Defaults to INFO when --log-file is supplied, otherwise "
+                    "WARNING."
+                ),
             )
             subparser.add_argument(
                 "--output",
@@ -75,6 +98,14 @@ def build_parser() -> argparse.ArgumentParser:
                 help=(
                     "Publish a compact trust summary row for agent reads. Optional value is a "
                     "two-part Teradata table name; defaults to <prefix>_SEM_STD_T.trust_engine_run."
+                ),
+            )
+            subparser.add_argument(
+                "--enable-helpstats",
+                action="store_true",
+                help=(
+                    "Enable Teradata DIAGNOSTIC HELPSTATS for each cookbook EXPLAIN. "
+                    "Suggestions are advisory and are reported as performance findings."
                 ),
             )
 
@@ -122,17 +153,31 @@ def _main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "validate":
+        configure_logging(args.log_level, args.log_file)
+        LOGGER.info("Starting validation for product prefix %s.", args.prefix)
         rule_config = load_rule_config(args.rules_config)
         generated_tests = generate_metadata_tests(args.prefix)
         tests = rule_config.filter_tests(generated_tests)
         excluded_checks = rule_config.excluded_checks(generated_tests)
-        adapter = adapter_from_environment(args.database_url)
+        LOGGER.info(
+            "Prepared %s checks; %s checks excluded by configuration.",
+            len(tests),
+            len(excluded_checks),
+        )
+        adapter = LoggingAdapter(adapter_from_environment(args.database_url))
         run = run_validation(
             args.prefix,
             adapter,
             tests,
             excluded_checks=excluded_checks,
+            enable_helpstats=args.enable_helpstats,
             **rule_config.scanner_kwargs(),
+        )
+        LOGGER.info(
+            "Validation completed: %s passed, %s failed, %s errors.",
+            run.passed_count,
+            run.failed_count,
+            run.error_count,
         )
         write_json_report(run, args.output)
         repair_candidates = []

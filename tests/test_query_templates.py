@@ -5,6 +5,7 @@ from ai_native_data_product_trust_engine.query_templates import (
     extract_sql_error_evidence,
     is_bounded_sql,
     is_interactive_recipe,
+    referenced_sql_objects,
     run_query_template_validations,
 )
 
@@ -29,6 +30,12 @@ def test_classify_sql_error_detects_missing_column():
     )
 
 
+def test_classify_sql_error_detects_nested_ordered_analytic():
+    assert classify_sql_error("Ordered Analytical Functions can not be nested.") == (
+        "NESTED_ORDERED_ANALYTIC"
+    )
+
+
 def test_extract_sql_error_evidence_returns_missing_object_name():
     evidence = extract_sql_error_evidence(
         "Object 'CallCentre_DOM_BUS_V.Call_H' does not exist."
@@ -44,6 +51,25 @@ def test_extract_sql_error_evidence_returns_missing_object_name():
     }
 
 
+def test_extract_sql_error_evidence_explains_nested_ordered_analytic():
+    evidence = extract_sql_error_evidence(
+        "[5480] Ordered Analytical Functions can not be nested."
+    )
+
+    assert evidence == {
+        "issue_code": "NESTED_ORDERED_ANALYTIC",
+        "repair_hint": (
+            "Rewrite the recipe to calculate each analytic layer in a separate CTE or derived "
+            "table before applying the next ordered analytic function."
+        ),
+        "sql_pattern": "Nested ordered analytical function",
+        "suggested_sql_shape": (
+            "Split the recipe into CTEs: aggregate first, calculate percentages second, then "
+            "calculate the ordered cumulative percentage in the outer query."
+        ),
+    }
+
+
 def test_extract_sql_error_evidence_marks_native_vector_capability():
     evidence = extract_sql_error_evidence(
         "Object 'CallCentre_SCH_STD_V.call_embedding' does not exist.",
@@ -56,6 +82,23 @@ def test_extract_sql_error_evidence_marks_native_vector_capability():
         "capability": "NATIVE_VECTOR",
         "unsupported_feature": "TD_VECTORDISTANCE",
     }
+
+
+def test_referenced_sql_objects_extracts_views_from_recipe_sql():
+    objects = referenced_sql_objects(
+        """
+        SELECT c.call_id
+        FROM CallCentre_DOM_BUS_V.Call_H AS c
+        INNER JOIN CallCentre_SCH_BUS_V.call_embedding AS e
+          ON c.call_id = e.call_id
+        WHERE c.call_id = :call_id
+        """
+    )
+
+    assert objects == [
+        "CallCentre_DOM_BUS_V.Call_H",
+        "CallCentre_SCH_BUS_V.call_embedding",
+    ]
 
 
 def test_is_bounded_sql_detects_parameterised_predicates_and_row_limits():
@@ -95,6 +138,28 @@ def test_explain_performance_findings_extracts_known_risks():
     assert "EXPLAIN_PRODUCT_JOIN" in issue_codes
 
 
+def test_explain_performance_findings_extracts_helpstats_suggestions():
+    findings = explain_performance_findings(
+        [
+            {
+                "Explain": (
+                    "BEGIN RECOMMENDED STATS "
+                    "COLLECT STATISTICS COLUMN (agent_id) "
+                    "ON CallCentre_DOM_BUS_V.Call_Current; END RECOMMENDED STATS"
+                )
+            }
+        ]
+    )
+
+    helpstats = next(
+        finding
+        for finding in findings
+        if finding["issue_code"] == "EXPLAIN_HELPSTATS_SUGGESTION"
+    )
+    assert "COLLECT STATISTICS COLUMN (agent_id)" in helpstats["finding"]
+    assert "advisory" in helpstats["repair_hint"]
+
+
 def test_run_query_template_validations_reports_recipe_failures():
     adapter = StubAdapter(
         recipe_rows=[
@@ -114,7 +179,46 @@ def test_run_query_template_validations_reports_recipe_failures():
     assert results[0].sample_rows[0]["issue_code"] == "MISSING_COLUMN"
     assert results[0].sample_rows[0]["missing_column"] == "missing_column"
     assert results[0].sample_rows[0]["parameters"] == ["call_id"]
+    assert results[0].sample_rows[0]["referenced_objects"] == ["db.table"]
     assert results[1].status.value == "PASSED"
+
+
+def test_run_query_template_validations_reports_attempted_explain_sql():
+    sql_template = """
+    SELECT
+        ah.agent_name
+       ,COUNT(ch.call_id) AS call_count
+       ,ROUND(100.0 * COUNT(ch.call_id) / SUM(COUNT(ch.call_id)) OVER (), 2) AS pct_of_total
+       ,ROUND(SUM(100.0 * COUNT(ch.call_id) / SUM(COUNT(ch.call_id)) OVER ())
+                  OVER (ORDER BY COUNT(ch.call_id) DESC ROWS UNBOUNDED PRECEDING), 2)
+        AS cumulative_pct
+    FROM CallCentre_DOM_BUS_V.Call_Current ch
+    INNER JOIN CallCentre_DOM_BUS_V.Agent_Current ah
+        ON ch.agent_id = ah.agent_id
+    GROUP BY ah.agent_name
+    ORDER BY call_count DESC
+    """
+    adapter = StubAdapter(
+        recipe_rows=[
+            {
+                "recipe_id": "QC-TOPIC-005",
+                "recipe_title": "Cumulative call share Pareto analysis",
+                "sql_template": sql_template,
+            }
+        ],
+        explain_error=RuntimeError("[5480] Ordered Analytical Functions can not be nested."),
+    )
+
+    results = run_query_template_validations("CallCentre", adapter)
+
+    evidence = results[0].sample_rows[0]
+    assert evidence["issue_code"] == "NESTED_ORDERED_ANALYTIC"
+    assert evidence["source_module"] == "query_templates.py"
+    assert evidence["attempted_sql"].startswith("EXPLAIN SELECT")
+    assert evidence["referenced_objects"] == [
+        "CallCentre_DOM_BUS_V.Call_Current",
+        "CallCentre_DOM_BUS_V.Agent_Current",
+    ]
 
 
 def test_run_query_template_validations_flags_unbounded_interactive_recipe():
@@ -190,11 +294,41 @@ def test_run_query_template_validations_reports_explain_performance_risk():
     assert "EXPLAIN_PRODUCT_JOIN" in issue_codes
 
 
+def test_run_query_template_validations_enables_helpstats_in_explain_session():
+    adapter = StubAdapter(
+        recipe_rows=[
+            {
+                "recipe_id": "QC-005",
+                "recipe_title": "Helpstats recipe",
+                "use_case": "Agent lookup",
+                "sql_template": "SELECT * FROM db.customer WHERE customer_id = :customer_id",
+            }
+        ]
+    )
+
+    results = run_query_template_validations("CallCentre", adapter, enable_helpstats=True)
+
+    assert adapter.session_queries == [
+        (
+            "EXPLAIN SELECT * FROM db.customer WHERE customer_id = '__ADP_TRUST_SAMPLE_ID__'",
+            "DIAGNOSTIC HELPSTATS ON FOR SESSION",
+            "DIAGNOSTIC HELPSTATS NOT ON FOR SESSION",
+        )
+    ]
+    explain_result = next(
+        result
+        for result in results
+        if result.test_case.test_id == "CALLCENTRE-QUERY-EXPLAIN-QC-005"
+    )
+    assert explain_result.sample_rows[0]["helpstats_enabled"] is True
+
+
 class StubAdapter:
     def __init__(self, recipe_rows, explain_error=None, explain_rows=None):
         self.recipe_rows = recipe_rows
         self.explain_error = explain_error
         self.explain_rows = explain_rows or [{"Explain": "ok"}]
+        self.session_queries = []
 
     def fetch_all(self, sql):
         if sql.startswith("EXPLAIN"):
@@ -202,3 +336,7 @@ class StubAdapter:
                 raise self.explain_error
             return self.explain_rows
         return self.recipe_rows
+
+    def fetch_all_with_session_setup(self, sql, setup_sql=None, teardown_sql=None):
+        self.session_queries.append((sql, setup_sql, teardown_sql))
+        return self.fetch_all(sql)

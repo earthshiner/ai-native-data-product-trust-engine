@@ -15,6 +15,12 @@ from ai_native_data_product_trust_engine.models import (
 )
 
 PARAMETER_PATTERN = re.compile(r"(?<!:):([A-Za-z][A-Za-z0-9_]*)")
+SQL_OBJECT_REFERENCE_PATTERN = re.compile(
+    r"\b(?:FROM|JOIN|UPDATE|INTO|MERGE\s+INTO|DELETE\s+FROM)\s+"
+    r"((?:[A-Za-z_][A-Za-z0-9_]*|\x22[^\x22]+\x22)"
+    r"(?:\s*\.\s*(?:[A-Za-z_][A-Za-z0-9_]*|\x22[^\x22]+\x22)){1,2})",
+    re.I,
+)
 MISSING_COLUMN_PATTERNS = (
     re.compile(r"Column/Parameter '([^']+)' does not exist", re.I),
     re.compile(r"Column ([A-Za-z0-9_.$]+) not found", re.I),
@@ -39,6 +45,16 @@ BOUNDED_SQL_PATTERNS = (
     re.compile(r"\bQUALIFY\b[\s\S]*\bROW_NUMBER\s*\([\s\S]*?\)\s*(?:<=|<)\s*\d+", re.I),
     re.compile(r"\bWHERE\b[\s\S]*\bBETWEEN\b[\s\S]*:", re.I),
     re.compile(r"\bWHERE\b[\s\S]*(?:=|>=|<=|>|<|IN\s*\()[\s\S]*:", re.I),
+)
+HELPSTATS_ON_SQL = "DIAGNOSTIC HELPSTATS ON FOR SESSION"
+HELPSTATS_OFF_SQL = "DIAGNOSTIC HELPSTATS NOT ON FOR SESSION"
+HELPSTATS_COLLECT_STATISTICS_PATTERN = re.compile(
+    r"\bCOLLECT\s+(?:SUMMARY\s+)?STATISTICS\b[\s\S]{0,600}?(?:;|\n|$)",
+    re.I,
+)
+HELPSTATS_RECOMMENDATION_PATTERN = re.compile(
+    r"\b(?:statistics\s+are\s+recommended|recommend(?:ed|ation)|helpstats)\b",
+    re.I,
 )
 EXPLAIN_FINDING_PATTERNS = (
     (
@@ -75,11 +91,15 @@ class BoundSqlTemplate:
     parameters: tuple[str, ...]
 
 
-def run_query_template_validations(prefix: str, adapter) -> list[TestResult]:
+def run_query_template_validations(
+    prefix: str,
+    adapter,
+    enable_helpstats: bool = False,
+) -> list[TestResult]:
     recipe_rows = adapter.fetch_all(_active_recipes_sql(prefix))
     results: list[TestResult] = []
     for row in recipe_rows:
-        results.extend(_run_recipe_validations(prefix, adapter, row))
+        results.extend(_run_recipe_validations(prefix, adapter, row, enable_helpstats))
     return results
 
 
@@ -99,6 +119,8 @@ def classify_sql_error(message: str, sql_template: str = "") -> str:
     lower_message = message.lower()
     if _uses_native_vector_feature(sql_template):
         return "UNSUPPORTED_CAPABILITY"
+    if "ordered analytical functions can not be nested" in lower_message:
+        return "NESTED_ORDERED_ANALYTIC"
     if "column" in lower_message and "not found" in lower_message:
         return "MISSING_COLUMN"
     if "column/parameter" in lower_message and "does not exist" in lower_message:
@@ -142,6 +164,12 @@ def extract_sql_error_evidence(
         syntax_fragment = _syntax_fragment(message)
         if syntax_fragment:
             evidence["syntax_fragment"] = syntax_fragment
+    elif issue_code == "NESTED_ORDERED_ANALYTIC":
+        evidence["sql_pattern"] = "Nested ordered analytical function"
+        evidence["suggested_sql_shape"] = (
+            "Split the recipe into CTEs: aggregate first, calculate percentages second, then "
+            "calculate the ordered cumulative percentage in the outer query."
+        )
     return evidence
 
 
@@ -188,7 +216,12 @@ def query_template_test_cases(prefix: str) -> list[TestCase]:
     ]
 
 
-def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> list[TestResult]:
+def _run_recipe_validations(
+    prefix: str,
+    adapter,
+    row: dict[str, object],
+    enable_helpstats: bool = False,
+) -> list[TestResult]:
     recipe_id = str(row.get("recipe_id") or "UNKNOWN_RECIPE")
     recipe_title = str(row.get("recipe_title") or "")
     sql_template = str(row.get("sql_template") or "").strip()
@@ -220,8 +253,9 @@ def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> lis
     results = [
         _run_recipe_bounds_validation(bounds_test_case, row, bound_template),
     ]
+    explain_sql = f"EXPLAIN {bound_template.sql}"
     try:
-        explain_rows = adapter.fetch_all(f"EXPLAIN {bound_template.sql}")
+        explain_rows = _fetch_explain_rows(adapter, explain_sql, enable_helpstats)
     except Exception as exc:  # noqa: BLE001 - backend errors are classified for evidence.
         evidence = extract_sql_error_evidence(str(exc), sql_template)
         results.insert(
@@ -233,6 +267,9 @@ def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> lis
                 evidence,
                 error_message=str(exc),
                 parameters=bound_template.parameters,
+                attempted_sql=explain_sql,
+                referenced_objects=referenced_sql_objects(sql_template),
+                helpstats_enabled=enable_helpstats,
             ),
         )
         return results
@@ -249,6 +286,7 @@ def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> lis
                     "recipe_title": recipe_title,
                     "parameters": list(bound_template.parameters),
                     "validation_mode": "EXPLAIN",
+                    "helpstats_enabled": enable_helpstats,
                 }
             ],
         ),
@@ -259,9 +297,21 @@ def _run_recipe_validations(prefix: str, adapter, row: dict[str, object]) -> lis
             recipe_id,
             recipe_title,
             explain_rows,
+            referenced_sql_objects(sql_template),
+            enable_helpstats,
         )
     )
     return results
+
+
+def _fetch_explain_rows(adapter, explain_sql: str, enable_helpstats: bool) -> list[dict[str, object]]:
+    if not enable_helpstats:
+        return adapter.fetch_all(explain_sql)
+    return adapter.fetch_all_with_session_setup(
+        explain_sql,
+        setup_sql=HELPSTATS_ON_SQL,
+        teardown_sql=HELPSTATS_OFF_SQL,
+    )
 
 
 def is_interactive_recipe(row: dict[str, object]) -> bool:
@@ -295,6 +345,7 @@ def explain_performance_findings(
                     "repair_hint": repair_hint,
                 }
             )
+    findings.extend(_helpstats_findings(explain_text))
     return findings
 
 
@@ -305,6 +356,9 @@ def _failed_result(
     evidence: str | dict[str, object],
     error_message: str | None = None,
     parameters: tuple[str, ...] = (),
+    attempted_sql: str | None = None,
+    referenced_objects: list[str] | None = None,
+    helpstats_enabled: bool = False,
 ) -> TestResult:
     if isinstance(evidence, str):
         evidence = {"issue_code": evidence}
@@ -312,8 +366,15 @@ def _failed_result(
         "recipe_id": recipe_id,
         "recipe_title": recipe_title,
         "parameters": list(parameters),
+        "validation_mode": "EXPLAIN",
+        "source_module": "query_templates.py",
+        "helpstats_enabled": helpstats_enabled,
         **evidence,
     }
+    if attempted_sql:
+        sample_row["attempted_sql"] = attempted_sql
+    if referenced_objects:
+        sample_row["referenced_objects"] = referenced_objects
     return TestResult(
         test_case=test_case,
         status=TestStatus.FAILED,
@@ -462,6 +523,8 @@ def _run_recipe_explain_performance_validation(
     recipe_id: str,
     recipe_title: str,
     explain_rows: list[dict[str, object]],
+    referenced_objects: list[str],
+    enable_helpstats: bool = False,
 ) -> TestResult:
     findings = explain_performance_findings(explain_rows)
     if not findings:
@@ -474,6 +537,7 @@ def _run_recipe_explain_performance_validation(
                     "recipe_id": recipe_id,
                     "recipe_title": recipe_title,
                     "validation_mode": "EXPLAIN_PERFORMANCE",
+                    "helpstats_enabled": enable_helpstats,
                 }
             ],
         )
@@ -485,6 +549,8 @@ def _run_recipe_explain_performance_validation(
             {
                 "recipe_id": recipe_id,
                 "recipe_title": recipe_title,
+                "referenced_objects": referenced_objects,
+                "helpstats_enabled": enable_helpstats,
                 **finding,
             }
             for finding in findings[:10]
@@ -492,11 +558,50 @@ def _run_recipe_explain_performance_validation(
     )
 
 
+def _helpstats_findings(explain_text: str) -> list[dict[str, object]]:
+    suggestions = [
+        _compact_whitespace(match.group(0))
+        for match in HELPSTATS_COLLECT_STATISTICS_PATTERN.finditer(explain_text)
+    ]
+    if not suggestions:
+        match = HELPSTATS_RECOMMENDATION_PATTERN.search(explain_text)
+        if match:
+            suggestion_text = explain_text[match.start() : match.start() + 360]
+            suggestions.append(_compact_whitespace(suggestion_text))
+    findings = []
+    for suggestion in list(dict.fromkeys(suggestions)):
+        findings.append(
+            {
+                "issue_code": "EXPLAIN_HELPSTATS_SUGGESTION",
+                "finding": suggestion,
+                "repair_hint": (
+                    "Review HELPSTATS as advisory evidence; trial HIGH CONFIDENCE "
+                    "single-column statistics first, then rerun validation before promoting."
+                ),
+            }
+        )
+    return findings
+
+
 def _explain_text(explain_rows: list[dict[str, object]]) -> str:
     values: list[str] = []
     for row in explain_rows:
         values.extend(str(value) for value in row.values() if value is not None)
     return "\n".join(values)
+
+
+def _compact_whitespace(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def referenced_sql_objects(sql_template: str) -> list[str]:
+    objects: list[str] = []
+    for match in SQL_OBJECT_REFERENCE_PATTERN.finditer(sql_template):
+        object_name = re.sub(r"\s+", "", match.group(1)).replace('"', "")
+        if object_name.upper().startswith("SELECT."):
+            continue
+        objects.append(object_name)
+    return list(dict.fromkeys(objects))
 
 
 def _first_pattern_match(patterns: tuple[re.Pattern[str], ...], message: str) -> str | None:
@@ -524,6 +629,7 @@ def _repair_hint(issue_code: str) -> str:
         "MISSING_OBJECT": "Update the SQL template to a deployed object, create the missing view, or quarantine the recipe.",
         "UNSUPPORTED_FUNCTION": "Replace the function with a supported implementation or mark the required capability unavailable.",
         "UNSUPPORTED_CAPABILITY": "Use a capability-compatible recipe variant or mark the native capability unavailable.",
+        "NESTED_ORDERED_ANALYTIC": "Rewrite the recipe to calculate each analytic layer in a separate CTE or derived table before applying the next ordered analytic function.",
         "SQL_SYNTAX_ERROR": "Repair the SQL template syntax before publishing the recipe.",
         "SQL_VALIDATION_ERROR": "Inspect the backend error and add a specific classifier if the pattern is repeatable.",
     }

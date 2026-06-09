@@ -142,6 +142,10 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "CALLCENTRE-SEM-001" in html
     assert "Returns zero rows." in html
     assert "statusFilter" in html
+    assert "elementValue(id)" in html
+    assert "attachInputFilter(id, callback)" in html
+    assert "objectIssueFilter" in html
+    assert "objectSearchFilter" in html
     assert "MISSING_COLUMN" in html
     assert "Approval required" in html
     assert "Repair candidates" in html
@@ -159,6 +163,10 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "ALTER TABLE CallCentre_DOM_STD_T.Call_H ADD start_ts &lt;data_type&gt;" in html
     assert "Recreate or test these dependent objects first" in html
     assert "CallCentre_DOM_BUS_V.Call_Enriched" in html
+    assert "Object repair list" in html
+    assert "Objects with missing columns" in html
+    assert "CallCentre_DOM_STD_T.Call_H" in html
+    assert "<code>start_ts</code>" in html
     assert "Root cause groups" in html
     assert "Missing column: CallCentre_DOM_STD_T.Call_H.start_ts" in html
     assert "2 downstream failures" in html
@@ -220,6 +228,60 @@ def test_html_report_explains_relationship_datatype_mismatch_consequence(tmp_pat
     assert "Generated relationship joins may rely on implicit casts" in html
 
 
+def test_html_report_lists_missing_objects_and_missing_columns_without_opening_evidence(tmp_path):
+    output_path = tmp_path / "trust.html"
+    run = ValidationRun(
+        prefix="CallCentre",
+        started_at="2026-05-29T00:00:00+00:00",
+        completed_at="2026-05-29T00:00:01+00:00",
+        results=[
+            _result(
+                "CALLCENTRE-QUERY-EXPLAIN-QC-005",
+                TestStatus.FAILED,
+                category=TestCategory.QUERY,
+                sample_rows=[
+                    {
+                        "issue_code": "MISSING_OBJECT",
+                        "missing_object": "CallCentre_DOM_BUS_V.Call_H",
+                        "recipe_id": "QC-TOPIC-005",
+                        "recipe_title": "Cumulative call share Pareto analysis",
+                    }
+                ],
+            ),
+            _result(
+                "CALLCENTRE-VIEW-COLUMNS-CallCentre_DOM_BUS_V.Call_Enriched",
+                TestStatus.FAILED,
+                sample_rows=[
+                    {
+                        "issue_code": "MISSING_COLUMN",
+                        "missing_column": "CallCentre_DOM_STD_T.Call_H.start_ts",
+                        "database_name": "CallCentre_DOM_BUS_V",
+                        "view_name": "Call_Enriched",
+                    }
+                ],
+            ),
+        ],
+    )
+
+    write_html_report(run, output_path, [])
+
+    html = output_path.read_text(encoding="utf-8")
+    assert "Object repair list" in html
+    assert "All object issues" in html
+    assert "Missing objects/views" in html
+    assert "Objects with missing columns" in html
+    assert 'id="objectIssueBody"' in html
+    assert "CallCentre_DOM_BUS_V.Call_H" in html
+    assert "Missing object/view" in html
+    assert "Deploy CallCentre_DOM_BUS_V.Call_H" in html
+    assert "CallCentre_DOM_STD_T.Call_H" in html
+    assert "<code>start_ts</code>" in html
+    assert "Missing column" in html
+    assert "QC-TOPIC-005: Cumulative call share Pareto analysis" in html
+    assert "CALLCENTRE-VIEW-COLUMNS-CallCentre_DOM_BUS_V.Call_Enriched" in html
+    assert "applyObjectIssueFilters" in html
+
+
 def test_html_report_explains_recipe_bounds_and_explain_consequences(tmp_path):
     output_path = tmp_path / "trust.html"
     run = ValidationRun(
@@ -247,6 +309,44 @@ def test_html_report_explains_recipe_bounds_and_explain_consequences(tmp_path):
     html = output_path.read_text(encoding="utf-8")
     assert "Agents may run open-ended queries over large tables" in html
     assert "causing excessive work or unexpected result expansion" in html
+
+
+def test_html_report_explains_nested_ordered_analytic_recipe_failure(tmp_path):
+    output_path = tmp_path / "trust.html"
+    run = ValidationRun(
+        prefix="CallCentre",
+        started_at="2026-05-29T00:00:00+00:00",
+        completed_at="2026-05-29T00:00:01+00:00",
+        results=[
+            _result(
+                "CALLCENTRE-QUERY-EXPLAIN-QC-TOPIC-005",
+                TestStatus.FAILED,
+                category=TestCategory.QUERY,
+                sample_rows=[
+                    {
+                        "issue_code": "NESTED_ORDERED_ANALYTIC",
+                        "recipe_id": "QC-TOPIC-005",
+                        "recipe_title": "Cumulative call share Pareto analysis",
+                        "referenced_objects": [
+                            "CallCentre_DOM_BUS_V.Call_Current",
+                            "CallCentre_DOM_BUS_V.Agent_Current",
+                        ],
+                        "attempted_sql": "EXPLAIN SELECT ...",
+                    }
+                ],
+                error_message="[5480] Ordered Analytical Functions can not be nested.",
+            )
+        ],
+    )
+
+    write_html_report(run, output_path, [])
+
+    html = output_path.read_text(encoding="utf-8")
+    assert "NESTED_ORDERED_ANALYTIC" in html
+    assert "Teradata rejects during EXPLAIN and execution" in html
+    assert "Rewrite the recipe with staged CTEs" in html
+    assert "CallCentre_DOM_BUS_V.Call_Current" in html
+    assert "attempted_sql" in html
 
 
 def test_scorecards_keep_trust_performance_and_operational_separate():

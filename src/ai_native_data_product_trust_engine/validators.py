@@ -33,6 +33,14 @@ class DatabaseAdapter(Protocol):
     def fetch_all(self, sql: str) -> list[dict[str, object]]:
         """Run SQL and return rows as dictionaries."""
 
+    def fetch_all_with_session_setup(
+        self,
+        sql: str,
+        setup_sql: str | None = None,
+        teardown_sql: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Run SQL with optional setup/teardown statements on the same session."""
+
     def execute(self, sql: str) -> None:
         """Execute a non-query SQL statement."""
 
@@ -67,6 +75,7 @@ def run_validation(
     include_relationship_health_scans: bool = True,
     include_text_reference_scans: bool = True,
     include_view_contract_scans: bool = True,
+    enable_helpstats: bool = False,
     excluded_checks: list[ExcludedCheck] | None = None,
 ) -> ValidationRun:
     started_at = _utc_now()
@@ -91,6 +100,7 @@ def run_validation(
                 TestCategory.QUERY,
                 run_query_template_validations,
                 adapter,
+                enable_helpstats=enable_helpstats,
             )
         )
     if include_relationship_health_scans:
@@ -185,9 +195,10 @@ def _run_scanner(
     category: TestCategory,
     scanner,
     adapter: DatabaseAdapter,
+    **scanner_kwargs,
 ) -> list[TestResult]:
     try:
-        return scanner(prefix, adapter)
+        return scanner(prefix, adapter, **scanner_kwargs)
     except Exception as exc:  # noqa: BLE001 - scanner failures are validation evidence.
         test_case = TestCase(
             test_id=f"{prefix.upper()}-{scanner_id}",

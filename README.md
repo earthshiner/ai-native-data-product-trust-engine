@@ -98,6 +98,31 @@ Live validation currently uses `DATABASE_URI` by default and writes JSON validat
 `--html-output` to also create a standalone interactive HTML report for human review. Generated
 reports are local artifacts and are not committed.
 
+For troubleshooting backend failures, enable diagnostic logging. SQL is logged immediately before
+execution, and failing SQL is logged again with the backend exception:
+
+```powershell
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --log-file logs\trust-engine.log
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --log-level INFO
+```
+
+`--log-file` defaults to `INFO` level so the SQL statements are captured. Without `--log-file`, the
+default level is `WARNING`; pass `--log-level INFO` to stream SQL diagnostics to the console.
+
+For query cookbook performance diagnosis on Teradata, enable Optimizer HELPSTATS suggestions during
+recipe `EXPLAIN` validation:
+
+```powershell
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --enable-helpstats --log-file logs\trust-engine.log
+```
+
+This runs `DIAGNOSTIC HELPSTATS ON FOR SESSION`, the recipe `EXPLAIN`, and
+`DIAGNOSTIC HELPSTATS NOT ON FOR SESSION` on the same database session for each active cookbook
+recipe. Any `COLLECT STATISTICS` suggestions in the `EXPLAIN` output are reported as advisory
+`EXPLAIN_HELPSTATS_SUGGESTION` performance findings. The Trust Engine does not apply statistics
+automatically; trial high-confidence single-column suggestions first, then rerun validation before
+promoting them.
+
 To make trust evidence cheap for agents to read at interaction time, deploy a compact history table
 inside the data product and expose the latest row through the Semantic BUS_V access layer:
 
@@ -263,7 +288,7 @@ The first implemented slice generates and executes metadata trust tests includin
 - Column metadata references deployed columns.
 - Relationship metadata references deployed join columns.
 - Relationship join columns have compatible datatype, length, precision, scale and character set.
-- Same/similar column names have consistent datatype, length, precision and scale.
+- Same/similar table column names have consistent datatype, length, precision and scale.
 - Column metadata datatype declarations and coverage stay current with deployed entity columns.
 - Data product primary views, entity view names, relationship endpoints and lineage endpoints use
   deployed BUS_V access-layer objects for governed agent access.
@@ -276,10 +301,12 @@ The first implemented slice generates and executes metadata trust tests includin
 The validator supports `ZERO_ROWS` and `NON_EMPTY` expectations, records pass/fail/error
 evidence, and returns a non-zero exit code when any generated test fails.
 
-Column type consistency validation normalises column names by case and underscores, then flags
-normalised names with multiple physical type signatures across the data product. This catches
-join-risk patterns such as the same business key being defined with different datatypes, lengths,
-precision or scale in different modules or views.
+Table column type consistency validation normalises column names by case and underscores, then
+flags normalised names with multiple physical type signatures across deployed product tables. This
+catches join-risk patterns such as the same business key being defined with different datatypes,
+lengths, precision or scale in different table modules. View output column metadata is resolved
+through `HELP COLUMN`, not `DBC.ColumnsV`, because Teradata does not expose view datatypes through
+the table column catalogue in the same way.
 
 Relationship join column compatibility validation checks active `table_relationship` rows against
 `DBC.ColumnsV` for both sides of each declared join. It reports type, length, precision, scale and
@@ -332,9 +359,11 @@ the operational readiness score reflect whether freshness, lineage, quality and 
 be captured and inspected.
 
 View contract validation discovers deployed product views from `DBC.TablesV` and runs `HELP COLUMN`
-against a zero-row subquery for each view. Teradata resolves the view and returns authoritative
-output-column metadata, validating that source objects, projected columns, join columns, aliases and
-predicates still compile without scanning business data.
+against an aliased zero-row subquery for each view:
+`HELP COLUMN dt01.* FROM (SELECT viw.* FROM <database>.<view> AS viw WHERE 1=2) AS dt01`.
+Teradata resolves the view and returns authoritative output-column metadata, validating that source
+objects, projected columns, join columns, aliases and predicates still compile without scanning
+business data.
 
 Standard view-layer validation enforces `%_STD_V` as a thin 1:1 agent contract over `%_STD_T`
 tables. A standard view must declare its view column list before `AS`, use `LOCKING ROW FOR ACCESS`,

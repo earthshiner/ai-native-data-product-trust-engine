@@ -126,6 +126,10 @@ _ISSUE_CONSEQUENCES = {
         "The plan may duplicate large data across AMPs, increasing spool, network and runtime "
         "risk."
     ),
+    "EXPLAIN_HELPSTATS_SUGGESTION": (
+        "The optimiser suggested statistics that may improve this recipe, but each suggestion "
+        "should be trialled and validated before promotion."
+    ),
     "EXPLAIN_LOW_CONFIDENCE": (
         "The optimiser estimates may be unreliable, so generated SQL performance may vary "
         "significantly."
@@ -214,6 +218,10 @@ _ISSUE_CONSEQUENCES = {
     ),
     "MISSING_VIEW_COLUMN_LIST": (
         "The view output contract may drift silently if the underlying table changes."
+    ),
+    "NESTED_ORDERED_ANALYTIC": (
+        "The recipe uses an ordered analytic calculation inside another analytic calculation, "
+        "which Teradata rejects during EXPLAIN and execution."
     ),
     "NO_PRODUCT_VIEWS_FOUND": (
         "The product may not expose a usable governed view layer for agents or applications."
@@ -336,6 +344,8 @@ def render_html_report(
     last_run_at = run.completed_at
     dependency_index = _dependency_index(results)
     root_cause_groups = _root_cause_groups(results, dependency_index)
+    attention_objects = _attention_objects(results, dependency_index)
+    object_issues = _object_issue_groups(results)
     safe_auto_count = sum(1 for candidate in repair_candidates if not candidate.requires_approval)
     approval_count = sum(1 for candidate in repair_candidates if candidate.requires_approval)
     total_checks = len(results)
@@ -360,6 +370,8 @@ def render_html_report(
             "scores": scorecards,
             "dimension_scores": dimension_scores,
             "root_cause_groups": root_cause_groups,
+            "attention_objects": attention_objects,
+            "object_issues": object_issues,
         }
     )
     header_image = _header_image_data_uri()
@@ -772,6 +784,32 @@ def render_html_report(
       margin: 6px 0 0;
       padding-left: 18px;
     }}
+    .attention-objects {{
+      margin-bottom: 18px;
+    }}
+    .object-issues {{
+      margin-bottom: 18px;
+    }}
+    .attention-objects h3,
+    .object-issues h3 {{
+      margin: 0 0 8px;
+      font-size: 16px;
+    }}
+    .attention-objects p,
+    .object-issues p {{
+      margin: 0 0 12px;
+      color: var(--td-muted);
+    }}
+    .attention-objects td,
+    .object-issues td {{
+      vertical-align: top;
+    }}
+    .object-issue-toolbar {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 10px 0 12px;
+    }}
     .consequence {{
       background: #FFF8EB;
       border: 1px solid #FFD8A8;
@@ -905,6 +943,7 @@ def render_html_report(
     >
       <section class="panel">
         <h2>Validation results</h2>
+        {_object_issue_section(object_issues)}
         <div class="toolbar">
           <select id="statusFilter" aria-label="Filter by status">
             <option value="">All statuses</option>
@@ -1019,11 +1058,22 @@ def render_html_report(
     <script id="trust-report-data" type="application/json">{data_json}</script>
     <script>
       const filters = ["statusFilter", "categoryFilter", "severityFilter", "searchFilter"];
+      function elementValue(id) {{
+        const element = document.getElementById(id);
+        return element ? element.value : "";
+      }}
+      function attachInputFilter(id, callback) {{
+        const element = document.getElementById(id);
+        if (element) {{
+          element.addEventListener("input", callback);
+          element.addEventListener("change", callback);
+        }}
+      }}
       function applyFilters() {{
-        const status = document.getElementById("statusFilter").value;
-        const category = document.getElementById("categoryFilter").value;
-        const severity = document.getElementById("severityFilter").value;
-        const search = document.getElementById("searchFilter").value.toLowerCase();
+        const status = elementValue("statusFilter");
+        const category = elementValue("categoryFilter");
+        const severity = elementValue("severityFilter");
+        const search = elementValue("searchFilter").toLowerCase();
         document.querySelectorAll("#resultsBody tr").forEach((row) => {{
           const visible = (!status || row.dataset.status === status)
             && (!category || row.dataset.category === category)
@@ -1032,7 +1082,19 @@ def render_html_report(
           row.style.display = visible ? "" : "none";
         }});
       }}
-      filters.forEach((id) => document.getElementById(id).addEventListener("input", applyFilters));
+      function applyObjectIssueFilters() {{
+        const issueKind = elementValue("objectIssueFilter");
+        const search = elementValue("objectSearchFilter").toLowerCase();
+        document.querySelectorAll("#objectIssueBody tr").forEach((row) => {{
+          const visible = (!issueKind || row.dataset.objectIssueKind === issueKind)
+            && (!search || row.textContent.toLowerCase().includes(search));
+          row.style.display = visible ? "" : "none";
+        }});
+      }}
+      filters.forEach((id) => attachInputFilter(id, applyFilters));
+      ["objectIssueFilter", "objectSearchFilter"].forEach((id) =>
+        attachInputFilter(id, applyObjectIssueFilters)
+      );
       document.querySelectorAll("[role='tab']").forEach((tab) => {{
         tab.addEventListener("click", () => {{
           const targetPanelId = tab.getAttribute("aria-controls");
@@ -1299,6 +1361,119 @@ def _root_cause_card(group: dict[str, object]) -> str:
     </div>"""
 
 
+def _object_issue_section(groups: list[dict[str, object]]) -> str:
+    if not groups:
+        return """<section class="object-issues" aria-label="Object repair list">
+          <h3>Object repair list</h3>
+          <p>No missing objects or missing object columns were detected in this run.</p>
+        </section>"""
+    rows = "\n".join(_object_issue_row(group) for group in groups)
+    return f"""<section class="object-issues" aria-label="Object repair list">
+      <h3>Object repair list</h3>
+      <p>
+        Missing objects and objects with missing columns are grouped here so deployment and
+        metadata repairs can be planned without opening structured evidence row by row.
+      </p>
+      <div class="object-issue-toolbar">
+        <select id="objectIssueFilter" aria-label="Filter object repair list by issue type">
+          <option value="">All object issues</option>
+          <option value="MISSING_OBJECT">Missing objects/views</option>
+          <option value="MISSING_COLUMN">Objects with missing columns</option>
+        </select>
+        <input
+          id="objectSearchFilter"
+          type="search"
+          placeholder="Search object, column, check"
+          aria-label="Search object repair list"
+        />
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Issue</th>
+            <th>Object</th>
+            <th>Missing columns</th>
+            <th>Checks</th>
+            <th>Next step</th>
+          </tr>
+        </thead>
+        <tbody id="objectIssueBody">{rows}</tbody>
+      </table>
+    </section>"""
+
+
+def _object_issue_row(group: dict[str, object]) -> str:
+    checks = group.get("checks")
+    check_items = ""
+    if isinstance(checks, list):
+        check_items = "<br>".join(_h(str(check)) for check in checks[:5])
+    columns = group.get("missing_columns")
+    if isinstance(columns, list) and columns:
+        column_items = "<br>".join(f"<code>{_h(column)}</code>" for column in columns[:8])
+    else:
+        column_items = "n/a"
+    issue_kind = str(group.get("issue_kind", "UNKNOWN"))
+    issue_label = _object_issue_label(issue_kind)
+    return f"""<tr
+      data-object-issue-kind="{_h(issue_kind)}"
+      data-object-name="{_h(group.get("object_name", ""))}"
+    >
+      <td><span class="status failed">{_h(issue_label)}</span></td>
+      <td><code>{_h(group.get("object_name", ""))}</code></td>
+      <td>{column_items}</td>
+      <td>{check_items}</td>
+      <td>{_h(group.get("next_step", "Review the validation evidence."))}</td>
+    </tr>"""
+
+
+def _object_issue_label(issue_kind: str) -> str:
+    labels = {
+        "MISSING_OBJECT": "Missing object/view",
+        "MISSING_COLUMN": "Missing column",
+    }
+    return labels.get(issue_kind, issue_kind)
+
+
+def _attention_object_section(groups: list[dict[str, object]]) -> str:
+    if not groups:
+        return """<section class="attention-objects" aria-label="Objects needing attention">
+          <h3>Objects needing attention</h3>
+          <p>No object-level failures were detected in this run.</p>
+        </section>"""
+    rows = "\n".join(_attention_object_row(group) for group in groups)
+    return f"""<section class="attention-objects" aria-label="Objects needing attention">
+      <h3>Objects needing attention</h3>
+      <p>
+        Object names are pulled out of failed evidence so missing views and affected tables are
+        visible without opening each structured-evidence block.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Object</th>
+            <th>Issue</th>
+            <th>Checks</th>
+            <th>Next step</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>"""
+
+
+def _attention_object_row(group: dict[str, object]) -> str:
+    checks = group.get("checks")
+    check_items = ""
+    if isinstance(checks, list):
+        check_items = "<br>".join(_h(str(check)) for check in checks[:4])
+    return f"""<tr>
+      <td><code>{_h(group.get("object_name", ""))}</code></td>
+      <td>{_h(group.get("issue_code", "UNKNOWN"))}</td>
+      <td>{check_items}</td>
+      <td>{_h(group.get("next_step", "Review the validation evidence."))}</td>
+    </tr>"""
+
+
 def _category_options(results: list[TestResult]) -> str:
     return "\n".join(
         f'<option value="{_h(category)}">{_h(category.title())}</option>'
@@ -1421,6 +1596,9 @@ def _sample_reference_label(result: TestResult, sample_row: dict[str, object]) -
     referenced_from = sample_row.get("referenced_from")
     if referenced_from:
         return str(referenced_from)
+    relationship_name = sample_row.get("relationship_name")
+    if relationship_name:
+        return f"Relationship {relationship_name}"
     scanner = sample_row.get("scanner")
     if scanner:
         return f"Scanner {scanner}: {result.test_case.name}"
@@ -1439,17 +1617,31 @@ def _objects_to_examine(result: TestResult) -> list[str]:
 
 def _sample_objects_to_examine(sample_row: dict[str, object]) -> list[str]:
     objects: list[str] = []
-    for field_name in ("objects_to_examine", "referenced_objects"):
+    for field_name in (
+        "objects_to_examine",
+        "referenced_objects",
+        "missing_object",
+        "source_object",
+        "target_object",
+    ):
         field_value = sample_row.get(field_name)
         if isinstance(field_value, str):
-            objects.append(field_value)
+            objects.extend(_split_object_list(field_value))
         elif isinstance(field_value, list):
             objects.extend(str(value) for value in field_value if value)
-    database_name = sample_row.get("database_name") or sample_row.get("observability_database")
-    table_name = sample_row.get("table_name") or sample_row.get("object_name")
-    if database_name and table_name:
-        objects.append(f"{database_name}.{table_name}")
-    return objects
+    database_table_pairs = (
+        ("database_name", "table_name"),
+        ("database_name", "object_name"),
+        ("observability_database", "object_name"),
+        ("source_database", "source_table"),
+        ("target_database", "target_table"),
+    )
+    for database_field, table_field in database_table_pairs:
+        database_name = sample_row.get(database_field)
+        table_name = sample_row.get(table_field)
+        if database_name and table_name:
+            objects.append(f"{database_name}.{table_name}")
+    return list(dict.fromkeys(objects))
 
 
 def _next_step(
@@ -1482,6 +1674,11 @@ def _next_step(
         )
     if issue_code == "STALE_OBJECT_NAME":
         return "Apply the deterministic alias repair or replace the retired object name manually."
+    if issue_code == "NESTED_ORDERED_ANALYTIC":
+        return (
+            "Rewrite the recipe with staged CTEs: aggregate first, calculate percentage metrics "
+            "in the next CTE, then calculate the ordered cumulative percentage in the final SELECT."
+        )
     return result.test_case.repair_strategy or "Review the structured evidence and choose a repair."
 
 
@@ -1505,6 +1702,197 @@ def _consequence(result: TestResult) -> str:
         "Consumers may receive incomplete or misleading trust evidence until this validation "
         "failure is reviewed."
     )
+
+
+def _object_issue_groups(results: list[TestResult]) -> list[dict[str, object]]:
+    groups: dict[tuple[str, str], dict[str, object]] = {}
+    for result in results:
+        if result.status == TestStatus.PASSED:
+            continue
+        for sample_row in result.sample_rows:
+            issue_code = str(sample_row.get("issue_code") or "")
+            if issue_code == "MISSING_COLUMN":
+                missing_column = str(sample_row.get("missing_column") or "")
+                object_name = _object_from_missing_column(missing_column)
+                column_name = _column_from_missing_column(missing_column)
+                if object_name:
+                    _add_object_issue(
+                        groups,
+                        "MISSING_COLUMN",
+                        object_name,
+                        result,
+                        sample_row,
+                        missing_column=column_name,
+                    )
+                continue
+            if _is_missing_object_issue(issue_code):
+                for object_name in _missing_object_names(sample_row):
+                    _add_object_issue(
+                        groups,
+                        "MISSING_OBJECT",
+                        object_name,
+                        result,
+                        sample_row,
+                    )
+    return sorted(
+        groups.values(),
+        key=lambda group: (
+            0 if group["issue_kind"] == "MISSING_OBJECT" else 1,
+            str(group["object_name"]).lower(),
+        ),
+    )
+
+
+def _add_object_issue(
+    groups: dict[tuple[str, str], dict[str, object]],
+    issue_kind: str,
+    object_name: str,
+    result: TestResult,
+    sample_row: dict[str, object],
+    missing_column: str = "",
+) -> None:
+    key = (issue_kind, object_name)
+    group = groups.setdefault(
+        key,
+        {
+            "issue_kind": issue_kind,
+            "object_name": object_name,
+            "missing_columns": [],
+            "checks": [],
+            "next_step": _object_issue_next_step(issue_kind, object_name),
+        },
+    )
+    if missing_column and missing_column not in group["missing_columns"]:
+        group["missing_columns"].append(missing_column)
+    check_label = _result_impact_label(result, sample_row)
+    if check_label not in group["checks"]:
+        group["checks"].append(check_label)
+
+
+def _is_missing_object_issue(issue_code: str) -> bool:
+    if issue_code == "MISSING_OBJECT":
+        return True
+    if "COLUMN" in issue_code:
+        return False
+    return (
+        (
+            "MISSING" in issue_code
+            and any(token in issue_code for token in ("OBJECT", "VIEW", "TABLE"))
+        )
+        or issue_code.endswith("_NOT_DEPLOYED")
+    )
+
+
+def _missing_object_names(sample_row: dict[str, object]) -> list[str]:
+    missing_object = str(sample_row.get("missing_object") or "")
+    if missing_object:
+        return [missing_object]
+    return _attention_object_names(sample_row)
+
+
+def _object_from_missing_column(missing_column: str) -> str:
+    parts = [part for part in missing_column.split(".") if part]
+    if len(parts) >= 3:
+        return ".".join(parts[-3:-1])
+    return ""
+
+
+def _column_from_missing_column(missing_column: str) -> str:
+    parts = [part for part in missing_column.split(".") if part]
+    if parts:
+        return parts[-1]
+    return missing_column
+
+
+def _object_issue_next_step(issue_kind: str, object_name: str) -> str:
+    if issue_kind == "MISSING_OBJECT":
+        return (
+            f"Deploy {object_name}, create the governed BUS_V/STD_V view, or update metadata "
+            "to the deployed name."
+        )
+    return (
+        f"Add the missing column to {object_name}, refresh the view contract, or update stale "
+        "recipe metadata."
+    )
+
+
+def _attention_objects(
+    results: list[TestResult],
+    dependency_index: dict[str, list[str]],
+) -> list[dict[str, object]]:
+    groups: dict[tuple[str, str], dict[str, object]] = {}
+    for result in results:
+        if result.status == TestStatus.PASSED:
+            continue
+        for sample_row in result.sample_rows:
+            issue_code = str(sample_row.get("issue_code") or result.status.value)
+            next_step = _sample_next_step(result, sample_row, issue_code, dependency_index)
+            for object_name in _attention_object_names(sample_row):
+                key = (object_name, issue_code)
+                group = groups.setdefault(
+                    key,
+                    {
+                        "object_name": object_name,
+                        "issue_code": issue_code,
+                        "checks": [],
+                        "next_step": next_step,
+                    },
+                )
+                check_label = _result_impact_label(result, sample_row)
+                if check_label not in group["checks"]:
+                    group["checks"].append(check_label)
+    return sorted(
+        groups.values(),
+        key=lambda group: (
+            _object_attention_rank(str(group["issue_code"]), str(group["object_name"])),
+            str(group["object_name"]).lower(),
+            str(group["issue_code"]),
+        ),
+    )
+
+
+def _attention_object_names(sample_row: dict[str, object]) -> list[str]:
+    objects = _sample_objects_to_examine(sample_row)
+    missing_column = str(sample_row.get("missing_column") or "")
+    if missing_column:
+        parts = missing_column.split(".")
+        if len(parts) >= 3:
+            objects.append(".".join(parts[-3:-1]))
+    return list(dict.fromkeys(objects))
+
+
+def _sample_next_step(
+    result: TestResult,
+    sample_row: dict[str, object],
+    issue_code: str,
+    dependency_index: dict[str, list[str]],
+) -> str:
+    if issue_code == "MISSING_OBJECT":
+        object_name = str(sample_row.get("missing_object") or "this object")
+        return f"Confirm whether {object_name} should exist as a BUS_V/STD_V view or be renamed."
+    if issue_code == "MISSING_COLUMN":
+        missing_column = str(sample_row.get("missing_column") or "")
+        return _missing_column_alter_hint(missing_column)
+    if issue_code in {
+        "RELATIONSHIP_SOURCE_NOT_BUS_V",
+        "RELATIONSHIP_TARGET_NOT_BUS_V",
+        "LINEAGE_SOURCE_NOT_BUS_V",
+        "LINEAGE_TARGET_NOT_BUS_V",
+    }:
+        return "Update metadata to point at the governed BUS_V access view."
+    if "MISSING" in issue_code and "VIEW" in issue_code:
+        return "Create the missing governed view or update metadata to the deployed view name."
+    if issue_code == "NESTED_ORDERED_ANALYTIC":
+        return "Rewrite the recipe so each analytic calculation happens in a separate CTE."
+    if issue_code.startswith("SQL_"):
+        return "Inspect the recipe SQL and replace stale object references or invalid syntax."
+    return _next_step(result, dependency_index) or "Review this object's validation evidence."
+
+
+def _object_attention_rank(issue_code: str, object_name: str) -> tuple[int, int]:
+    missing_rank = 0 if "MISSING" in issue_code else 1
+    view_rank = 0 if "_V." in object_name.upper() or object_name.upper().endswith("_V") else 1
+    return missing_rank, view_rank
 
 
 def _root_cause_groups(
@@ -1602,6 +1990,9 @@ def _result_impact_label(result: TestResult, sample_row: dict[str, object]) -> s
         return f"{recipe_id}: {recipe_title}"
     if recipe_id:
         return str(recipe_id)
+    relationship_name = sample_row.get("relationship_name")
+    if relationship_name:
+        return str(relationship_name)
     object_names = _dependent_objects_from_sample(sample_row)
     if object_names:
         return ", ".join(object_names)
