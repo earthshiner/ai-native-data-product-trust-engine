@@ -483,42 +483,12 @@ ORDER BY entity_name, business_database_name, view_name;
             expected_result="Returns zero rows when active entities point agents at deployed BUS_V views.",
             repair_strategy="Populate entity_metadata.view_name and deploy the referenced BUS_V views.",
         ),
-        TestCase(
-            test_id=f"{prefix.upper()}-SEM-009",
-            name="Entity deleted flag metadata is populated and deployed",
-            category=TestCategory.SEMANTIC,
-            severity=TestSeverity.WARNING,
-            sql=f"""
-SELECT
-    em.entity_metadata_id
-   ,em.entity_name
-   ,em.database_name
-   ,em.table_name
-   ,em.deleted_flag_column
-   ,CASE
-        WHEN COALESCE(em.deleted_flag_column, '') IN ('', 'None')
-            THEN 'ENTITY_DELETED_FLAG_MISSING'
-        ELSE 'ENTITY_DELETED_FLAG_NOT_DEPLOYED'
-    END AS issue_code
-   ,'Populate deleted_flag_column where delete tracking exists, or explicitly mark the entity as not delete-tracked.' AS repair_hint
-FROM {sem_db}.entity_metadata em
-LEFT OUTER JOIN DBC.ColumnsV colv
-    ON colv.DatabaseName = em.database_name
-   AND colv.TableName = em.table_name
-   AND colv.ColumnName = em.deleted_flag_column
-WHERE COALESCE(em.is_active, 1) = 1
-  AND {deployed_module_database_filter(sem_db, 'em.database_name')}
-  AND COALESCE(em.temporal_pattern, '') NOT IN ('', 'None')
-  AND {backup_object_exclusion_sql('em.table_name')}
-  AND (
-      COALESCE(em.deleted_flag_column, '') IN ('', 'None')
-      OR colv.ColumnName IS NULL
-  )
-ORDER BY em.entity_name, em.database_name, em.table_name;
-""".strip(),
-            expected_result="Returns zero rows when temporal entity delete flags are complete and valid.",
-            repair_strategy="Refresh deleted_flag_column metadata or document entities without delete tracking.",
-        ),
+        # SEM-009 (Entity deleted flag metadata is populated and deployed) was
+        # removed: it duplicates the is_active soft-delete convention already
+        # enforced product-wide, and forced a second is_deleted column on every
+        # entity even where delete tracking does not apply (e.g. derived
+        # feature stores). The test_id is intentionally retired — downstream
+        # SEM-010/SEM-011 keep their numbers so historical reports stay valid.
         TestCase(
             test_id=f"{prefix.upper()}-SEM-010",
             name="Relationship metadata uses BUS_V access endpoints",
