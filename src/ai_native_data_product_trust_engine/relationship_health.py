@@ -120,16 +120,14 @@ def _run_relationship_orphan_validation(
         TestSeverity.WARNING,
     )
     try:
+        endpoint_findings = adapter.fetch_all(_relationship_endpoint_sql(row))
+        if endpoint_findings:
+            return _failed_result(test_case, endpoint_findings)
         findings = adapter.fetch_all(_relationship_orphan_sql(row))
     except Exception as exc:  # noqa: BLE001 - backend errors are reported as validation evidence.
         return _error_result(test_case, exc)
 
-    return TestResult(
-        test_case=test_case,
-        status=TestStatus.PASSED if not findings else TestStatus.FAILED,
-        row_count=len(findings),
-        sample_rows=findings[:10],
-    )
+    return _result_from_findings(test_case, findings)
 
 
 def _run_relationship_cardinality_validation(
@@ -154,16 +152,14 @@ def _run_relationship_cardinality_validation(
         )
 
     try:
+        endpoint_findings = adapter.fetch_all(_relationship_endpoint_sql(row))
+        if endpoint_findings:
+            return _failed_result(test_case, endpoint_findings)
         findings = adapter.fetch_all(_relationship_cardinality_sql(row, cardinality))
     except Exception as exc:  # noqa: BLE001 - backend errors are reported as validation evidence.
         return _error_result(test_case, exc)
 
-    return TestResult(
-        test_case=test_case,
-        status=TestStatus.PASSED if not findings else TestStatus.FAILED,
-        row_count=len(findings),
-        sample_rows=findings[:10],
-    )
+    return _result_from_findings(test_case, findings)
 
 
 def _run_temporal_current_validation(
@@ -293,6 +289,67 @@ SELECT
 FROM target_to_source
 WHERE orphan_count > 0
 """.strip()
+
+
+def _relationship_endpoint_sql(row: dict[str, object]) -> str:
+    source_db, source_table, source_col = _relationship_source(row)
+    target_db, target_table, target_col = _relationship_target(row)
+    source_db = _governed_access_database(source_db)
+    target_db = _governed_access_database(target_db)
+    relationship_name = _sql_string(row.get("relationship_name"))
+    endpoints = (
+        ("SOURCE", source_db, source_table, source_col),
+        ("TARGET", target_db, target_table, target_col),
+    )
+    queries = []
+    for side, database_name, table_name, column_name in endpoints:
+        side_lower = side.lower()
+        queries.extend(
+            [
+                f"""
+SELECT
+    {relationship_name} AS relationship_name
+   ,'{side_lower}' AS affected_side
+   ,{_sql_string(database_name)} AS database_name
+   ,{_sql_string(table_name)} AS object_name
+   ,{_sql_string(column_name)} AS column_name
+   ,'RELATIONSHIP_{side}_OBJECT_NOT_DEPLOYED' AS issue_code
+   ,'Deploy the governed access object or update table_relationship to the deployed object.'
+        AS repair_hint
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM DBC.TablesV tv
+    WHERE tv.DatabaseName = {_sql_string(database_name)}
+      AND tv.TableName = {_sql_string(table_name)}
+      AND tv.TableKind IN ('T', 'V', 'O', 'Q')
+)""".strip(),
+                f"""
+SELECT
+    {relationship_name} AS relationship_name
+   ,'{side_lower}' AS affected_side
+   ,{_sql_string(database_name)} AS database_name
+   ,{_sql_string(table_name)} AS object_name
+   ,{_sql_string(column_name)} AS column_name
+   ,'RELATIONSHIP_{side}_COLUMN_NOT_DEPLOYED' AS issue_code
+   ,'Deploy the join column or update table_relationship to the deployed column name.'
+        AS repair_hint
+WHERE EXISTS (
+    SELECT 1
+    FROM DBC.TablesV tv
+    WHERE tv.DatabaseName = {_sql_string(database_name)}
+      AND tv.TableName = {_sql_string(table_name)}
+      AND tv.TableKind IN ('T', 'V', 'O', 'Q')
+)
+  AND NOT EXISTS (
+    SELECT 1
+    FROM DBC.ColumnsV colv
+    WHERE colv.DatabaseName = {_sql_string(database_name)}
+      AND colv.TableName = {_sql_string(table_name)}
+      AND colv.ColumnName = {_sql_string(column_name)}
+)""".strip(),
+            ]
+        )
+    return "\nUNION ALL\n".join(queries)
 
 
 def _relationship_cardinality_sql(row: dict[str, object], cardinality: str) -> str:
@@ -559,6 +616,31 @@ def _error_result(test_case: TestCase, exc: Exception) -> TestResult:
         status=TestStatus.ERROR,
         row_count=0,
         error_message=str(exc),
+    )
+
+
+def _result_from_findings(
+    test_case: TestCase,
+    findings: list[dict[str, object]],
+) -> TestResult:
+    if findings:
+        return _failed_result(test_case, findings)
+    return TestResult(
+        test_case=test_case,
+        status=TestStatus.PASSED,
+        row_count=0,
+    )
+
+
+def _failed_result(
+    test_case: TestCase,
+    findings: list[dict[str, object]],
+) -> TestResult:
+    return TestResult(
+        test_case=test_case,
+        status=TestStatus.FAILED,
+        row_count=len(findings),
+        sample_rows=findings[:10],
     )
 
 

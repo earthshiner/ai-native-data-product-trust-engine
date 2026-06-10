@@ -36,7 +36,29 @@ def test_generate_repair_candidates_creates_safe_text_update():
     assert "SET is_active = 0" in candidates[0].sql
     assert "INSERT INTO CallCentre_MEM_STD_T.Query_Cookbook" in candidates[0].sql
     assert "OREPLACE(CAST(recipe_description AS VARCHAR(32000))" in candidates[0].sql
+    assert "\n   ,is_batch\n   ,module_version" in candidates[0].sql
     assert "CURRENT_DATE AS valid_from" in candidates[0].sql
+
+
+def test_query_cookbook_temporal_repair_can_replace_sql_template_text():
+    run = _run_with_sample(
+        {
+            "classification": "STALE_ALIAS",
+            "database_name": "CallCentre_MEM_STD_V",
+            "table_name": "Query_Cookbook",
+            "column_name": "sql_template",
+            "row_key": "recipe_id=QCB-CC-001",
+            "key_values": {"recipe_id": "QCB-CC-001"},
+            "token": "ch.valid_from_dts",
+            "replacement": "ch.start_ts",
+            "safe_auto_apply": True,
+        }
+    )
+
+    candidate = generate_repair_candidates(run)[0]
+
+    assert "OREPLACE(CAST(sql_template AS VARCHAR(32000))" in candidate.sql
+    assert "AS sql_template" in candidate.sql
 
 
 def test_write_repair_reports_outputs_safe_sql(tmp_path):

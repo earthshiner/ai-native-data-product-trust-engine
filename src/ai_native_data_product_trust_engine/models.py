@@ -60,6 +60,7 @@ class TestCase:
     expected: ExpectedResult = ExpectedResult.ZERO_ROWS
     repair_strategy: str | None = None
     inspection_scope: str | None = None
+    precondition_sql: str | None = None
 
 
 @dataclass(frozen=True)

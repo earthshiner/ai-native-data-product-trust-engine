@@ -36,8 +36,8 @@ class LoggingAdapter:
         LOGGER.info("Executing SQL query:\n%s", sql)
         try:
             rows = self.adapter.fetch_all(sql)
-        except Exception:
-            LOGGER.exception("SQL query failed:\n%s", sql)
+        except Exception as exc:
+            _log_query_failure(sql, exc)
             raise
         LOGGER.info("SQL query returned %s rows.", len(rows))
         return rows
@@ -55,8 +55,8 @@ class LoggingAdapter:
             LOGGER.info("Executing session teardown SQL after query:\n%s", teardown_sql)
         try:
             rows = self.adapter.fetch_all_with_session_setup(sql, setup_sql, teardown_sql)
-        except Exception:
-            LOGGER.exception("SQL query failed:\n%s", sql)
+        except Exception as exc:
+            _log_query_failure(sql, exc)
             raise
         LOGGER.info("SQL query returned %s rows.", len(rows))
         return rows
@@ -237,6 +237,13 @@ def configure_logging(log_level: str | None = None, log_file: Path | None = None
         handlers=handlers,
         force=True,
     )
+
+
+def _log_query_failure(sql: str, exc: Exception) -> None:
+    concise_error = str(exc).split("\n at ", maxsplit=1)[0].strip()
+    display_sql = sql.replace("\r\n", "\n").replace("\r", "\n")
+    LOGGER.error("SQL query failed: %s\n%s", concise_error, display_sql)
+    LOGGER.debug("SQL query failure traceback.", exc_info=exc)
 
 
 def _log_level(value: str) -> int:
