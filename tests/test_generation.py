@@ -32,7 +32,6 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-SEM-006",
         "CALLCENTRE-SEM-007",
         "CALLCENTRE-SEM-008",
-        "CALLCENTRE-SEM-009",
         "CALLCENTRE-SEM-010",
         "CALLCENTRE-SEM-011",
         "CALLCENTRE-DISCOVERY-001",
@@ -50,7 +49,8 @@ def test_generate_metadata_tests_includes_core_contracts():
         for test in tests
         if test.test_id != "CALLCENTRE-DISCOVERY-001"
     )
-    assert tests[14].expected == ExpectedResult.NON_EMPTY
+    # Index shifted by one after SEM-009 was retired (now at 13, was 14).
+    assert tests[13].expected == ExpectedResult.NON_EMPTY
     assert "COUNT(DISTINCT type_signature) > 1" in tests[4].sql
     assert tests[4].name == "Similar table column names use consistent datatypes"
     assert "tv.TableKind = 'T'" in tests[4].sql
@@ -69,7 +69,6 @@ def test_generated_metadata_tests_scope_to_deployed_modules():
         "CALLCENTRE-SEM-006",
         "CALLCENTRE-SEM-007",
         "CALLCENTRE-SEM-008",
-        "CALLCENTRE-SEM-009",
         "CALLCENTRE-SEM-010",
         "CALLCENTRE-STRUCT-002",
         "CALLCENTRE-STRUCT-003",
@@ -141,7 +140,6 @@ def test_generate_metadata_tests_include_semantic_access_layer_contracts():
     coverage_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-006")
     primary_views_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-007")
     entity_view_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-008")
-    deleted_flag_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-009")
     relationship_access_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-010")
     lineage_access_test = next(test for test in tests if test.test_id == "CALLCENTRE-SEM-011")
 
@@ -164,9 +162,8 @@ def test_generate_metadata_tests_include_semantic_access_layer_contracts():
     assert "ENTITY_VIEW_NAME_MISSING" in entity_view_test.sql
     assert "ENTITY_VIEW_NAME_NOT_DEPLOYED" in entity_view_test.sql
 
-    assert deleted_flag_test.severity == TestSeverity.WARNING
-    assert "ENTITY_DELETED_FLAG_MISSING" in deleted_flag_test.sql
-    assert "ENTITY_DELETED_FLAG_NOT_DEPLOYED" in deleted_flag_test.sql
+    # SEM-009 (Entity deleted flag metadata) was retired — see test_generation.py.
+    assert not any(t.test_id == "CALLCENTRE-SEM-009" for t in tests)
 
     assert relationship_access_test.severity == TestSeverity.CRITICAL
     assert "RELATIONSHIP_SOURCE_NOT_BUS_V" in relationship_access_test.sql
@@ -194,7 +191,6 @@ def test_generate_metadata_tests_exclude_backup_objects():
         "CALLCENTRE-SEM-005",
         "CALLCENTRE-SEM-006",
         "CALLCENTRE-SEM-008",
-        "CALLCENTRE-SEM-009",
         "CALLCENTRE-SEM-010",
         "CALLCENTRE-STRUCT-002",
         "CALLCENTRE-STRUCT-003",
