@@ -10,6 +10,7 @@ import re
 from datetime import UTC, datetime
 from typing import Protocol
 
+from ai_native_data_product_trust_engine.capabilities import run_capability_validations
 from ai_native_data_product_trust_engine.models import (
     ExcludedCheck,
     ExpectedResult,
@@ -20,7 +21,6 @@ from ai_native_data_product_trust_engine.models import (
     TestStatus,
     ValidationRun,
 )
-from ai_native_data_product_trust_engine.capabilities import run_capability_validations
 from ai_native_data_product_trust_engine.query_templates import run_query_template_validations
 from ai_native_data_product_trust_engine.relationship_health import (
     run_relationship_health_validations,
@@ -46,6 +46,25 @@ class DatabaseAdapter(Protocol):
 
 
 def run_test_case(adapter: DatabaseAdapter, test_case: TestCase) -> TestResult:
+    if test_case.precondition_sql:
+        try:
+            precondition_rows = adapter.fetch_all(test_case.precondition_sql)
+        except Exception as exc:  # noqa: BLE001 - adapters normalise backend errors later.
+            return TestResult(
+                test_case=test_case,
+                status=TestStatus.ERROR,
+                row_count=0,
+                sample_rows=[_backend_error_evidence(test_case, test_case.precondition_sql)],
+                error_message=str(exc),
+            )
+        if precondition_rows:
+            return TestResult(
+                test_case=test_case,
+                status=TestStatus.FAILED,
+                row_count=len(precondition_rows),
+                sample_rows=precondition_rows[:10],
+            )
+
     try:
         rows = adapter.fetch_all(test_case.sql)
     except Exception as exc:  # noqa: BLE001 - adapters normalise backend errors later.
@@ -156,7 +175,10 @@ def _status_from_rows(expected: ExpectedResult, row_count: int) -> TestStatus:
     raise ValueError(msg)
 
 
-def _backend_error_evidence(test_case: TestCase) -> dict[str, object]:
+def _backend_error_evidence(
+    test_case: TestCase,
+    sql: str | None = None,
+) -> dict[str, object]:
     evidence = {
         "issue_code": "BACKEND_ERROR",
         "check_id": test_case.test_id,
@@ -168,7 +190,7 @@ def _backend_error_evidence(test_case: TestCase) -> dict[str, object]:
     }
     if test_case.inspection_scope:
         evidence["inspection_scope"] = test_case.inspection_scope
-    inspected_objects = _referenced_objects(test_case.sql)
+    inspected_objects = _referenced_objects(sql or test_case.sql)
     if inspected_objects:
         evidence["inspected_objects"] = inspected_objects
     return evidence

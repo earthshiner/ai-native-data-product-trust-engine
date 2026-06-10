@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from ai_native_data_product_trust_engine.object_filters import backup_object_exclusion_sql
 from ai_native_data_product_trust_engine.models import (
     ExpectedResult,
     TestCase,
     TestCategory,
     TestSeverity,
 )
+from ai_native_data_product_trust_engine.object_filters import backup_object_exclusion_sql
 
 
 def semantic_database(prefix: str) -> str:
@@ -396,6 +396,24 @@ ORDER BY em.database_name, em.table_name, colv.ColumnId;
             name="Data product primary views are deployed in BUS_V databases",
             category=TestCategory.SEMANTIC,
             severity=TestSeverity.CRITICAL,
+            precondition_sql=f"""
+SELECT
+    '{sem_db}' AS database_name
+   ,'data_product_map' AS object_name
+   ,'primary_views' AS column_name
+   ,'DATA_PRODUCT_MAP_PRIMARY_VIEWS_MISSING' AS issue_code
+   ,'The primary_views metadata column is required before BUS_V deployment can be checked.'
+        AS issue_detail
+   ,'Add primary_views to data_product_map and populate the approved BUS_V view names.'
+        AS repair_hint
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM DBC.ColumnsV colv
+    WHERE colv.DatabaseName = '{sem_db}'
+      AND colv.TableName = 'data_product_map'
+      AND colv.ColumnName = 'primary_views'
+);
+""".strip(),
             sql=f"""
 WITH module_primary_views AS
 (
@@ -534,6 +552,22 @@ ORDER BY 1, 5, 2, 3, 4;
             name="Lineage metadata exposes BUS_V access endpoints",
             category=TestCategory.SEMANTIC,
             severity=TestSeverity.WARNING,
+            precondition_sql=f"""
+SELECT
+    '{observability_view_database(prefix)}' AS database_name
+   ,'data_lineage' AS object_name
+   ,'LINEAGE_VIEW_NOT_DEPLOYED' AS issue_code
+   ,'{observability_view_database(prefix)}.data_lineage is required before lineage endpoint '
+     || 'semantics can be inspected.' AS issue_detail
+   ,'Deploy the standard data_lineage view, then rerun validation.' AS repair_hint
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM DBC.TablesV tv
+    WHERE tv.DatabaseName = '{observability_view_database(prefix)}'
+      AND tv.TableName = 'data_lineage'
+      AND tv.TableKind IN ('V', 'O', 'Q')
+);
+""".strip(),
             sql=f"""
 SELECT
     dl.lineage_id

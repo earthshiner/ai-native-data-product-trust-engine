@@ -1,3 +1,4 @@
+from ai_native_data_product_trust_engine import relationship_health
 from ai_native_data_product_trust_engine.relationship_health import (
     relationship_health_test_cases,
     run_relationship_cardinality_validations,
@@ -5,7 +6,6 @@ from ai_native_data_product_trust_engine.relationship_health import (
     run_relationship_orphan_validations,
     run_temporal_current_validations,
 )
-from ai_native_data_product_trust_engine import relationship_health
 
 
 def test_duplicate_current_sql_scans_full_table_not_a_sample():
@@ -105,7 +105,8 @@ def test_run_relationship_orphan_validations_reports_bounded_orphans():
     assert results[0].status.value == "FAILED"
     assert results[0].sample_rows[0]["issue_code"] == "SOURCE_TO_TARGET_ORPHAN"
     assert "Call-to-Customer" in results[0].test_case.test_id
-    assert adapter.executed_sql[1].startswith("WITH source_sample AS")
+    assert "RELATIONSHIP_SOURCE_OBJECT_NOT_DEPLOYED" in adapter.executed_sql[1]
+    assert adapter.executed_sql[2].startswith("WITH source_sample AS")
 
 
 def test_relationship_orphan_sql_queries_governed_access_views():
@@ -138,7 +139,38 @@ def test_run_relationship_cardinality_validations_reports_declared_mismatch():
 
     assert results[0].status.value == "FAILED"
     assert results[0].sample_rows[0]["issue_code"] == "CARDINALITY_TARGET_NOT_UNIQUE"
-    assert "M:1" in adapter.executed_sql[1]
+    assert "M:1" in adapter.executed_sql[2]
+
+
+def test_relationship_checks_report_missing_endpoint_without_sampling_it():
+    endpoint_finding = {
+        "relationship_name": "Embedding_to_Call",
+        "affected_side": "source",
+        "database_name": "CallCentre_SCH_STD_V",
+        "object_name": "call_embedding",
+        "column_name": "call_id",
+        "issue_code": "RELATIONSHIP_SOURCE_OBJECT_NOT_DEPLOYED",
+    }
+    adapter = RelationshipStubAdapter(
+        relationship_rows=[
+            {
+                **RELATIONSHIP_ROW,
+                "relationship_name": "Embedding_to_Call",
+                "source_database": "CallCentre_SCH_STD_T",
+                "source_table": "call_embedding",
+                "source_column": "call_id",
+            }
+        ],
+        endpoint_rows=[endpoint_finding],
+    )
+
+    results = run_relationship_cardinality_validations("CallCentre", adapter)
+
+    assert results[0].status.value == "FAILED"
+    assert results[0].sample_rows == [endpoint_finding]
+    assert len(adapter.executed_sql) == 2
+    assert '"CallCentre_SCH_STD_V"."call_embedding"' not in adapter.executed_sql[1]
+    assert "FROM DBC.TablesV tv" in adapter.executed_sql[1]
 
 
 def test_relationship_cardinality_sql_preserves_existing_view_databases():
@@ -211,6 +243,7 @@ class RelationshipStubAdapter:
         temporal_rows=None,
         orphan_rows=None,
         cardinality_rows=None,
+        endpoint_rows=None,
         temporal_duplicate_rows=None,
         view_rows=None,
     ):
@@ -218,6 +251,7 @@ class RelationshipStubAdapter:
         self.temporal_rows = temporal_rows or []
         self.orphan_rows = orphan_rows or []
         self.cardinality_rows = cardinality_rows or []
+        self.endpoint_rows = endpoint_rows or []
         self.temporal_duplicate_rows = temporal_duplicate_rows or []
         self.view_rows = view_rows or []
         self.executed_sql = []
@@ -228,6 +262,8 @@ class RelationshipStubAdapter:
             return self.relationship_rows
         if "FROM CallCentre_SEM_STD_V.entity_metadata" in sql:
             return self.temporal_rows
+        if "RELATIONSHIP_SOURCE_OBJECT_NOT_DEPLOYED" in sql:
+            return self.endpoint_rows
         if "SOURCE_TO_TARGET_ORPHAN" in sql:
             return self.orphan_rows
         if "CARDINALITY_SOURCE_NOT_UNIQUE" in sql:

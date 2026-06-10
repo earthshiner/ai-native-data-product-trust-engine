@@ -12,6 +12,7 @@ from ai_native_data_product_trust_engine.models import (
     TestCase,
     TestCategory,
     TestSeverity,
+    TestStatus,
 )
 from ai_native_data_product_trust_engine.repairs import classify_stale_relationship_path_name
 from ai_native_data_product_trust_engine.rule_config import RuleConfig, load_rule_config
@@ -152,6 +153,9 @@ def test_generate_metadata_tests_include_semantic_access_layer_contracts():
     assert "CallCentre_SEM_STD_V.column_metadata" in coverage_test.sql
 
     assert primary_views_test.severity == TestSeverity.CRITICAL
+    assert "FROM DBC.ColumnsV colv" in primary_views_test.precondition_sql
+    assert "CallCentre_SEM_STD_V" in primary_views_test.precondition_sql
+    assert "DATA_PRODUCT_MAP_PRIMARY_VIEWS_MISSING" in primary_views_test.precondition_sql
     assert "STRTOK_SPLIT_TO_TABLE" not in primary_views_test.sql
     assert "REGEXP_SUBSTR(dpm.primary_views" in primary_views_test.sql
     assert "FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'" in primary_views_test.sql
@@ -174,6 +178,9 @@ def test_generate_metadata_tests_include_semantic_access_layer_contracts():
     )
 
     assert lineage_access_test.severity == TestSeverity.WARNING
+    assert "FROM DBC.TablesV tv" in lineage_access_test.precondition_sql
+    assert "CallCentre_OBS_STD_V" in lineage_access_test.precondition_sql
+    assert "LINEAGE_VIEW_NOT_DEPLOYED" in lineage_access_test.precondition_sql
     assert "FROM CallCentre_OBS_STD_V.data_lineage" in lineage_access_test.sql
     assert "LINEAGE_SOURCE_NOT_BUS_V" in lineage_access_test.sql
     assert "LINEAGE_TARGET_NOT_BUS_V" in lineage_access_test.sql
@@ -392,6 +399,52 @@ def test_run_test_case_fails_non_empty_expectation():
     assert result.row_count == 0
 
 
+def test_run_test_case_returns_precondition_findings_without_running_dependent_sql():
+    finding = {
+        "database_name": "CallCentre_OBS_STD_V",
+        "object_name": "data_lineage",
+        "issue_code": "LINEAGE_VIEW_NOT_DEPLOYED",
+    }
+    adapter = SequencedStubAdapter([[finding]])
+    test_case = TestCase(
+        test_id="CALLCENTRE-SEM-011",
+        name="Lineage metadata exposes BUS_V access endpoints",
+        category=TestCategory.SEMANTIC,
+        severity=TestSeverity.WARNING,
+        sql="SELECT 1 FROM CallCentre_OBS_STD_V.data_lineage;",
+        expected_result="Returns zero rows.",
+        precondition_sql="SELECT 1 FROM DBC.TablesV;",
+    )
+
+    result = run_test_case(adapter, test_case)
+
+    assert result.status == TestStatus.FAILED
+    assert result.row_count == 1
+    assert result.sample_rows == [finding]
+    assert adapter.sql_calls == ["SELECT 1 FROM DBC.TablesV;"]
+
+
+def test_run_test_case_runs_dependent_sql_when_precondition_passes():
+    adapter = SequencedStubAdapter([[], []])
+    test_case = TestCase(
+        test_id="CALLCENTRE-SEM-011",
+        name="Lineage metadata exposes BUS_V access endpoints",
+        category=TestCategory.SEMANTIC,
+        severity=TestSeverity.WARNING,
+        sql="SELECT 1 FROM CallCentre_OBS_STD_V.data_lineage;",
+        expected_result="Returns zero rows.",
+        precondition_sql="SELECT 1 FROM DBC.TablesV;",
+    )
+
+    result = run_test_case(adapter, test_case)
+
+    assert result.status == TestStatus.PASSED
+    assert adapter.sql_calls == [
+        "SELECT 1 FROM DBC.TablesV;",
+        "SELECT 1 FROM CallCentre_OBS_STD_V.data_lineage;",
+    ]
+
+
 def test_run_test_case_backend_error_includes_inspection_context():
     test_case = TestCase(
         test_id="CALLCENTRE-SEM-010",
@@ -443,8 +496,29 @@ def test_logging_adapter_records_sql_success_and_failure(caplog):
 
     assert (
         "SQL query failed:\nSELECT 1 FROM CallCentre_SEM_STD_V.data_product_map;"
-        in caplog.text
+        not in caplog.text
     )
+    assert "SQL query failed:" in caplog.text
+    assert "gosqldriver/stack" not in caplog.text
+
+
+def test_logging_adapter_normalises_carriage_returns_in_failed_sql(caplog):
+    caplog.set_level(logging.ERROR, logger="ai_native_data_product_trust_engine.sql")
+
+    run_test_case(
+        LoggingAdapter(FailingScannerAdapter()),
+        TestCase(
+            test_id="CALLCENTRE-QUERY-001",
+            name="Generated check",
+            category=TestCategory.QUERY,
+            severity=TestSeverity.CRITICAL,
+            sql="SELECT 1\rFROM db.table\rORDER BY 1;",
+            expected_result="Returns zero rows.",
+        ),
+    )
+
+    assert "\r" not in caplog.text
+    assert "SELECT 1\nFROM db.table\nORDER BY 1;" in caplog.text
 
 
 def test_validate_cli_writes_report(monkeypatch, tmp_path):
@@ -549,6 +623,16 @@ class StubAdapter:
 
     def fetch_all(self, sql):
         return self.rows
+
+
+class SequencedStubAdapter:
+    def __init__(self, row_sets):
+        self.row_sets = iter(row_sets)
+        self.sql_calls = []
+
+    def fetch_all(self, sql):
+        self.sql_calls.append(sql)
+        return next(self.row_sets)
 
 
 class ValidationStubAdapter:

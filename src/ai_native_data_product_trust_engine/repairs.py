@@ -128,9 +128,7 @@ def _safe_text_alias_candidate(test_id: str, sample_row: dict[str, object]) -> R
 
 
 def _safe_text_repair_sql(sample_row: dict[str, object]) -> str:
-    database_name = _identifier(str(sample_row["database_name"]))
     table_name = _identifier(str(sample_row["table_name"]))
-    column_name = _identifier(str(sample_row["column_name"]))
     if table_name == "Query_Cookbook":
         return _query_cookbook_temporal_repair_sql(sample_row)
 
@@ -170,6 +168,7 @@ INSERT INTO {database_name}.{table_name}
    ,performance_notes
    ,complexity
    ,source_module
+   ,is_batch
    ,module_version
    ,is_active
    ,valid_from
@@ -184,11 +183,12 @@ SELECT
    ,{repaired_expression if column_name == "recipe_description" else "recipe_description"} AS recipe_description
    ,use_case
    ,target_module
-   ,sql_template
+   ,{repaired_expression if column_name == "sql_template" else "sql_template"} AS sql_template
    ,parameter_descriptions
    ,{repaired_expression if column_name == "performance_notes" else "performance_notes"} AS performance_notes
    ,complexity
    ,source_module
+   ,is_batch
    ,module_version
    ,1 AS is_active
    ,CURRENT_DATE AS valid_from
