@@ -16,8 +16,9 @@ from ai_native_data_product_trust_engine.mcp_server import (
 def test_mcp_server_cli_starts_server_over_report_directory(monkeypatch, tmp_path):
     seen = {}
 
-    def fake_run_mcp_server(reports_dir):
+    def fake_run_mcp_server(reports_dir, **kwargs):
         seen["reports_dir"] = reports_dir
+        seen["kwargs"] = kwargs
 
     monkeypatch.setattr(
         "ai_native_data_product_trust_engine.mcp_server.run_mcp_server",
@@ -28,6 +29,9 @@ def test_mcp_server_cli_starts_server_over_report_directory(monkeypatch, tmp_pat
 
     assert exit_code == 0
     assert seen["reports_dir"] == tmp_path
+    # The CLI passes the transport/host/port/path/config args through; default
+    # transport is stdio.
+    assert seen["kwargs"]["transport"] is None
 
 
 def test_discover_products_payload_lists_orientation_entrypoint(tmp_path):
