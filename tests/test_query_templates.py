@@ -120,6 +120,19 @@ def test_is_interactive_recipe_allows_intentional_batch_patterns():
     )
 
 
+def test_is_interactive_recipe_respects_explicit_is_batch_flag():
+    # is_batch=1 wins even when the prose has no batch/exhaustive keywords — this
+    # is the false-positive that flagged batch recipes as unbounded interactive.
+    batch_row = {"recipe_title": "Active listening and empathy used together", "is_batch": 1}
+    assert not is_interactive_recipe(batch_row)
+    for truthy in (True, "1", "Y", "true"):
+        assert not is_interactive_recipe({"recipe_title": "x", "is_batch": truthy})
+    # is_batch=0 forces interactive even if the prose mentions a batch keyword.
+    assert is_interactive_recipe({"recipe_title": "Nightly batch export", "is_batch": 0})
+    # NULL/absent flag falls back to the prose heuristic.
+    assert is_interactive_recipe({"recipe_title": "Customer lookup", "is_batch": None})
+
+
 def test_explain_performance_findings_extracts_known_risks():
     findings = explain_performance_findings(
         [
