@@ -315,6 +315,14 @@ def _fetch_explain_rows(adapter, explain_sql: str, enable_helpstats: bool) -> li
 
 
 def is_interactive_recipe(row: dict[str, object]) -> bool:
+    # Prefer the author's explicit Query_Cookbook.is_batch flag — it is the
+    # sanctioned way to declare a recipe an intentional batch/exhaustive pattern
+    # (see the bounds repair_strategy). Only fall back to the prose heuristic
+    # when the flag is absent/NULL, so a batch-flagged recipe is never flagged
+    # as an unbounded interactive recipe.
+    is_batch = row.get("is_batch")
+    if is_batch is not None:
+        return not _is_truthy_batch(is_batch)
     values = (
         row.get("recipe_title"),
         row.get("recipe_description"),
@@ -324,6 +332,15 @@ def is_interactive_recipe(row: dict[str, object]) -> bool:
     )
     text = " ".join(str(value or "") for value in values)
     return EXHAUSTIVE_RECIPE_PATTERN.search(text) is None
+
+
+def _is_truthy_batch(value: object) -> bool:
+    # is_batch arrives as 1/0, True/False, or occasionally "1"/"Y"/"true".
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in {"1", "y", "yes", "true", "t"}
 
 
 def is_bounded_sql(sql_template: str) -> bool:
@@ -393,6 +410,7 @@ SELECT
    ,use_case
    ,performance_notes
    ,complexity
+   ,is_batch
    ,sql_template
 FROM {prefix}_MEM_STD_V.Query_Cookbook
 WHERE COALESCE(is_active, 1) = 1
