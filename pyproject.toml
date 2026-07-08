@@ -44,7 +44,7 @@ select = ["E", "F", "I", "UP", "B"]
 packages = ["src/ai_native_data_product_trust_engine"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/ai_native_data_product_trust_engine/assets/orange_blue_gradient.png" = "ai_native_data_product_trust_engine/assets/orange_blue_gradient.png"
+"src/ai_native_data_product_trust_engine/assets/orange_blue_gradient.jpg" = "ai_native_data_product_trust_engine/assets/orange_blue_gradient.jpg"
 
 [tool.hatch.build.targets.sdist.force-include]
-"src/ai_native_data_product_trust_engine/assets/orange_blue_gradient.png" = "src/ai_native_data_product_trust_engine/assets/orange_blue_gradient.png"
+"src/ai_native_data_product_trust_engine/assets/orange_blue_gradient.jpg" = "src/ai_native_data_product_trust_engine/assets/orange_blue_gradient.jpg"

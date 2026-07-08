@@ -23,3 +23,4 @@ config/rules.json
 config/*_rules.json
 config/*.local.json
 trust-report.json
+trust-report.html

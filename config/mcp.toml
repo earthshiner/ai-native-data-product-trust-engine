@@ -1,0 +1,27 @@
+# ADP Trust Engine — MCP server configuration.
+#
+# Precedence (highest wins):
+#   1. CLI flags                (--transport, --host, --port, --path)
+#   2. FASTMCP_* environment variables
+#   3. Values in this file
+#   4. Built-in fallbacks
+#
+# Operators: edit this file rather than the source.
+# The path resolved at runtime is shown in the startup banner.
+
+[mcp]
+# Transport: "stdio" | "sse" | "streamable-http"
+transport = "stdio"
+
+# HTTP-only settings (ignored when transport = "stdio").
+host = "127.0.0.1"
+port = 8000
+
+# URL path for the MCP endpoint.
+#   streamable-http default: /mcp
+#   sse default            : /sse
+# Leave commented to use the transport default.
+# path = "/mcp"
+
+# Location of Trust Engine JSON reports relative to the working directory.
+reports_dir = "reports"

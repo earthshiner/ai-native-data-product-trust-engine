@@ -116,8 +116,54 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_parser.add_argument(
         "--reports-dir",
         type=Path,
-        default=Path("reports"),
-        help="Directory containing Trust Engine JSON reports.",
+        default=None,
+        help=(
+            "Directory containing Trust Engine JSON reports. "
+            "Overrides [mcp].reports_dir in config/mcp.toml (default: reports)."
+        ),
+    )
+    mcp_parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        dest="config_path",
+        help=(
+            "Path to mcp.toml. Overrides the $ADP_TRUST_MCP_CONFIG env var "
+            "and the default config/mcp.toml lookup."
+        ),
+    )
+    mcp_parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse", "streamable-http"],
+        default=None,
+        help=(
+            "MCP transport to use. Overrides [mcp].transport in config/mcp.toml "
+            "(default: stdio). 'streamable-http' for HTTP deployments "
+            "(MCP 2025-03-26); 'sse' for legacy SSE clients."
+        ),
+    )
+    mcp_parser.add_argument(
+        "--host",
+        default=None,
+        help=(
+            "Host address to bind for HTTP transports (default: 127.0.0.1). "
+            "Use 0.0.0.0 only behind a network-layer access control."
+        ),
+    )
+    mcp_parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port to listen on for HTTP transports (default: 8000).",
+    )
+    mcp_parser.add_argument(
+        "--path",
+        dest="http_path",
+        default=None,
+        help=(
+            "URL path for the MCP endpoint "
+            "(default: /mcp for streamable-http, /sse for sse)."
+        ),
     )
 
     return parser
@@ -213,7 +259,24 @@ def _main(argv: list[str] | None = None) -> int:
     if args.command == "mcp-server":
         from ai_native_data_product_trust_engine.mcp_server import run_mcp_server
 
-        run_mcp_server(args.reports_dir)
+        if args.transport == "stdio" and any(
+            [args.host, args.port, args.http_path]
+        ):
+            print(
+                "[ADPTrust.InvalidArgs] --host, --port and --path are only valid "
+                "with --transport streamable-http or --transport sse.",
+                file=sys.stderr,
+            )
+            return 2
+
+        run_mcp_server(
+            args.reports_dir,
+            transport=args.transport,
+            host=args.host,
+            port=args.port,
+            http_path=args.http_path,
+            config_path=args.config_path,
+        )
         return 0
 
     print(
