@@ -1,13 +1,97 @@
-"""Agent-facing MCP orientation layer over Trust Engine report evidence."""
+"""Agent-facing MCP orientation layer over Trust Engine report evidence.
+
+Starting the server
+-------------------
+Install the MCP extra into the project venv first (add ``teradata`` too if the
+server also needs a live connection)::
+
+    ./.venv/Scripts/python.exe -m pip install ".[mcp,teradata]"
+
+Then launch via the CLI subcommand:
+
+- stdio (default; how MCP clients spawn it as a subprocess)::
+
+      adp-trust-engine mcp-server
+
+- streamable-http (network deployments, MCP 2025-03-26)::
+
+      adp-trust-engine mcp-server --transport streamable-http --host 127.0.0.1 --port 8000
+
+Optional flags: ``--reports-dir`` (JSON reports location), ``--config`` (path to
+``mcp.toml``), ``--transport {stdio,sse,streamable-http}``, ``--host``,
+``--port``, ``--path``. Defaults come from ``config/mcp.toml`` (or
+``$ADP_TRUST_MCP_CONFIG``) and fall back to stdio on 127.0.0.1:8000.
+"""
 
 from __future__ import annotations
 
 import json
+import os
+import sys
 from dataclasses import asdict
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from pathlib import Path
 from typing import Any
 
+try:  # Python 3.11+
+    import tomllib
+except ImportError:  # pragma: no cover - Python 3.10 fallback
+    import tomli as tomllib  # type: ignore[no-redef]
+
 from ai_native_data_product_trust_engine.repairs import _candidate_from_sample
+
+MCP_CONFIG_FILENAME = "mcp.toml"
+MCP_CONFIG_ENV = "ADP_TRUST_MCP_CONFIG"
+MCP_DEFAULTS = {
+    "transport": "stdio",
+    "host": "127.0.0.1",
+    "port": 8000,
+    "path": None,
+    "reports_dir": "reports",
+}
+
+
+def _package_version() -> str:
+    try:
+        return _pkg_version("ai-native-data-product-trust-engine")
+    except PackageNotFoundError:  # pragma: no cover - editable installs without metadata
+        return "0.0.0+unknown"
+
+
+def _find_config_file() -> Path | None:
+    """Resolve the mcp.toml location.
+
+    Search order: ``$ADP_TRUST_MCP_CONFIG`` → ``./config/mcp.toml`` →
+    ``<repo-root>/config/mcp.toml`` relative to this module.
+    """
+    override = os.environ.get(MCP_CONFIG_ENV)
+    if override:
+        path = Path(override)
+        return path if path.exists() else None
+
+    candidates = [
+        Path.cwd() / "config" / MCP_CONFIG_FILENAME,
+        Path(__file__).resolve().parents[2] / "config" / MCP_CONFIG_FILENAME,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def load_mcp_config(config_path: Path | None = None) -> tuple[dict[str, Any], Path | None]:
+    """Load defaults from ``mcp.toml``; return (settings, resolved path)."""
+    resolved = config_path if config_path is not None else _find_config_file()
+    settings = dict(MCP_DEFAULTS)
+    if resolved is None:
+        return settings, None
+    with resolved.open("rb") as handle:
+        data = tomllib.load(handle)
+    section = data.get("mcp", {}) if isinstance(data, dict) else {}
+    for key in MCP_DEFAULTS:
+        if key in section and section[key] is not None:
+            settings[key] = section[key]
+    return settings, resolved
 
 try:  # pragma: no cover - exercised only when the optional MCP extra is installed.
     from mcp.server.fastmcp import FastMCP
@@ -31,7 +115,7 @@ def create_mcp_server(reports_dir: str | Path = Path("reports")):
         raise RuntimeError(
             "[ADPTrust.MCPUnavailable] MCP SDK is not installed. "
             "Suggested action: install the optional MCP extra with "
-            "`pip install .[mcp]`, then rerun `adp-trust mcp-server`."
+            "`pip install .[mcp]`, then rerun `adp-trust-engine mcp-server`."
         )
 
     report_root = Path(reports_dir)
@@ -113,9 +197,121 @@ def create_mcp_server(reports_dir: str | Path = Path("reports")):
     return server
 
 
-def run_mcp_server(reports_dir: str | Path = Path("reports")) -> None:
-    """Run the Trust Engine MCP server over local report artifacts."""
-    create_mcp_server(reports_dir).run()
+def run_mcp_server(
+    reports_dir: str | Path | None = None,
+    *,
+    transport: str | None = None,
+    host: str | None = None,
+    port: int | None = None,
+    http_path: str | None = None,
+    config_path: Path | None = None,
+) -> None:
+    """Run the Trust Engine MCP server over local report artifacts.
+
+    Precedence (highest wins): function arguments > FASTMCP_* env vars
+    (handled by FastMCP itself) > config file > built-in defaults.
+    """
+    file_settings, resolved_config = load_mcp_config(config_path)
+
+    effective_transport = transport or file_settings["transport"]
+    effective_reports = (
+        reports_dir if reports_dir is not None else file_settings["reports_dir"]
+    )
+    effective_path = http_path if http_path is not None else file_settings["path"]
+
+    server = create_mcp_server(effective_reports)
+
+    # File-derived host/port apply when the CLI does not override.
+    # FASTMCP_HOST / FASTMCP_PORT (handled by FastMCP's Settings) sit
+    # between the two: they override the file but not explicit CLI flags.
+    effective_host = host if host is not None else file_settings["host"]
+    effective_port = port if port is not None else file_settings["port"]
+    if effective_host is not None:
+        server.settings.host = effective_host
+    if effective_port is not None:
+        server.settings.port = effective_port
+    if effective_path is not None:
+        if effective_transport == "streamable-http":
+            server.settings.streamable_http_path = effective_path
+        elif effective_transport == "sse":
+            server.settings.sse_path = effective_path
+
+    _emit_startup_banner(server, effective_transport, resolved_config)
+
+    try:
+        if effective_transport == "stdio":
+            server.run()
+        else:
+            server.run(transport=effective_transport)
+    except KeyboardInterrupt:
+        _emit_shutdown_banner(effective_transport)
+
+
+def _emit_shutdown_banner(transport: str) -> None:
+    lines = [
+        "",
+        "=" * 72,
+        f"  ADP Trust Engine MCP server v{_package_version()} — SHUTDOWN",
+        f"  Transport : {transport}",
+        "  Reason    : Interrupted by user (Ctrl+C)",
+        "=" * 72,
+        "",
+    ]
+    print("\n".join(lines), file=sys.stderr, flush=True)
+
+
+def _emit_startup_banner(
+    server: Any, transport: str, config_file: Path | None
+) -> None:
+    """Print a startup banner to stderr — matches the SHIPS MCP layout.
+
+    Stderr is used so the banner never collides with the stdio
+    transport's JSON-RPC stream on stdout.
+    """
+    version = _package_version()
+    config_display = (
+        str(config_file)
+        if config_file is not None
+        else "(none found — using built-in defaults; create config/mcp.toml to override)"
+    )
+
+    if transport == "stdio":
+        endpoint = "stdio (subprocess transport — no network port)"
+        port_hint = (
+            "Default transport is stdio; pass --transport streamable-http "
+            "--port <N> to bind a TCP port."
+        )
+    else:
+        host = server.settings.host
+        port = server.settings.port
+        if transport == "streamable-http":
+            path = server.settings.streamable_http_path
+        else:
+            path = server.settings.sse_path
+        endpoint = f"http://{host}:{port}{path}"
+        if config_file is not None:
+            port_hint = (
+                f"Change the port via --port <N>, the FASTMCP_PORT env var, "
+                f"or edit [mcp].port in {config_file}."
+            )
+        else:
+            port_hint = (
+                "Change the port via --port <N>, the FASTMCP_PORT env var, "
+                "or create config/mcp.toml with a [mcp] section."
+            )
+
+    banner_lines = [
+        "",
+        "=" * 72,
+        f"  ADP Trust Engine MCP server v{version} — STARTED",
+        f"  Transport : {transport}",
+        f"  Endpoint  : {endpoint}",
+        f"  Config    : {config_display}",
+        f"  Port      : {port_hint}",
+        "=" * 72,
+        "",
+    ]
+    print("\n".join(banner_lines), file=sys.stderr, flush=True)
 
 
 def discover_products_payload(reports_dir: str | Path) -> dict[str, Any]:
