@@ -8,9 +8,11 @@ import sys
 from pathlib import Path
 
 from ai_native_data_product_trust_engine.adapters import (
+    DatabaseUnavailableError,
     LoggingAdapter,
     adapter_from_environment,
     configure_logging,
+    database_uri_hint,
 )
 from ai_native_data_product_trust_engine.capabilities import capability_test_cases
 from ai_native_data_product_trust_engine.html_reports import write_html_report
@@ -172,6 +174,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     try:
         return _main(argv)
+    except DatabaseUnavailableError as exc:
+        # Fatal: the database is unreachable. Stop with a clear message and a
+        # distinct exit code — no partial, all-ERROR report is written.
+        print(str(exc), file=sys.stderr)
+        return 3
     except Exception as exc:  # noqa: BLE001 - CLI boundary must never leak driver stacks.
         print(_friendly_cli_error(exc), file=sys.stderr)
         return 2
@@ -211,50 +218,56 @@ def _main(argv: list[str] | None = None) -> int:
             len(excluded_checks),
         )
         adapter = LoggingAdapter(adapter_from_environment(args.database_url))
-        run = run_validation(
-            args.prefix,
-            adapter,
-            tests,
-            excluded_checks=excluded_checks,
-            enable_helpstats=args.enable_helpstats,
-            **rule_config.scanner_kwargs(),
-        )
-        LOGGER.info(
-            "Validation completed: %s passed, %s failed, %s errors.",
-            run.passed_count,
-            run.failed_count,
-            run.error_count,
-        )
-        write_json_report(run, args.output)
-        repair_candidates = []
-        if args.repair_mode in {"proposal", "safe-auto"}:
-            repair_candidates = generate_repair_candidates(run)
-            markdown_path, sql_path = write_repair_reports(repair_candidates, args.output)
-            print(f"Repair candidates: {len(repair_candidates)}. Reports: {markdown_path}, {sql_path}")
-        if args.repair_mode == "safe-auto":
-            applications = apply_safe_repairs(adapter, repair_candidates)
-            applied_count = sum(1 for application in applications if application.applied)
-            failed_count = sum(1 for application in applications if not application.applied)
-            print(f"Safe-auto repairs applied: {applied_count}; failed: {failed_count}")
-            for application in applications:
-                if application.error_message:
-                    print(
-                        f"[ADPTrust.RepairApplyFailed] {application.candidate.candidate_id}. "
-                        f"{_summarise_error(application.error_message)}"
-                    )
-        if args.html_output:
-            write_html_report(run, args.html_output, repair_candidates)
-            print(f"HTML report: {args.html_output}")
-        if args.publish_trust_table is not None:
-            trust_table = args.publish_trust_table or default_trust_table(args.prefix)
-            published_table = publish_trust_result(adapter, run, repair_candidates, trust_table)
-            print(f"Trust summary published: {published_table}")
-        print(
-            f"Validation complete: {run.passed_count} passed, "
-            f"{run.failed_count} failed, {run.error_count} errors. "
-            f"Report: {args.output}"
-        )
-        return 0 if run.failed_count == 0 and run.error_count == 0 else 1
+        try:
+            run = run_validation(
+                args.prefix,
+                adapter,
+                tests,
+                excluded_checks=excluded_checks,
+                enable_helpstats=args.enable_helpstats,
+                **rule_config.scanner_kwargs(),
+            )
+            LOGGER.info(
+                "Validation completed: %s passed, %s failed, %s errors.",
+                run.passed_count,
+                run.failed_count,
+                run.error_count,
+            )
+            write_json_report(run, args.output)
+            repair_candidates = []
+            if args.repair_mode in {"proposal", "safe-auto"}:
+                repair_candidates = generate_repair_candidates(run)
+                markdown_path, sql_path = write_repair_reports(repair_candidates, args.output)
+                print(f"Repair candidates: {len(repair_candidates)}. Reports: {markdown_path}, {sql_path}")
+            if args.repair_mode == "safe-auto":
+                applications = apply_safe_repairs(adapter, repair_candidates)
+                applied_count = sum(1 for application in applications if application.applied)
+                failed_count = sum(1 for application in applications if not application.applied)
+                print(f"Safe-auto repairs applied: {applied_count}; failed: {failed_count}")
+                for application in applications:
+                    if application.error_message:
+                        print(
+                            f"[ADPTrust.RepairApplyFailed] {application.candidate.candidate_id}. "
+                            f"{_summarise_error(application.error_message)}"
+                        )
+            if args.html_output:
+                write_html_report(run, args.html_output, repair_candidates)
+                print(f"HTML report: {args.html_output}")
+            if args.publish_trust_table is not None:
+                trust_table = args.publish_trust_table or default_trust_table(args.prefix)
+                published_table = publish_trust_result(adapter, run, repair_candidates, trust_table)
+                print(f"Trust summary published: {published_table}")
+            print(
+                f"Validation complete: {run.passed_count} passed, "
+                f"{run.failed_count} failed, {run.error_count} errors. "
+                f"Report: {args.output}"
+            )
+            return 0 if run.failed_count == 0 and run.error_count == 0 else 1
+        finally:
+            # Always release the pooled Teradata session — even when validation
+            # aborts (e.g. the database is unreachable) — so a failed run never
+            # leaves a virtual circuit tied up.
+            adapter.close()
 
     if args.command == "mcp-server":
         from ai_native_data_product_trust_engine.mcp_server import run_mcp_server
@@ -294,11 +307,23 @@ def _friendly_cli_error(exc: Exception) -> str:
     message = _summarise_error(str(exc))
     if message.startswith("[ADPTrust."):
         return message
+    lowered = message.lower()
+    if "can't load plugin" in lowered and "teradatasql" in lowered:
+        # Not a DATABASE_URI problem: the teradatasql SQLAlchemy dialect is not
+        # importable in this interpreter (usually a bare `python` without the
+        # project's dependencies).
+        return (
+            "[ADPTrust.MissingDialect] The teradatasql SQLAlchemy dialect is not available "
+            "in this interpreter, so the database URL could not be opened. "
+            'Suggested action: install the teradata optional dependencies (pip install -e '
+            '".[teradata]") or run through .\\adp.ps1, which always uses this project\'s '
+            f"virtual environment. {database_uri_hint()}"
+        )
     return (
         "[ADPTrust.ValidationFailed] Validation could not complete. "
         f"{message} "
         "Suggested action: check DATABASE_URI, network/VPN access, credentials, and Teradata "
-        "service availability, then rerun validate."
+        f"service availability, then rerun validate. {database_uri_hint()}"
     )
 
 

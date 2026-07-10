@@ -9,7 +9,36 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import parse_qs, unquote, urlparse
 
+from ai_native_data_product_trust_engine.error_formatting import (
+    concise_backend_error,
+    is_database_unavailable_error,
+)
+
 LOGGER = logging.getLogger("ai_native_data_product_trust_engine.sql")
+
+
+class DatabaseUnavailableError(BaseException):
+    """Fatal signal: the database is unreachable, so the run must stop.
+
+    Deliberately derived from ``BaseException`` rather than ``Exception`` so it
+    propagates through the broad ``except Exception`` blocks that turn a single
+    check's backend error into an ERROR result. A dead connection is not one
+    check's problem — continuing would only stamp the same failure onto every
+    remaining check — so this must not be swallowed. It is caught explicitly at
+    the CLI boundary (the only entry point that runs live validation).
+    """
+
+
+def _raise_if_database_unavailable(exc: Exception) -> None:
+    """Escalate a backend error to a fatal stop when the database is unreachable."""
+    if is_database_unavailable_error(str(exc)):
+        message = (
+            "[ADPTrust.DatabaseUnavailable] The database is unreachable, so validation "
+            "stopped instead of recording the same failure against every remaining check. "
+            "Suggested action: check database connectivity and availability, then rerun. "
+            f"Backend error: {concise_backend_error(str(exc))}"
+        )
+        raise DatabaseUnavailableError(message) from exc
 
 
 class DatabaseAdapter(Protocol):
@@ -38,6 +67,7 @@ class LoggingAdapter:
             rows = self.adapter.fetch_all(sql)
         except Exception as exc:
             _log_query_failure(sql, exc)
+            _raise_if_database_unavailable(exc)
             raise
         LOGGER.info("SQL query returned %s rows.", len(rows))
         return rows
@@ -57,6 +87,7 @@ class LoggingAdapter:
             rows = self.adapter.fetch_all_with_session_setup(sql, setup_sql, teardown_sql)
         except Exception as exc:
             _log_query_failure(sql, exc)
+            _raise_if_database_unavailable(exc)
             raise
         LOGGER.info("SQL query returned %s rows.", len(rows))
         return rows
@@ -65,27 +96,65 @@ class LoggingAdapter:
         LOGGER.info("Executing SQL statement:\n%s", sql)
         try:
             self.adapter.execute(sql)
-        except Exception:
+        except Exception as exc:
             LOGGER.exception("SQL statement failed:\n%s", sql)
+            _raise_if_database_unavailable(exc)
             raise
         LOGGER.info("SQL statement completed.")
 
+    def close(self) -> None:
+        """Release the wrapped adapter's connection resources, if it holds any."""
+        close = getattr(self.adapter, "close", None)
+        if callable(close):
+            close()
 
-@dataclass(frozen=True)
+    def __enter__(self) -> LoggingAdapter:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+
 class SqlAlchemyAdapter:
-    database_url: str
+    """SQLAlchemy-backed adapter that reuses one bounded-pool engine per run.
+
+    The previous implementation built a fresh engine — and therefore a fresh
+    connection pool — on every query, and never disposed it. Each leaked an idle
+    Teradata session until garbage collection, so a single validation run could
+    hold dozens of sessions at once. On a system with a finite number of virtual
+    circuits that is a fast path to Error 8024, "all virtual circuits are
+    currently in use". This version creates the engine once, caps the pool at a
+    single connection (validation runs sequentially), and releases it promptly
+    via ``close()`` or by using the adapter as a context manager.
+    """
+
+    def __init__(self, database_url: str) -> None:
+        self.database_url = database_url
+        self._engine = None
+
+    def _engine_or_create(self):
+        if self._engine is None:
+            try:
+                from sqlalchemy import create_engine
+            except ImportError as exc:
+                msg = (
+                    "[ADPTrust.MissingDependency] SQLAlchemy is required for live database "
+                    "access. Suggested action: install the teradata optional dependencies."
+                )
+                raise RuntimeError(msg) from exc
+            self._engine = create_engine(
+                _normalise_database_url(self.database_url),
+                pool_size=1,
+                max_overflow=0,
+                pool_pre_ping=True,
+                pool_recycle=1800,
+            )
+        return self._engine
 
     def fetch_all(self, sql: str) -> list[dict[str, object]]:
-        try:
-            from sqlalchemy import create_engine, text
-        except ImportError as exc:
-            msg = (
-                "[ADPTrust.MissingDependency] SQLAlchemy is required for live validation. "
-                "Suggested action: install the teradata optional dependencies."
-            )
-            raise RuntimeError(msg) from exc
+        engine = self._engine_or_create()
+        from sqlalchemy import text
 
-        engine = create_engine(_normalise_database_url(self.database_url))
         with engine.connect() as connection:
             rows = connection.execute(text(sql))
             return [dict(row._mapping) for row in rows]
@@ -96,16 +165,9 @@ class SqlAlchemyAdapter:
         setup_sql: str | None = None,
         teardown_sql: str | None = None,
     ) -> list[dict[str, object]]:
-        try:
-            from sqlalchemy import create_engine, text
-        except ImportError as exc:
-            msg = (
-                "[ADPTrust.MissingDependency] SQLAlchemy is required for live validation. "
-                "Suggested action: install the teradata optional dependencies."
-            )
-            raise RuntimeError(msg) from exc
+        engine = self._engine_or_create()
+        from sqlalchemy import text
 
-        engine = create_engine(_normalise_database_url(self.database_url))
         with engine.connect() as connection:
             setup_completed = False
             try:
@@ -122,18 +184,23 @@ class SqlAlchemyAdapter:
                         LOGGER.exception("Session teardown SQL failed:\n%s", teardown_sql)
 
     def execute(self, sql: str) -> None:
-        try:
-            from sqlalchemy import create_engine, text
-        except ImportError as exc:
-            msg = (
-                "[ADPTrust.MissingDependency] SQLAlchemy is required for live repair. "
-                "Suggested action: install the teradata optional dependencies."
-            )
-            raise RuntimeError(msg) from exc
+        engine = self._engine_or_create()
+        from sqlalchemy import text
 
-        engine = create_engine(_normalise_database_url(self.database_url))
         with engine.begin() as connection:
             connection.execute(text(sql))
+
+    def close(self) -> None:
+        """Dispose the engine and release its pooled Teradata session."""
+        if self._engine is not None:
+            self._engine.dispose()
+            self._engine = None
+
+    def __enter__(self) -> SqlAlchemyAdapter:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
 
 
 @dataclass(frozen=True)
@@ -205,13 +272,22 @@ class TeradataSqlAdapter:
             with connection.cursor() as cursor:
                 cursor.execute(sql)
 
+    def close(self) -> None:
+        """No persistent connection to release — each call opens and closes its own."""
+
+    def __enter__(self) -> TeradataSqlAdapter:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
 
 def adapter_from_environment(database_url: str | None = None):
     resolved_url = database_url or os.environ.get("DATABASE_URI")
     if not resolved_url:
         msg = (
             "[ADPTrust.DatabaseUriMissing] No database URL was provided. "
-            "Suggested action: pass --database-url or set DATABASE_URI."
+            f"Suggested action: pass --database-url or set DATABASE_URI. {database_uri_hint()}"
         )
         raise RuntimeError(msg)
 
@@ -255,6 +331,20 @@ def _log_level(value: str) -> int:
         )
         raise ValueError(msg)
     return int(getattr(logging, level_name))
+
+
+DATABASE_URI_FORMAT = (
+    "teradatasql://USER:PASSWORD@HOST[:PORT][/DATABASE][?logmech=LDAP&encryptdata=true]"
+)
+
+
+def database_uri_hint() -> str:
+    """One-line reminder of the DATABASE_URI format the adapters accept."""
+    return (
+        f"Expected DATABASE_URI format: {DATABASE_URI_FORMAT} "
+        "(scheme teradata:// or teradatasql://; percent-encode any special "
+        "characters in the user or password)."
+    )
 
 
 def _normalise_database_url(database_url: str) -> str:
