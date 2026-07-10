@@ -217,50 +217,56 @@ def _main(argv: list[str] | None = None) -> int:
             len(excluded_checks),
         )
         adapter = LoggingAdapter(adapter_from_environment(args.database_url))
-        run = run_validation(
-            args.prefix,
-            adapter,
-            tests,
-            excluded_checks=excluded_checks,
-            enable_helpstats=args.enable_helpstats,
-            **rule_config.scanner_kwargs(),
-        )
-        LOGGER.info(
-            "Validation completed: %s passed, %s failed, %s errors.",
-            run.passed_count,
-            run.failed_count,
-            run.error_count,
-        )
-        write_json_report(run, args.output)
-        repair_candidates = []
-        if args.repair_mode in {"proposal", "safe-auto"}:
-            repair_candidates = generate_repair_candidates(run)
-            markdown_path, sql_path = write_repair_reports(repair_candidates, args.output)
-            print(f"Repair candidates: {len(repair_candidates)}. Reports: {markdown_path}, {sql_path}")
-        if args.repair_mode == "safe-auto":
-            applications = apply_safe_repairs(adapter, repair_candidates)
-            applied_count = sum(1 for application in applications if application.applied)
-            failed_count = sum(1 for application in applications if not application.applied)
-            print(f"Safe-auto repairs applied: {applied_count}; failed: {failed_count}")
-            for application in applications:
-                if application.error_message:
-                    print(
-                        f"[ADPTrust.RepairApplyFailed] {application.candidate.candidate_id}. "
-                        f"{_summarise_error(application.error_message)}"
-                    )
-        if args.html_output:
-            write_html_report(run, args.html_output, repair_candidates)
-            print(f"HTML report: {args.html_output}")
-        if args.publish_trust_table is not None:
-            trust_table = args.publish_trust_table or default_trust_table(args.prefix)
-            published_table = publish_trust_result(adapter, run, repair_candidates, trust_table)
-            print(f"Trust summary published: {published_table}")
-        print(
-            f"Validation complete: {run.passed_count} passed, "
-            f"{run.failed_count} failed, {run.error_count} errors. "
-            f"Report: {args.output}"
-        )
-        return 0 if run.failed_count == 0 and run.error_count == 0 else 1
+        try:
+            run = run_validation(
+                args.prefix,
+                adapter,
+                tests,
+                excluded_checks=excluded_checks,
+                enable_helpstats=args.enable_helpstats,
+                **rule_config.scanner_kwargs(),
+            )
+            LOGGER.info(
+                "Validation completed: %s passed, %s failed, %s errors.",
+                run.passed_count,
+                run.failed_count,
+                run.error_count,
+            )
+            write_json_report(run, args.output)
+            repair_candidates = []
+            if args.repair_mode in {"proposal", "safe-auto"}:
+                repair_candidates = generate_repair_candidates(run)
+                markdown_path, sql_path = write_repair_reports(repair_candidates, args.output)
+                print(f"Repair candidates: {len(repair_candidates)}. Reports: {markdown_path}, {sql_path}")
+            if args.repair_mode == "safe-auto":
+                applications = apply_safe_repairs(adapter, repair_candidates)
+                applied_count = sum(1 for application in applications if application.applied)
+                failed_count = sum(1 for application in applications if not application.applied)
+                print(f"Safe-auto repairs applied: {applied_count}; failed: {failed_count}")
+                for application in applications:
+                    if application.error_message:
+                        print(
+                            f"[ADPTrust.RepairApplyFailed] {application.candidate.candidate_id}. "
+                            f"{_summarise_error(application.error_message)}"
+                        )
+            if args.html_output:
+                write_html_report(run, args.html_output, repair_candidates)
+                print(f"HTML report: {args.html_output}")
+            if args.publish_trust_table is not None:
+                trust_table = args.publish_trust_table or default_trust_table(args.prefix)
+                published_table = publish_trust_result(adapter, run, repair_candidates, trust_table)
+                print(f"Trust summary published: {published_table}")
+            print(
+                f"Validation complete: {run.passed_count} passed, "
+                f"{run.failed_count} failed, {run.error_count} errors. "
+                f"Report: {args.output}"
+            )
+            return 0 if run.failed_count == 0 and run.error_count == 0 else 1
+        finally:
+            # Always release the pooled Teradata session — even when validation
+            # aborts (e.g. the database is unreachable) — so a failed run never
+            # leaves a virtual circuit tied up.
+            adapter.close()
 
     if args.command == "mcp-server":
         from ai_native_data_product_trust_engine.mcp_server import run_mcp_server

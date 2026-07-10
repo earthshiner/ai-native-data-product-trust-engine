@@ -102,22 +102,59 @@ class LoggingAdapter:
             raise
         LOGGER.info("SQL statement completed.")
 
+    def close(self) -> None:
+        """Release the wrapped adapter's connection resources, if it holds any."""
+        close = getattr(self.adapter, "close", None)
+        if callable(close):
+            close()
 
-@dataclass(frozen=True)
+    def __enter__(self) -> LoggingAdapter:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+
 class SqlAlchemyAdapter:
-    database_url: str
+    """SQLAlchemy-backed adapter that reuses one bounded-pool engine per run.
+
+    The previous implementation built a fresh engine — and therefore a fresh
+    connection pool — on every query, and never disposed it. Each leaked an idle
+    Teradata session until garbage collection, so a single validation run could
+    hold dozens of sessions at once. On a system with a finite number of virtual
+    circuits that is a fast path to Error 8024, "all virtual circuits are
+    currently in use". This version creates the engine once, caps the pool at a
+    single connection (validation runs sequentially), and releases it promptly
+    via ``close()`` or by using the adapter as a context manager.
+    """
+
+    def __init__(self, database_url: str) -> None:
+        self.database_url = database_url
+        self._engine = None
+
+    def _engine_or_create(self):
+        if self._engine is None:
+            try:
+                from sqlalchemy import create_engine
+            except ImportError as exc:
+                msg = (
+                    "[ADPTrust.MissingDependency] SQLAlchemy is required for live database "
+                    "access. Suggested action: install the teradata optional dependencies."
+                )
+                raise RuntimeError(msg) from exc
+            self._engine = create_engine(
+                _normalise_database_url(self.database_url),
+                pool_size=1,
+                max_overflow=0,
+                pool_pre_ping=True,
+                pool_recycle=1800,
+            )
+        return self._engine
 
     def fetch_all(self, sql: str) -> list[dict[str, object]]:
-        try:
-            from sqlalchemy import create_engine, text
-        except ImportError as exc:
-            msg = (
-                "[ADPTrust.MissingDependency] SQLAlchemy is required for live validation. "
-                "Suggested action: install the teradata optional dependencies."
-            )
-            raise RuntimeError(msg) from exc
+        engine = self._engine_or_create()
+        from sqlalchemy import text
 
-        engine = create_engine(_normalise_database_url(self.database_url))
         with engine.connect() as connection:
             rows = connection.execute(text(sql))
             return [dict(row._mapping) for row in rows]
@@ -128,16 +165,9 @@ class SqlAlchemyAdapter:
         setup_sql: str | None = None,
         teardown_sql: str | None = None,
     ) -> list[dict[str, object]]:
-        try:
-            from sqlalchemy import create_engine, text
-        except ImportError as exc:
-            msg = (
-                "[ADPTrust.MissingDependency] SQLAlchemy is required for live validation. "
-                "Suggested action: install the teradata optional dependencies."
-            )
-            raise RuntimeError(msg) from exc
+        engine = self._engine_or_create()
+        from sqlalchemy import text
 
-        engine = create_engine(_normalise_database_url(self.database_url))
         with engine.connect() as connection:
             setup_completed = False
             try:
@@ -154,18 +184,23 @@ class SqlAlchemyAdapter:
                         LOGGER.exception("Session teardown SQL failed:\n%s", teardown_sql)
 
     def execute(self, sql: str) -> None:
-        try:
-            from sqlalchemy import create_engine, text
-        except ImportError as exc:
-            msg = (
-                "[ADPTrust.MissingDependency] SQLAlchemy is required for live repair. "
-                "Suggested action: install the teradata optional dependencies."
-            )
-            raise RuntimeError(msg) from exc
+        engine = self._engine_or_create()
+        from sqlalchemy import text
 
-        engine = create_engine(_normalise_database_url(self.database_url))
         with engine.begin() as connection:
             connection.execute(text(sql))
+
+    def close(self) -> None:
+        """Dispose the engine and release its pooled Teradata session."""
+        if self._engine is not None:
+            self._engine.dispose()
+            self._engine = None
+
+    def __enter__(self) -> SqlAlchemyAdapter:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
 
 
 @dataclass(frozen=True)
@@ -236,6 +271,15 @@ class TeradataSqlAdapter:
         with teradatasql.connect(**connection_args) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(sql)
+
+    def close(self) -> None:
+        """No persistent connection to release — each call opens and closes its own."""
+
+    def __enter__(self) -> TeradataSqlAdapter:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
 
 
 def adapter_from_environment(database_url: str | None = None):
