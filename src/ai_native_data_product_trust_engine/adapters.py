@@ -287,7 +287,7 @@ def adapter_from_environment(database_url: str | None = None):
     if not resolved_url:
         msg = (
             "[ADPTrust.DatabaseUriMissing] No database URL was provided. "
-            "Suggested action: pass --database-url or set DATABASE_URI."
+            f"Suggested action: pass --database-url or set DATABASE_URI. {database_uri_hint()}"
         )
         raise RuntimeError(msg)
 
@@ -331,6 +331,20 @@ def _log_level(value: str) -> int:
         )
         raise ValueError(msg)
     return int(getattr(logging, level_name))
+
+
+DATABASE_URI_FORMAT = (
+    "teradatasql://USER:PASSWORD@HOST[:PORT][/DATABASE][?logmech=LDAP&encryptdata=true]"
+)
+
+
+def database_uri_hint() -> str:
+    """One-line reminder of the DATABASE_URI format the adapters accept."""
+    return (
+        f"Expected DATABASE_URI format: {DATABASE_URI_FORMAT} "
+        "(scheme teradata:// or teradatasql://; percent-encode any special "
+        "characters in the user or password)."
+    )
 
 
 def _normalise_database_url(database_url: str) -> str:

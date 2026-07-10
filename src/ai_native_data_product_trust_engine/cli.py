@@ -12,6 +12,7 @@ from ai_native_data_product_trust_engine.adapters import (
     LoggingAdapter,
     adapter_from_environment,
     configure_logging,
+    database_uri_hint,
 )
 from ai_native_data_product_trust_engine.capabilities import capability_test_cases
 from ai_native_data_product_trust_engine.html_reports import write_html_report
@@ -306,11 +307,23 @@ def _friendly_cli_error(exc: Exception) -> str:
     message = _summarise_error(str(exc))
     if message.startswith("[ADPTrust."):
         return message
+    lowered = message.lower()
+    if "can't load plugin" in lowered and "teradatasql" in lowered:
+        # Not a DATABASE_URI problem: the teradatasql SQLAlchemy dialect is not
+        # importable in this interpreter (usually a bare `python` without the
+        # project's dependencies).
+        return (
+            "[ADPTrust.MissingDialect] The teradatasql SQLAlchemy dialect is not available "
+            "in this interpreter, so the database URL could not be opened. "
+            'Suggested action: install the teradata optional dependencies (pip install -e '
+            '".[teradata]") or run through .\\adp.ps1, which always uses this project\'s '
+            f"virtual environment. {database_uri_hint()}"
+        )
     return (
         "[ADPTrust.ValidationFailed] Validation could not complete. "
         f"{message} "
         "Suggested action: check DATABASE_URI, network/VPN access, credentials, and Teradata "
-        "service availability, then rerun validate."
+        f"service availability, then rerun validate. {database_uri_hint()}"
     )
 
 
