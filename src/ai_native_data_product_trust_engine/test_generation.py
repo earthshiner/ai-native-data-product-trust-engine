@@ -57,6 +57,9 @@ EXISTS (
 
 def generate_metadata_tests(prefix: str) -> list[TestCase]:
     sem_db = semantic_database(prefix)
+    # Base table behind the semantic locking view — the target for entity_metadata
+    # repair DML (SEM-008). semantic_database() returns the _STD_V locking view.
+    sem_std_t = sem_db.replace("_STD_V", "_STD_T")
     mem_db = memory_database(prefix)
     registry_db = data_products_registry_database()
     registry_view = data_products_registry_view()
@@ -478,23 +481,45 @@ WITH active_entities AS
     WHERE COALESCE(em.is_active, 1) = 1
       AND {deployed_module_database_filter(sem_db, 'em.database_name')}
       AND {backup_object_exclusion_sql('em.table_name')}
+),
+resolved_entities AS
+(
+    SELECT
+        ae.entity_metadata_id
+       ,ae.entity_name
+       ,ae.table_name
+       ,ae.view_name
+       ,ae.business_database_name
+       ,ae.business_database_name || '.' ||
+        CASE
+            WHEN ae.table_name LIKE '%\\_H' ESCAPE '\\'
+            THEN SUBSTR(TRIM(ae.table_name), 1, CHARACTER_LENGTH(TRIM(ae.table_name)) - 2) || '_Current'
+            ELSE TRIM(ae.table_name)
+        END AS derived_view_name
+    FROM active_entities ae
 )
 SELECT
-    entity_metadata_id
-   ,entity_name
-   ,business_database_name
-   ,view_name
+    re.entity_metadata_id
+   ,re.entity_name
+   ,re.business_database_name
+   ,re.view_name
    ,CASE
-        WHEN COALESCE(view_name, '') IN ('', 'None') THEN 'ENTITY_VIEW_NAME_MISSING'
+        WHEN COALESCE(re.view_name, '') IN ('', 'None') THEN 'ENTITY_VIEW_NAME_MISSING'
         ELSE 'ENTITY_VIEW_NAME_NOT_DEPLOYED'
     END AS issue_code
+   ,'{sem_std_t}' AS metadata_database_name
+   ,'entity_metadata' AS metadata_table_name
+   ,re.derived_view_name
+   ,CASE WHEN dv.TableName IS NOT NULL THEN 1 ELSE 0 END AS derived_view_deployed
    ,'Populate entity_metadata.view_name with the approved BUS_V view for agent access.' AS repair_hint
-FROM active_entities ae
+FROM resolved_entities re
 LEFT OUTER JOIN DBC.TablesV tv
-    ON tv.DatabaseName = ae.business_database_name
-   AND tv.TableName = ae.view_name
+    ON TRIM(tv.DatabaseName) || '.' || TRIM(tv.TableName) = TRIM(re.view_name)
    AND tv.TableKind IN ('V', 'O', 'Q')
-WHERE COALESCE(ae.view_name, '') IN ('', 'None')
+LEFT OUTER JOIN DBC.TablesV dv
+    ON TRIM(dv.DatabaseName) || '.' || TRIM(dv.TableName) = re.derived_view_name
+   AND dv.TableKind IN ('V', 'O', 'Q')
+WHERE COALESCE(re.view_name, '') IN ('', 'None')
    OR tv.TableName IS NULL
 ORDER BY entity_name, business_database_name, view_name;
 """.strip(),

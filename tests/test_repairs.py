@@ -131,6 +131,105 @@ def test_apply_safe_repairs_reports_execution_failures():
     assert applied[0].error_message == "no update permission"
 
 
+def test_entity_view_name_missing_with_deployed_view_is_safe_auto():
+    run = _run_with_sample(
+        {
+            "issue_code": "ENTITY_VIEW_NAME_MISSING",
+            "entity_metadata_id": 200001,
+            "entity_name": "AgentSession",
+            "business_database_name": "CallCentre_MEM_BUS_V",
+            "view_name": None,
+            "metadata_database_name": "CallCentre_SEM_STD_T",
+            "metadata_table_name": "entity_metadata",
+            "derived_view_name": "CallCentre_MEM_BUS_V.agent_session",
+            "derived_view_deployed": "1",  # string form must be tolerated
+        }
+    )
+
+    candidate = generate_repair_candidates(run)[0]
+
+    assert candidate.requires_approval is False
+    assert candidate.mode.value == "safe-auto"
+    assert candidate.sql == (
+        "UPDATE CallCentre_SEM_STD_T.entity_metadata\n"
+        "SET view_name = 'CallCentre_MEM_BUS_V.agent_session'\n"
+        "WHERE entity_metadata_id = 200001\n"
+        "  AND view_name IS NULL;"
+    )
+
+
+def test_entity_view_name_missing_without_deployed_view_is_proposal():
+    run = _run_with_sample(
+        {
+            "issue_code": "ENTITY_VIEW_NAME_MISSING",
+            "entity_metadata_id": 300008,
+            "entity_name": "ViewColumnType",
+            "view_name": None,
+            "metadata_database_name": "CallCentre_SEM_STD_T",
+            "metadata_table_name": "entity_metadata",
+            "derived_view_name": "CallCentre_SEM_BUS_V.view_column_type",
+            "derived_view_deployed": 0,
+        }
+    )
+
+    candidate = generate_repair_candidates(run)[0]
+
+    assert candidate.requires_approval is True
+    assert candidate.mode.value == "proposal"
+    assert candidate.sql.startswith("-- PROPOSAL (ViewColumnType)")
+    assert "WHERE entity_metadata_id = 300008" in candidate.sql
+    # A proposal must never be auto-applied.
+    adapter = StubAdapter()
+    apply_safe_repairs(adapter, [candidate])
+    assert adapter.executed_sql == []
+
+
+def test_entity_view_name_not_deployed_is_deploy_proposal():
+    run = _run_with_sample(
+        {
+            "issue_code": "ENTITY_VIEW_NAME_NOT_DEPLOYED",
+            "entity_metadata_id": 2,
+            "entity_name": "Call",
+            "view_name": "CallCentre_DOM_BUS_V.Call_Current",
+            "metadata_database_name": "CallCentre_SEM_STD_T",
+            "metadata_table_name": "entity_metadata",
+            "derived_view_name": "CallCentre_DOM_BUS_V.Call_Current",
+            "derived_view_deployed": 1,
+        }
+    )
+
+    candidate = generate_repair_candidates(run)[0]
+
+    assert candidate.requires_approval is True
+    assert candidate.mode.value == "proposal"
+    assert "CallCentre_DOM_BUS_V.Call_Current" in candidate.sql
+    assert "deploy the referenced view" in candidate.summary.lower()
+
+
+def test_entity_view_name_safe_auto_is_written_and_applied(tmp_path):
+    run = _run_with_sample(
+        {
+            "issue_code": "ENTITY_VIEW_NAME_MISSING",
+            "entity_metadata_id": 100001,
+            "entity_name": "AgentInteraction",
+            "view_name": None,
+            "metadata_database_name": "CallCentre_SEM_STD_T",
+            "metadata_table_name": "entity_metadata",
+            "derived_view_name": "CallCentre_MEM_BUS_V.agent_interaction",
+            "derived_view_deployed": 1,
+        }
+    )
+    candidates = generate_repair_candidates(run)
+
+    _markdown_path, sql_path = write_repair_reports(candidates, tmp_path / "report.json")
+    assert "UPDATE CallCentre_SEM_STD_T.entity_metadata" in sql_path.read_text(encoding="utf-8")
+
+    adapter = StubAdapter()
+    applied = apply_safe_repairs(adapter, candidates)
+    assert applied[0].applied is True
+    assert len(adapter.executed_sql) == 1
+
+
 class StubAdapter:
     def __init__(self, error=None):
         self.executed_sql = []

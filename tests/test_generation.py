@@ -165,6 +165,20 @@ def test_generate_metadata_tests_include_semantic_access_layer_contracts():
     assert entity_view_test.severity == TestSeverity.CRITICAL
     assert "ENTITY_VIEW_NAME_MISSING" in entity_view_test.sql
     assert "ENTITY_VIEW_NAME_NOT_DEPLOYED" in entity_view_test.sql
+    # entity_metadata.view_name is stored fully-qualified (db.object), so the
+    # deployment join must compare against the qualified DBC name — comparing the
+    # unqualified tv.TableName falsely flags every deployed view as NOT_DEPLOYED.
+    assert (
+        "TRIM(tv.DatabaseName) || '.' || TRIM(tv.TableName) = TRIM(re.view_name)"
+        in entity_view_test.sql
+    )
+    assert "tv.TableName = ae.view_name" not in entity_view_test.sql
+    # Evidence enrichment consumed by the repairs generator: the resolved BUS_V
+    # view, whether it is deployed, and the STD_T base table to UPDATE.
+    assert "AS derived_view_name" in entity_view_test.sql
+    assert "AS derived_view_deployed" in entity_view_test.sql
+    assert "'CallCentre_SEM_STD_T' AS metadata_database_name" in entity_view_test.sql
+    assert "'entity_metadata' AS metadata_table_name" in entity_view_test.sql
 
     # SEM-009 (Entity deleted flag metadata) was retired — see test_generation.py.
     assert not any(t.test_id == "CALLCENTRE-SEM-009" for t in tests)

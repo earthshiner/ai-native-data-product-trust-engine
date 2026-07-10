@@ -85,6 +85,9 @@ def _candidate_from_sample(test_id: str, sample_row: dict[str, object]) -> Repai
     if _is_safe_text_alias(sample_row):
         return _safe_text_alias_candidate(test_id, sample_row)
 
+    if _is_entity_view_name_repair(sample_row):
+        return _entity_view_name_candidate(test_id, sample_row)
+
     issue_code = str(sample_row.get("issue_code") or test_id)
     repair_hint = str(sample_row.get("repair_hint") or "Review the metadata contract and decide the repair.")
     summary = f"{issue_code}: {repair_hint}"
@@ -124,6 +127,122 @@ def _safe_text_alias_candidate(test_id: str, sample_row: dict[str, object]) -> R
         requires_approval=False,
         test_id=test_id,
         evidence=sample_row,
+    )
+
+
+_ENTITY_VIEW_NAME_ISSUES = frozenset(
+    {"ENTITY_VIEW_NAME_MISSING", "ENTITY_VIEW_NAME_NOT_DEPLOYED"}
+)
+
+
+def _is_entity_view_name_repair(sample_row: dict[str, object]) -> bool:
+    """True when SEM-008 evidence carries the enrichment the generator needs."""
+    return bool(
+        str(sample_row.get("issue_code") or "") in _ENTITY_VIEW_NAME_ISSUES
+        and sample_row.get("metadata_database_name")
+        and sample_row.get("metadata_table_name")
+        and sample_row.get("entity_metadata_id") is not None
+    )
+
+
+def _entity_view_name_candidate(test_id: str, sample_row: dict[str, object]) -> RepairCandidate:
+    """Repair a SEM-008 entity whose ``view_name`` is missing or points nowhere.
+
+    Only a *missing* ``view_name`` whose conventional BUS_V view is already
+    deployed is safe to auto-populate — the target is then unambiguous. Every
+    other shape (an irregularly-named approved view, a view that must be created,
+    or an already-populated name whose view is not deployed) is emitted as a
+    review proposal rather than an auto-applied statement.
+    """
+    issue_code = str(sample_row["issue_code"])
+    entity_name = str(sample_row.get("entity_name") or "entity")
+    metadata_database = _identifier(str(sample_row["metadata_database_name"]))
+    metadata_table = _identifier(str(sample_row["metadata_table_name"]))
+    entity_key = _sql_literal(sample_row["entity_metadata_id"])
+    derived_view = str(sample_row.get("derived_view_name") or "").strip()
+    derived_view_deployed = _as_int(sample_row.get("derived_view_deployed")) == 1
+
+    if issue_code == "ENTITY_VIEW_NAME_MISSING" and derived_view_deployed and derived_view:
+        sql = (
+            f"UPDATE {metadata_database}.{metadata_table}\n"
+            f"SET view_name = {_sql_string(derived_view)}\n"
+            f"WHERE entity_metadata_id = {entity_key}\n"
+            f"  AND view_name IS NULL;"
+        )
+        return RepairCandidate(
+            candidate_id=_candidate_id(test_id, issue_code, sample_row),
+            issue_code=issue_code,
+            summary=(
+                f"Populate {entity_name} entity_metadata.view_name = "
+                f"{derived_view} (deployed BUS_V view)."
+            ),
+            mode=RepairMode.SAFE_AUTO,
+            sql=sql,
+            requires_approval=False,
+            test_id=test_id,
+            evidence=sample_row,
+        )
+
+    return RepairCandidate(
+        candidate_id=_candidate_id(test_id, issue_code, sample_row),
+        issue_code=issue_code,
+        summary=_entity_view_name_proposal_summary(issue_code, entity_name, sample_row, derived_view),
+        mode=RepairMode.PROPOSAL,
+        sql=_entity_view_name_proposal_sql(
+            issue_code,
+            f"{metadata_database}.{metadata_table}",
+            entity_key,
+            entity_name,
+            sample_row,
+            derived_view,
+        ),
+        requires_approval=True,
+        test_id=test_id,
+        evidence=sample_row,
+    )
+
+
+def _entity_view_name_proposal_summary(
+    issue_code: str, entity_name: str, sample_row: dict[str, object], derived_view: str
+) -> str:
+    if issue_code == "ENTITY_VIEW_NAME_NOT_DEPLOYED":
+        view_name = str(sample_row.get("view_name") or "").strip()
+        return (
+            f"{entity_name}: entity_metadata.view_name '{view_name}' is not a deployed "
+            "BUS_V view — deploy the referenced view, then re-run validation."
+        )
+    return (
+        f"{entity_name}: entity_metadata.view_name is missing and the conventional BUS_V "
+        f"view {derived_view or '(derived from table_name)'} is not deployed — confirm the "
+        "approved view name (it may be non-conventional) or deploy it, then populate view_name."
+    )
+
+
+def _entity_view_name_proposal_sql(
+    issue_code: str,
+    metadata_target: str,
+    entity_key: str,
+    entity_name: str,
+    sample_row: dict[str, object],
+    derived_view: str,
+) -> str:
+    if issue_code == "ENTITY_VIEW_NAME_NOT_DEPLOYED":
+        view_name = str(sample_row.get("view_name") or "").strip()
+        return (
+            f"-- PROPOSAL ({entity_name}): view_name '{view_name}' references a BUS_V view "
+            "that is not deployed.\n"
+            "-- Deploy the referenced view in its BUS_V database (e.g. via SHIPS), then "
+            "re-run validation.\n"
+            "-- No metadata change is required once the view is deployed."
+        )
+    return (
+        f"-- PROPOSAL ({entity_name}): view_name is missing; the conventional view "
+        f"{derived_view or '(derived from table_name)'} is not deployed.\n"
+        "-- 1) Confirm the approved BUS_V access view for this entity (it may be "
+        "non-conventional), or create it in the BUS_V database (e.g. via SHIPS).\n"
+        "-- 2) Then populate the metadata:\n"
+        f"-- UPDATE {metadata_target} SET view_name = '<approved_BUS_V_view>' "
+        f"WHERE entity_metadata_id = {entity_key} AND view_name IS NULL;"
     )
 
 
@@ -277,6 +396,7 @@ def _candidate_id(test_id: str, issue_code: str, sample_row: dict[str, object]) 
         or sample_row.get("row_key")
         or sample_row.get("missing_object")
         or sample_row.get("missing_column")
+        or sample_row.get("entity_metadata_id")
         or "metadata"
     )
     raw = f"{test_id}-{issue_code}-{row_id}"
@@ -301,6 +421,19 @@ def _sql_string(value: str) -> str:
 
 
 def _sql_literal(value: object) -> str:
+    if isinstance(value, bool):
+        return str(int(value))
     if isinstance(value, int | float):
         return str(value)
     return _sql_string(str(value))
+
+
+def _as_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
