@@ -1,7 +1,18 @@
+import pytest
+
 from ai_native_data_product_trust_engine.view_contracts import (
     run_view_contract_validations,
     view_contract_test_cases,
 )
+
+# The four equivalent Teradata spellings of a row-level ACCESS lock — LOCK and
+# LOCKING are synonyms and the trailing MODE keyword is optional.
+_ROW_ACCESS_LOCK_SPELLINGS = [
+    "LOCK ROW FOR ACCESS",
+    "LOCKING ROW FOR ACCESS",
+    "LOCK ROW FOR ACCESS MODE",
+    "LOCKING ROW FOR ACCESS MODE",
+]
 
 
 def test_view_contract_test_cases_include_inventory_sql():
@@ -304,6 +315,122 @@ def test_run_view_contract_validations_reports_missing_view_inventory():
     assert results[0].sample_rows[0]["issue_code"] == "NO_PRODUCT_VIEWS_FOUND"
     assert results[1].status.value == "PASSED"
     assert results[1].test_case.test_id == "CALLCENTRE-STD-TABLE-VIEW-COVERAGE"
+
+
+@pytest.mark.parametrize("lock_clause", _ROW_ACCESS_LOCK_SPELLINGS)
+def test_std_view_accepts_all_row_access_lock_spellings(lock_clause):
+    # Regression: LOCK ROW FOR ACCESS (and the MODE variants) must not be
+    # mis-flagged as MISSING_LOCKING_ROW — this is what false-flagged
+    # CallCentre_SCH_STD_V.call_embedding, whose DDL uses "LOCK ROW FOR ACCESS".
+    adapter = StubAdapter(
+        view_rows=[],
+        std_view_rows=[
+            {
+                "database_name": "CallCentre_SCH_STD_V",
+                "view_name": "call_embedding",
+                "view_text": (
+                    "REPLACE VIEW CallCentre_SCH_STD_V.call_embedding "
+                    "(call_id, embedding_source) AS "
+                    f"{lock_clause} "
+                    "SELECT call_id, embedding_source "
+                    "FROM CallCentre_SCH_STD_T.call_embedding;"
+                ),
+            }
+        ],
+        bus_view_rows=[],
+        column_contract_rows=[],
+        locking_view_rows=[],
+        table_view_coverage_rows=[],
+    )
+
+    results = adapter.run_std_only()
+
+    assert [result.status.value for result in results] == ["PASSED"]
+    codes = [row.get("issue_code") for result in results for row in result.sample_rows]
+    assert "MISSING_LOCKING_ROW" not in codes
+
+
+def test_std_view_still_flags_when_no_access_lock():
+    adapter = StubAdapter(
+        view_rows=[],
+        std_view_rows=[
+            {
+                "database_name": "CallCentre_SCH_STD_V",
+                "view_name": "call_embedding",
+                "view_text": (
+                    "REPLACE VIEW CallCentre_SCH_STD_V.call_embedding "
+                    "(call_id, embedding_source) AS "
+                    "SELECT call_id, embedding_source "
+                    "FROM CallCentre_SCH_STD_T.call_embedding;"
+                ),
+            }
+        ],
+        bus_view_rows=[],
+        column_contract_rows=[],
+        locking_view_rows=[],
+        table_view_coverage_rows=[],
+    )
+
+    results = adapter.run_std_only()
+
+    codes = [row.get("issue_code") for result in results for row in result.sample_rows]
+    assert "MISSING_LOCKING_ROW" in codes
+
+
+@pytest.mark.parametrize("lock_clause", _ROW_ACCESS_LOCK_SPELLINGS)
+def test_direct_table_view_accepts_all_row_access_lock_spellings(lock_clause):
+    adapter = StubAdapter(
+        view_rows=[],
+        std_view_rows=[],
+        bus_view_rows=[],
+        locking_view_rows=[
+            {
+                "database_name": "CallCentre_DOM_STD_V",
+                "view_name": "Call_H",
+                "view_text": (
+                    "REPLACE VIEW CallCentre_DOM_STD_V.Call_H AS "
+                    f"{lock_clause} "
+                    "SELECT call_id FROM CallCentre_DOM_STD_T.Call_H;"
+                ),
+            }
+        ],
+    )
+
+    results = adapter.run_locking_only()
+
+    assert [result.status.value for result in results] == ["PASSED"]
+
+
+@pytest.mark.parametrize(
+    "lock_clause",
+    [
+        "LOCKING TABLE CallCentre_DOM_STD_T.Call_H FOR ACCESS",
+        "LOCK TABLE CallCentre_DOM_STD_T.Call_H FOR ACCESS",
+        "LOCK TABLE CallCentre_DOM_STD_T.Call_H FOR ACCESS MODE",
+        "LOCKING TABLE Call_H FOR ACCESS MODE",
+    ],
+)
+def test_direct_table_view_accepts_table_lock_spellings(lock_clause):
+    adapter = StubAdapter(
+        view_rows=[],
+        std_view_rows=[],
+        bus_view_rows=[],
+        locking_view_rows=[
+            {
+                "database_name": "CallCentre_DOM_BUS_V",
+                "view_name": "Call_Enriched",
+                "view_text": (
+                    "REPLACE VIEW CallCentre_DOM_BUS_V.Call_Enriched AS "
+                    f"{lock_clause} "
+                    "SELECT call_id FROM CallCentre_DOM_STD_T.Call_H;"
+                ),
+            }
+        ],
+    )
+
+    results = adapter.run_locking_only()
+
+    assert [result.status.value for result in results] == ["PASSED"]
 
 
 class StubAdapter:

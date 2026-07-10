@@ -595,6 +595,20 @@ ORDER BY 1
 """.strip()
 
 
+# Teradata treats LOCK and LOCKING as synonyms and the trailing MODE keyword as
+# optional, so "LOCK ROW FOR ACCESS", "LOCKING ROW FOR ACCESS",
+# "LOCK ROW FOR ACCESS MODE" and "LOCKING ROW FOR ACCESS MODE" are the same
+# row-level access lock. Match any spelling (view text is upper-cased and
+# single-spaced before this runs).
+_ROW_ACCESS_LOCK_RE = re.compile(r"\bLOCK(?:ING)?\s+ROW\s+FOR\s+ACCESS(?:\s+MODE)?\b")
+
+
+def _has_row_access_lock(normalised_view_text: str) -> bool:
+    """True when the view carries a row-level ACCESS lock in any equivalent
+    Teradata spelling (LOCK vs LOCKING, with or without the trailing MODE)."""
+    return bool(_ROW_ACCESS_LOCK_RE.search(normalised_view_text))
+
+
 def _standard_view_text_violations(
     database_name: str,
     view_name: str,
@@ -602,7 +616,7 @@ def _standard_view_text_violations(
 ) -> list[dict[str, object]]:
     normalised = " ".join(view_text.upper().split())
     violations: list[dict[str, object]] = []
-    if "LOCKING ROW FOR ACCESS" not in normalised:
+    if not _has_row_access_lock(normalised):
         violations.append(_standard_view_violation(database_name, view_name, "MISSING_LOCKING_ROW"))
     if "SELECT *" in normalised:
         violations.append(_standard_view_violation(database_name, view_name, "SELECT_STAR"))
@@ -699,7 +713,7 @@ def _view_table_locking_violations(
     direct_tables = _direct_table_references(normalised)
     if not direct_tables:
         return []
-    if "LOCKING ROW FOR ACCESS" in normalised:
+    if _has_row_access_lock(normalised):
         return []
     return [
         {
@@ -727,11 +741,16 @@ def _direct_table_references(normalised_view_text: str) -> list[str]:
 
 def _has_locking_table_for_reference(normalised_view_text: str, referenced_table: str) -> bool:
     database_name, table_name = referenced_table.split(".", maxsplit=1)
-    accepted_locks = (
-        f"LOCKING TABLE {database_name}.{table_name} FOR ACCESS",
-        f"LOCKING TABLE {table_name} FOR ACCESS",
+    # LOCK/LOCKING synonyms and the optional MODE keyword apply to table-level
+    # ACCESS locks too; accept the fully-qualified or the bare table name.
+    pattern = (
+        r"\bLOCK(?:ING)?\s+TABLE\s+(?:"
+        + re.escape(f"{database_name}.{table_name}")
+        + "|"
+        + re.escape(table_name)
+        + r")\s+FOR\s+ACCESS(?:\s+MODE)?\b"
     )
-    return any(lock in normalised_view_text for lock in accepted_locks)
+    return re.search(pattern, normalised_view_text) is not None
 
 
 def _standard_view_repair_hint(issue_code: str) -> str:
