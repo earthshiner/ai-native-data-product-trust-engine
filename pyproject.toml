@@ -20,6 +20,7 @@ dev = [
 ]
 teradata = [
   "teradatasql>=20.0",
+  "teradatasqlalchemy>=20.0",
   "SQLAlchemy>=2.0"
 ]
 mcp = [
