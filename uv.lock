@@ -22,6 +22,7 @@ mcp = [
 teradata = [
     { name = "sqlalchemy" },
     { name = "teradatasql" },
+    { name = "teradatasqlalchemy" },
 ]
 
 [package.metadata]
@@ -31,6 +32,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "sqlalchemy", marker = "extra == 'teradata'", specifier = ">=2.0" },
     { name = "teradatasql", marker = "extra == 'teradata'", specifier = ">=20.0" },
+    { name = "teradatasqlalchemy", marker = "extra == 'teradata'", specifier = ">=20.0" },
 ]
 provides-extras = ["dev", "teradata", "mcp"]
 
@@ -243,7 +245,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -1139,6 +1141,18 @@ dependencies = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/89/2f/ad23eeef90eaea7c3cff3f0a5508bc7389fe3678eaf3e3616e7dd9a87e6f/teradatasql-20.0.0.59-py3-none-any.whl", hash = "sha256:971ff04a9664f3a08fcc2431e5c1d789d63654859f1856cd7e6328c30224c0cc", size = 210821129, upload-time = "2026-05-20T13:55:13.337Z" },
+]
+
+[[package]]
+name = "teradatasqlalchemy"
+version = "20.0.0.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sqlalchemy" },
+    { name = "teradatasql" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/03/7e/810979e5f6f16929f58418cec95745c6354d8914679a2cd78fee0b11d258/teradatasqlalchemy-20.0.0.9-py3-none-any.whl", hash = "sha256:c2f5e248561ae59ecfc78b626f97a6d417ca032c0cec0d04356091a3adff04db", size = 466633, upload-time = "2025-12-16T07:32:47.528Z" },
 ]
 
 [[package]]
