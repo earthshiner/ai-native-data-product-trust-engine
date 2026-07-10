@@ -9,7 +9,36 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import parse_qs, unquote, urlparse
 
+from ai_native_data_product_trust_engine.error_formatting import (
+    concise_backend_error,
+    is_database_unavailable_error,
+)
+
 LOGGER = logging.getLogger("ai_native_data_product_trust_engine.sql")
+
+
+class DatabaseUnavailableError(BaseException):
+    """Fatal signal: the database is unreachable, so the run must stop.
+
+    Deliberately derived from ``BaseException`` rather than ``Exception`` so it
+    propagates through the broad ``except Exception`` blocks that turn a single
+    check's backend error into an ERROR result. A dead connection is not one
+    check's problem — continuing would only stamp the same failure onto every
+    remaining check — so this must not be swallowed. It is caught explicitly at
+    the CLI boundary (the only entry point that runs live validation).
+    """
+
+
+def _raise_if_database_unavailable(exc: Exception) -> None:
+    """Escalate a backend error to a fatal stop when the database is unreachable."""
+    if is_database_unavailable_error(str(exc)):
+        message = (
+            "[ADPTrust.DatabaseUnavailable] The database is unreachable, so validation "
+            "stopped instead of recording the same failure against every remaining check. "
+            "Suggested action: check database connectivity and availability, then rerun. "
+            f"Backend error: {concise_backend_error(str(exc))}"
+        )
+        raise DatabaseUnavailableError(message) from exc
 
 
 class DatabaseAdapter(Protocol):
@@ -38,6 +67,7 @@ class LoggingAdapter:
             rows = self.adapter.fetch_all(sql)
         except Exception as exc:
             _log_query_failure(sql, exc)
+            _raise_if_database_unavailable(exc)
             raise
         LOGGER.info("SQL query returned %s rows.", len(rows))
         return rows
@@ -57,6 +87,7 @@ class LoggingAdapter:
             rows = self.adapter.fetch_all_with_session_setup(sql, setup_sql, teardown_sql)
         except Exception as exc:
             _log_query_failure(sql, exc)
+            _raise_if_database_unavailable(exc)
             raise
         LOGGER.info("SQL query returned %s rows.", len(rows))
         return rows
@@ -65,8 +96,9 @@ class LoggingAdapter:
         LOGGER.info("Executing SQL statement:\n%s", sql)
         try:
             self.adapter.execute(sql)
-        except Exception:
+        except Exception as exc:
             LOGGER.exception("SQL statement failed:\n%s", sql)
+            _raise_if_database_unavailable(exc)
             raise
         LOGGER.info("SQL statement completed.")
 

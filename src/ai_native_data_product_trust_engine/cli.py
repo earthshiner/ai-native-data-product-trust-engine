@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from ai_native_data_product_trust_engine.adapters import (
+    DatabaseUnavailableError,
     LoggingAdapter,
     adapter_from_environment,
     configure_logging,
@@ -172,6 +173,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     try:
         return _main(argv)
+    except DatabaseUnavailableError as exc:
+        # Fatal: the database is unreachable. Stop with a clear message and a
+        # distinct exit code — no partial, all-ERROR report is written.
+        print(str(exc), file=sys.stderr)
+        return 3
     except Exception as exc:  # noqa: BLE001 - CLI boundary must never leak driver stacks.
         print(_friendly_cli_error(exc), file=sys.stderr)
         return 2
