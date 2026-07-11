@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 from ai_native_data_product_trust_engine.models import ExcludedCheck, TestCase
-
 
 SCANNER_IDS = {
     "CAPABILITY": {

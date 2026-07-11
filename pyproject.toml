@@ -40,6 +40,12 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# E501 (line-too-long) is not enforced: the bulk of long lines are intentional
+# single-line SQL / HTML / message string literals (generated SQL in
+# test_generation.py, query_templates.py, html_reports.py, …) where mechanical
+# wrapping hurts readability. The high-value rules — F (undefined/unused),
+# I (imports), UP (upgrades), B (bugbear), and the rest of E — stay enforced.
+ignore = ["E501"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ai_native_data_product_trust_engine"]
