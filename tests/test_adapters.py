@@ -6,7 +6,7 @@ once and reused, that ``close()`` / context-manager exit dispose it, and that
 the CLI releases the session even when the run aborts.
 """
 
-import sqlalchemy
+import pytest
 
 from ai_native_data_product_trust_engine import cli
 from ai_native_data_product_trust_engine.adapters import LoggingAdapter, SqlAlchemyAdapter
@@ -61,6 +61,9 @@ class _FakeEngine:
 
 
 def _patch_engine_factory(monkeypatch):
+    # sqlalchemy is an optional dependency (teradata extra). The SqlAlchemyAdapter
+    # tests need it; skip them where it is absent (e.g. the dev-only CI job).
+    sqlalchemy = pytest.importorskip("sqlalchemy")
     created: list[_FakeEngine] = []
 
     def _fake_create_engine(url, **kwargs):
