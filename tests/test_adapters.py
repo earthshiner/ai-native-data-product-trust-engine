@@ -75,7 +75,7 @@ def _patch_engine_factory(monkeypatch):
     return created
 
 
-def test_sqlalchemy_adapter_reuses_one_bounded_engine(monkeypatch):
+def test_sqlalchemy_adapter_reuses_one_engine(monkeypatch):
     created = _patch_engine_factory(monkeypatch)
     adapter = SqlAlchemyAdapter("teradatasql://u:p@host/db")
 
@@ -84,10 +84,27 @@ def test_sqlalchemy_adapter_reuses_one_bounded_engine(monkeypatch):
     adapter.execute("UPDATE t SET c = 1;")
 
     assert len(created) == 1  # one engine reused, not one per query
-    assert created[0].connect_calls == 3  # every call used the pooled engine
-    assert created[0].kwargs.get("pool_size") == 1
-    assert created[0].kwargs.get("max_overflow") == 0
+    assert created[0].connect_calls == 3  # every call used the reused engine
     assert created[0].kwargs.get("pool_pre_ping") is True
+    # QueuePool-only options must NOT be set — the teradatasql dialect's
+    # SingletonThreadPool rejects them (raises "Invalid argument(s) 'max_overflow'").
+    assert "pool_size" not in created[0].kwargs
+    assert "max_overflow" not in created[0].kwargs
+
+
+def test_sqlalchemy_adapter_builds_a_real_engine_with_the_teradatasql_dialect():
+    # Guard the exact failure the fake-create_engine tests missed: create_engine
+    # with the real teradatasql dialect must accept the pool options we pass
+    # (no connection is opened — this only builds the engine).
+    pytest.importorskip("sqlalchemy")
+    pytest.importorskip("teradatasqlalchemy")
+    adapter = SqlAlchemyAdapter("teradatasql://u:p@host/db")
+    try:
+        engine = adapter._engine_or_create()
+        assert engine.dialect.name == "teradatasql"
+        assert type(engine.pool).__name__ == "SingletonThreadPool"
+    finally:
+        adapter.close()
 
 
 def test_sqlalchemy_adapter_close_disposes_and_can_rebuild(monkeypatch):
