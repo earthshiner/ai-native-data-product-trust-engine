@@ -116,16 +116,22 @@ class LoggingAdapter:
 
 
 class SqlAlchemyAdapter:
-    """SQLAlchemy-backed adapter that reuses one bounded-pool engine per run.
+    """SQLAlchemy-backed adapter that reuses one engine per run.
 
     The previous implementation built a fresh engine — and therefore a fresh
     connection pool — on every query, and never disposed it. Each leaked an idle
     Teradata session until garbage collection, so a single validation run could
     hold dozens of sessions at once. On a system with a finite number of virtual
     circuits that is a fast path to Error 8024, "all virtual circuits are
-    currently in use". This version creates the engine once, caps the pool at a
-    single connection (validation runs sequentially), and releases it promptly
-    via ``close()`` or by using the adapter as a context manager.
+    currently in use". This version creates the engine once and releases it
+    promptly via ``close()`` or by using the adapter as a context manager.
+
+    The teradatasqlalchemy dialect uses a ``SingletonThreadPool`` (one connection
+    per thread, reused), so a single-threaded validation run holds exactly one
+    session for the whole run. That pool rejects the ``QueuePool``-only options
+    ``pool_size``/``max_overflow`` — passing them raises "Invalid argument(s)
+    'max_overflow'" — so we only set the pool-agnostic ``pool_pre_ping`` (replace
+    a session dropped underneath us) and ``pool_recycle``.
     """
 
     def __init__(self, database_url: str) -> None:
@@ -144,8 +150,6 @@ class SqlAlchemyAdapter:
                 raise RuntimeError(msg) from exc
             self._engine = create_engine(
                 _normalise_database_url(self.database_url),
-                pool_size=1,
-                max_overflow=0,
                 pool_pre_ping=True,
                 pool_recycle=1800,
             )
