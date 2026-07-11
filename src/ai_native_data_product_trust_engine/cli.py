@@ -20,12 +20,12 @@ from ai_native_data_product_trust_engine.query_templates import query_template_t
 from ai_native_data_product_trust_engine.relationship_health import (
     relationship_health_test_cases,
 )
-from ai_native_data_product_trust_engine.reports import write_json_report
 from ai_native_data_product_trust_engine.repairs import (
     apply_safe_repairs,
     generate_repair_candidates,
     write_repair_reports,
 )
+from ai_native_data_product_trust_engine.reports import write_json_report
 from ai_native_data_product_trust_engine.rule_config import load_rule_config
 from ai_native_data_product_trust_engine.test_generation import generate_metadata_tests
 from ai_native_data_product_trust_engine.text_references import text_reference_test_cases

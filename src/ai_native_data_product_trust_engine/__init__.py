@@ -2,8 +2,8 @@
 
 from ai_native_data_product_trust_engine.models import (
     RepairMode,
-    TestCategory,
     TestCase,
+    TestCategory,
     TestSeverity,
 )
 

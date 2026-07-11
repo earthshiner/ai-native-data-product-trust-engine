@@ -25,6 +25,8 @@ from ai_native_data_product_trust_engine.reports import (
 )
 from ai_native_data_product_trust_engine.scoring import (
     dimension_scores as calculate_dimension_scores,
+)
+from ai_native_data_product_trust_engine.scoring import (
     scorecards as calculate_scorecards,
 )
 

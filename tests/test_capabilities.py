@@ -1,9 +1,9 @@
 from ai_native_data_product_trust_engine.capabilities import (
+    SEMANTIC_SEARCH_PATTERN,
     CapabilityStatus,
     discover_fallback_embedding_capability,
     discover_native_vector_capability,
     run_capability_validations,
-    SEMANTIC_SEARCH_PATTERN,
 )
 
 

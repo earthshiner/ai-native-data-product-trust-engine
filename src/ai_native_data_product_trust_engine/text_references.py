@@ -9,10 +9,10 @@ from enum import Enum
 from ai_native_data_product_trust_engine.models import (
     ExpectedResult,
     TestCase,
+    TestCategory,
     TestResult,
     TestSeverity,
     TestStatus,
-    TestCategory,
 )
 
 
