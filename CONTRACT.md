@@ -13,7 +13,18 @@ enforced by `tests/test_contract.py` (producer) and the Browser's
 golden fixture `contract/trust_payload_example.json` (generated from the real
 serialiser — do not hand-edit).
 
-**Schema version: `1.0`** (`contract.PAYLOAD_SCHEMA_VERSION`).
+**Schema version: `2.0`** (`contract.PAYLOAD_SCHEMA_VERSION`).
+
+**2.0 change:** `started_at` / `completed_at` (`VARCHAR(40)` ISO-8601 strings)
+became `started_dts` / `completed_dts` (`TIMESTAMP(6) WITH TIME ZONE`) —
+canonical temporal names and types per the Temporal & Lifecycle Metadata
+Standard. Latest-run selection now orders on the typed column, so it is
+chronological by construction (under 1.x, lexicographic ordering silently
+mis-selected the latest run if any row carried a non-UTC offset). The JSON
+fixture carries the timestamps as canonical ISO-8601 strings (JSON has no
+timestamp type); a live `SELECT` returns typed values, which consumers already
+parse as datetimes. Consumers still bound to 1.x names can read a projection
+aliasing `started_dts AS started_at`.
 
 ## Row columns — `<prefix>_SEM_BUS_V.trust_engine_latest`
 
@@ -22,8 +33,8 @@ Source of truth: `trust_publish._PUBLISH_COLUMNS` / `trust_table_ddl()`.
 | Column | Type | Notes |
 |---|---|---|
 | `product_prefix` | VARCHAR(128) | Data product prefix, e.g. `CallCentre` |
-| `run_id` | VARCHAR(64) | Stable hash of prefix + timestamps + check count |
-| `started_at` / `completed_at` | VARCHAR(40) | ISO-8601 strings |
+| `run_id` | VARCHAR(64) | Stable hash of prefix + the canonical ISO timestamp strings + check count |
+| `started_dts` / `completed_dts` | TIMESTAMP(6) WITH TIME ZONE | Run instants; UTC persistence |
 | `trust_status` | VARCHAR(16) | `TRUSTED` \| `DEGRADED` \| `UNTRUSTED` |
 | `agent_use_allowed` | BYTEINT | 1 when status ∈ {TRUSTED, DEGRADED} |
 | `total_checks` / `passed_count` / `failed_count` / `error_count` | INTEGER | |
@@ -83,7 +94,7 @@ golden fixture carries at least one key it knows how to render.
 ## Changing the contract
 
 1. Change the serialiser / add the check.
-2. Regenerate the golden: `uv run python -c "import json; from ai_native_data_product_trust_engine.contract import contract_fixture; json.dump(contract_fixture(), open('contract/trust_payload_example.json','w',encoding='utf-8',newline='\n'), indent=2, sort_keys=True, ensure_ascii=False)"`
+2. Regenerate the golden: `uv run python -c "import json; from ai_native_data_product_trust_engine.contract import contract_fixture; fh = open('contract/trust_payload_example.json','w',encoding='utf-8',newline='\n'); json.dump(contract_fixture(), fh, indent=2, sort_keys=True, ensure_ascii=False); fh.write('\n')"`
 3. Bump `PAYLOAD_SCHEMA_VERSION` if incompatible.
 4. **Re-vendor** `contract/trust_payload_example.json` into the Browser at
    `tests/fixtures/trust_payload_example.json` and update its expected version.

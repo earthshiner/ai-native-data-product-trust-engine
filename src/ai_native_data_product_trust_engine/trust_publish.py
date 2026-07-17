@@ -15,8 +15,8 @@ _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _PUBLISH_COLUMNS = (
     "product_prefix",
     "run_id",
-    "started_at",
-    "completed_at",
+    "started_dts",
+    "completed_dts",
     "trust_status",
     "agent_use_allowed",
     "total_checks",
@@ -53,8 +53,8 @@ def trust_table_ddl(prefix: str, table_name: str | None = None) -> str:
 (
     product_prefix VARCHAR(128) CHARACTER SET LATIN NOT NULL,
     run_id VARCHAR(64) CHARACTER SET LATIN NOT NULL,
-    started_at VARCHAR(40) CHARACTER SET LATIN NOT NULL,
-    completed_at VARCHAR(40) CHARACTER SET LATIN NOT NULL,
+    started_dts TIMESTAMP(6) WITH TIME ZONE NOT NULL,
+    completed_dts TIMESTAMP(6) WITH TIME ZONE NOT NULL,
     trust_status VARCHAR(16) CHARACTER SET LATIN NOT NULL,
     agent_use_allowed BYTEINT NOT NULL,
     total_checks INTEGER NOT NULL,
@@ -70,7 +70,7 @@ def trust_table_ddl(prefix: str, table_name: str | None = None) -> str:
     failed_checks_json JSON(32000) CHARACTER SET UNICODE,
     repair_candidates_json JSON(32000) CHARACTER SET UNICODE
 )
-PRIMARY INDEX (product_prefix, completed_at);"""
+PRIMARY INDEX (product_prefix, completed_dts);"""
 
 
 def trust_latest_view_ddl(
@@ -90,8 +90,8 @@ LOCKING ROW FOR ACCESS
 SELECT
     product_prefix,
     run_id,
-    started_at,
-    completed_at,
+    started_dts,
+    completed_dts,
     trust_status,
     agent_use_allowed,
     total_checks,
@@ -109,7 +109,7 @@ SELECT
 FROM {qualified_table}
 QUALIFY ROW_NUMBER() OVER (
     PARTITION BY product_prefix
-    ORDER BY completed_at DESC, run_id DESC
+    ORDER BY completed_dts DESC, run_id DESC
 ) = 1;"""
 
 
@@ -157,8 +157,11 @@ def _publish_row(
     return {
         "product_prefix": run.prefix,
         "run_id": run_id,
-        "started_at": run.started_at,
-        "completed_at": run.completed_at,
+        # Wire values stay canonical ISO-8601 strings in the row dict (the JSON
+        # fixture has no timestamp type); the SQL layer binds them as typed
+        # TIMESTAMP WITH TIME ZONE literals.
+        "started_dts": run.started_at,
+        "completed_dts": run.completed_at,
         "trust_status": trust_status,
         "agent_use_allowed": 1 if trust_status in {"TRUSTED", "DEGRADED"} else 0,
         "total_checks": report["summary"]["total"],
@@ -236,6 +239,8 @@ def _json_text(value: object) -> str:
 
 
 def _run_id(run: ValidationRun) -> str:
+    # Hashes the canonical ISO-8601 strings, not any database rendering, so the
+    # identifier stays deterministic across wire schema changes.
     payload = f"{run.prefix}|{run.started_at}|{run.completed_at}|{len(run.results)}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
@@ -253,7 +258,35 @@ def _score_value(scores: object, key: str) -> int | None:
 def _sql_value(column_name: str, value: object | None) -> str:
     if column_name in {"failed_checks_json", "repair_candidates_json"}:
         return f"CAST({_sql_literal(value)} AS JSON)"
+    if column_name in {"started_dts", "completed_dts"}:
+        return _timestamp_literal(value)
     return _sql_literal(value)
+
+
+def _timestamp_literal(value: object | None) -> str:
+    """Render an ISO-8601 instant as a Teradata TIMESTAMP WITH TIME ZONE literal.
+
+    Accepts the canonical ``2026-01-01T00:05:00+00:00`` form (any offset) and
+    the ``Z`` suffix; the ``T`` separator becomes a space for the literal.
+    """
+    if value is None:
+        msg = (
+            "[ADPTrust.InvalidTrustTimestamp] Run timestamps are required for publishing. "
+            "Suggested action: ensure the validation run records started/completed instants."
+        )
+        raise ValueError(msg)
+    text = str(value).strip().replace("T", " ", 1)
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    if not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?[+-]\d{2}:\d{2}", text
+    ):
+        msg = (
+            f"[ADPTrust.InvalidTrustTimestamp] Not an ISO-8601 instant with offset: {value!r}. "
+            "Suggested action: publish timestamps like '2026-01-01T00:05:00+00:00'."
+        )
+        raise ValueError(msg)
+    return f"TIMESTAMP '{text}'"
 
 
 def _sql_literal(value: object | None) -> str:
