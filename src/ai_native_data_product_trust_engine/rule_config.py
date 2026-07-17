@@ -62,6 +62,10 @@ SCANNER_IDS = {
 class RuleConfig:
     disabled_test_ids: frozenset[str] = field(default_factory=frozenset)
     disabled_scanners: frozenset[str] = field(default_factory=frozenset)
+    # Two-part publish target for the trust summary row. Sets WHERE a
+    # valueless --publish-trust-table writes; publishing still requires the
+    # CLI flag, and an explicit CLI value overrides this.
+    publish_trust_table: str | None = None
 
     def filter_tests(self, tests: Iterable[TestCase]) -> list[TestCase]:
         return [test for test in tests if test.test_id.upper() not in self.disabled_test_ids]
@@ -123,8 +127,8 @@ def load_rule_config(path: Path | None) -> RuleConfig:
         )
         raise ValueError(msg) from exc
 
-    disabled_test_ids = _normalised_set(payload.get("disabled_test_ids", ()))
-    disabled_scanners = _normalised_set(payload.get("disabled_scanners", ()))
+    disabled_test_ids = _normalised_set(payload.get("disabled_test_ids"))
+    disabled_scanners = _normalised_set(payload.get("disabled_scanners"))
     unknown_scanners = disabled_scanners - set(SCANNER_IDS)
     if unknown_scanners:
         scanner_list = ", ".join(sorted(unknown_scanners))
@@ -137,7 +141,26 @@ def load_rule_config(path: Path | None) -> RuleConfig:
     return RuleConfig(
         disabled_test_ids=frozenset(disabled_test_ids),
         disabled_scanners=frozenset(disabled_scanners),
+        publish_trust_table=_publish_trust_table(payload.get("publish_trust_table")),
     )
+
+
+def _publish_trust_table(value: object) -> str | None:
+    """Validate the optional publish target: a two-part database.table name."""
+    if value is None:
+        return None
+    target = str(value).strip()
+    if not target:
+        return None
+    parts = target.split(".")
+    if len(parts) != 2 or not all(part.strip() for part in parts):
+        msg = (
+            f"[ADPTrust.InvalidRuleConfig] publish_trust_table must be a two-part "
+            f"Teradata table name (database.table), got: {target!r}. "
+            "Suggested action: set it like 'ProductPrefix_OBS_STD_T.trust_engine_run'."
+        )
+        raise ValueError(msg)
+    return target
 
 
 def _normalised_set(value: object) -> set[str]:
