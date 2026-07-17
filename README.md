@@ -131,8 +131,8 @@ CREATE MULTISET TABLE {ProductPrefix}_SEM_STD_T.trust_engine_run
 (
     product_prefix VARCHAR(128) CHARACTER SET LATIN NOT NULL,
     run_id VARCHAR(64) CHARACTER SET LATIN NOT NULL,
-    started_at VARCHAR(40) CHARACTER SET LATIN NOT NULL,
-    completed_at VARCHAR(40) CHARACTER SET LATIN NOT NULL,
+    started_dts TIMESTAMP(6) WITH TIME ZONE NOT NULL,
+    completed_dts TIMESTAMP(6) WITH TIME ZONE NOT NULL,
     trust_status VARCHAR(16) CHARACTER SET LATIN NOT NULL,
     agent_use_allowed BYTEINT NOT NULL,
     total_checks INTEGER NOT NULL,
@@ -148,17 +148,17 @@ CREATE MULTISET TABLE {ProductPrefix}_SEM_STD_T.trust_engine_run
     failed_checks_json JSON(32000) CHARACTER SET UNICODE,
     repair_candidates_json JSON(32000) CHARACTER SET UNICODE
 )
-PRIMARY INDEX (product_prefix, completed_at);
+PRIMARY INDEX (product_prefix, completed_dts);
 
-COLLECT STATISTICS COLUMN (product_prefix, completed_at)
+COLLECT STATISTICS COLUMN (product_prefix, completed_dts)
 ON {ProductPrefix}_SEM_STD_T.trust_engine_run;
 
 CREATE VIEW {ProductPrefix}_SEM_BUS_V.trust_engine_latest
 (
     product_prefix,
     run_id,
-    started_at,
-    completed_at,
+    started_dts,
+    completed_dts,
     trust_status,
     agent_use_allowed,
     total_checks,
@@ -179,8 +179,8 @@ LOCKING ROW FOR ACCESS
 SELECT
     product_prefix,
     run_id,
-    started_at,
-    completed_at,
+    started_dts,
+    completed_dts,
     trust_status,
     agent_use_allowed,
     total_checks,
@@ -198,7 +198,7 @@ SELECT
 FROM {ProductPrefix}_SEM_STD_T.trust_engine_run
 QUALIFY ROW_NUMBER() OVER (
     PARTITION BY product_prefix
-    ORDER BY completed_at DESC, run_id DESC
+    ORDER BY completed_dts DESC, run_id DESC
 ) = 1;
 ```
 

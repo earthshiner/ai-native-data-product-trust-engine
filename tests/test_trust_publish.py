@@ -35,7 +35,9 @@ def test_trust_table_ddl_defines_compact_agent_evidence_table():
     assert "agent_use_allowed BYTEINT NOT NULL" in ddl
     assert "failed_checks_json JSON(32000) CHARACTER SET UNICODE" in ddl
     assert "repair_candidates_json JSON(32000) CHARACTER SET UNICODE" in ddl
-    assert "PRIMARY INDEX (product_prefix, completed_at)" in ddl
+    assert "started_dts TIMESTAMP(6) WITH TIME ZONE NOT NULL" in ddl
+    assert "completed_dts TIMESTAMP(6) WITH TIME ZONE NOT NULL" in ddl
+    assert "PRIMARY INDEX (product_prefix, completed_dts)" in ddl
 
 
 def test_trust_latest_view_ddl_uses_bus_v_latest_row_contract():
@@ -45,7 +47,7 @@ def test_trust_latest_view_ddl_uses_bus_v_latest_row_contract():
     assert "LOCKING ROW FOR ACCESS" in ddl
     assert "FROM CallCentre_SEM_STD_T.trust_engine_run" in ddl
     assert "QUALIFY ROW_NUMBER() OVER" in ddl
-    assert "ORDER BY completed_at DESC, run_id DESC" in ddl
+    assert "ORDER BY completed_dts DESC, run_id DESC" in ddl
 
 
 def test_trust_result_insert_sql_summarises_failed_checks_and_repairs():
@@ -224,6 +226,26 @@ def test_rule_config_accepts_partial_files(tmp_path):
     assert config.publish_trust_table == "Db_OBS_STD_T.trust_engine_run"
     assert config.disabled_test_ids == frozenset()
     assert config.disabled_scanners == frozenset()
+
+
+def test_insert_binds_run_timestamps_as_typed_literals():
+    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+
+    sql = trust_result_insert_sql(run, [], "CallCentre_OBS_STD_T.trust_engine_run")
+
+    assert "started_dts, completed_dts" in sql
+    assert "TIMESTAMP '2026-06-01 10:00:00+10:00'" in sql
+    assert "TIMESTAMP '2026-06-01 10:00:01+10:00'" in sql
+
+
+def test_timestamp_literal_rejects_non_iso_values():
+    from ai_native_data_product_trust_engine.trust_publish import _timestamp_literal
+
+    assert _timestamp_literal("2026-01-01T00:05:00Z") == "TIMESTAMP '2026-01-01 00:05:00+00:00'"
+    with pytest.raises(ValueError, match="ADPTrust.InvalidTrustTimestamp"):
+        _timestamp_literal("yesterday")
+    with pytest.raises(ValueError, match="ADPTrust.InvalidTrustTimestamp"):
+        _timestamp_literal("2026-01-01 00:05:00")  # offset is mandatory
 
 
 def _run(results):

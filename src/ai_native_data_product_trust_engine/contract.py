@@ -34,7 +34,10 @@ from ai_native_data_product_trust_engine.trust_publish import _publish_row
 
 # Bump when the row columns or the failed_checks_json / repair_candidates_json
 # object shapes change incompatibly. The Browser asserts the version it supports.
-PAYLOAD_SCHEMA_VERSION = "1.0"
+# 2.0: started_at/completed_at (VARCHAR ISO-8601) became started_dts/
+# completed_dts (TIMESTAMP(6) WITH TIME ZONE) — canonical temporal names and
+# types; latest-run ordering is chronological rather than lexicographic.
+PAYLOAD_SCHEMA_VERSION = "2.0"
 
 # Deterministic timestamps — the module must not call datetime.now() so the
 # generated fixture is stable across runs (byte-for-byte golden comparison).
@@ -222,7 +225,9 @@ def example_payload() -> dict[str, object]:
 
     Returns the same dict shape a ``SELECT * FROM <sem>.trust_engine_latest``
     yields: the columns in :data:`trust_publish._PUBLISH_COLUMNS`, with the two
-    ``*_json`` columns as JSON strings.
+    ``*_json`` columns as JSON strings. The ``*_dts`` timestamps are typed
+    columns in the database; the fixture carries them as their canonical
+    ISO-8601 string forms because JSON has no timestamp type.
     """
     run = ValidationRun(
         prefix="CallCentre",
