@@ -99,7 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
                 const="",
                 help=(
                     "Publish a compact trust summary row for agent reads. Optional value is a "
-                    "two-part Teradata table name; defaults to <prefix>_SEM_STD_T.trust_engine_run."
+                    "two-part Teradata table name; falls back to the rules-config "
+                    "publish_trust_table, then <prefix>_SEM_STD_T.trust_engine_run."
                 ),
             )
             subparser.add_argument(
@@ -254,7 +255,14 @@ def _main(argv: list[str] | None = None) -> int:
                 write_html_report(run, args.html_output, repair_candidates)
                 print(f"HTML report: {args.html_output}")
             if args.publish_trust_table is not None:
-                trust_table = args.publish_trust_table or default_trust_table(args.prefix)
+                # Target precedence: explicit CLI value, then the rules-config
+                # publish_trust_table, then the engine default. The CLI flag
+                # remains the publish trigger either way.
+                trust_table = (
+                    args.publish_trust_table
+                    or rule_config.publish_trust_table
+                    or default_trust_table(args.prefix)
+                )
                 published_table = publish_trust_result(adapter, run, repair_candidates, trust_table)
                 print(f"Trust summary published: {published_table}")
             print(

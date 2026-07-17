@@ -208,18 +208,24 @@ Then publish after scheduled validation:
 python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --output reports\productprefix-validation.json --publish-trust-table
 ```
 
-Passing `--publish-trust-table` without a value writes to
-`{prefix}_SEM_STD_T.trust_engine_run`. You can pass a two-part table name to override it. Agents
-should read `{prefix}_SEM_BUS_V.trust_engine_latest` and treat `agent_use_allowed = 0` or
-`trust_status = 'UNTRUSTED'` as a stop signal before generating SQL over the product.
+The publish target resolves in precedence order: an explicit two-part table name passed to
+`--publish-trust-table`, then the rules-config `publish_trust_table` key, then the default
+`{prefix}_SEM_STD_T.trust_engine_run`. The flag itself remains the publish trigger — a config
+key alone never publishes. Products that home their validation evidence in the Observability
+module (per the AI-Native validation-results direction) pin the target in their rules config
+so every scheduled run lands in the right table. Agents should read the product's registered
+trust view (by default `{prefix}_SEM_BUS_V.trust_engine_latest`) and treat
+`agent_use_allowed = 0` or `trust_status = 'UNTRUSTED'` as a stop signal before generating SQL
+over the product.
 
-Optional rule configuration can disable specific generated tests or scanner families without
-changing code:
+Optional rule configuration can disable specific generated tests or scanner families, and pin
+the publish target, without changing code (all keys optional):
 
 ```json
 {
   "disabled_test_ids": ["PRODUCTPREFIX-SEM-008"],
-  "disabled_scanners": ["VIEW", "TEXT"]
+  "disabled_scanners": ["VIEW", "TEXT"],
+  "publish_trust_table": "ProductPrefix_OBS_STD_T.trust_engine_run"
 }
 ```
 

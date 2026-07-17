@@ -131,6 +131,101 @@ def test_trust_publish_rejects_unqualified_or_unsafe_table_names():
         trust_result_insert_sql(run, [], "trust_engine_run")
 
 
+def _patch_validate_pipeline(monkeypatch, adapter, run):
+    monkeypatch.setattr(
+        "ai_native_data_product_trust_engine.cli.adapter_from_environment",
+        lambda database_url=None: adapter,
+    )
+    monkeypatch.setattr(
+        "ai_native_data_product_trust_engine.cli.generate_metadata_tests",
+        lambda prefix: [],
+    )
+    monkeypatch.setattr(
+        "ai_native_data_product_trust_engine.cli.run_validation",
+        lambda prefix, adapter, tests, **kwargs: run,
+    )
+    monkeypatch.setattr(
+        "ai_native_data_product_trust_engine.cli.write_json_report",
+        lambda run, output_path: None,
+    )
+
+
+def test_rule_config_publish_target_used_when_flag_has_no_value(monkeypatch, capsys, tmp_path):
+    adapter = _RecordingValidationAdapter()
+    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+    _patch_validate_pipeline(monkeypatch, adapter, run)
+    rules = tmp_path / "rules.json"
+    rules.write_text(
+        '{"publish_trust_table": "CallCentre_OBS_STD_T.trust_engine_run"}',
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "validate",
+            "--prefix",
+            "CallCentre",
+            "--rules-config",
+            str(rules),
+            "--publish-trust-table",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Trust summary published: CallCentre_OBS_STD_T.trust_engine_run" in captured.out
+    assert "INSERT INTO CallCentre_OBS_STD_T.trust_engine_run" in adapter.sql[0]
+
+
+def test_explicit_cli_publish_target_overrides_rule_config(monkeypatch, capsys, tmp_path):
+    adapter = _RecordingValidationAdapter()
+    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+    _patch_validate_pipeline(monkeypatch, adapter, run)
+    rules = tmp_path / "rules.json"
+    rules.write_text(
+        '{"publish_trust_table": "CallCentre_OBS_STD_T.trust_engine_run"}',
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "validate",
+            "--prefix",
+            "CallCentre",
+            "--rules-config",
+            str(rules),
+            "--publish-trust-table",
+            "CallCentre_ALT_STD_T.trust_engine_run",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Trust summary published: CallCentre_ALT_STD_T.trust_engine_run" in captured.out
+
+
+def test_rule_config_rejects_malformed_publish_target(tmp_path):
+    from ai_native_data_product_trust_engine.rule_config import load_rule_config
+
+    rules = tmp_path / "rules.json"
+    rules.write_text('{"publish_trust_table": "trust_engine_run"}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="publish_trust_table must be a two-part"):
+        load_rule_config(rules)
+
+
+def test_rule_config_accepts_partial_files(tmp_path):
+    from ai_native_data_product_trust_engine.rule_config import load_rule_config
+
+    rules = tmp_path / "rules.json"
+    rules.write_text('{"publish_trust_table": "Db_OBS_STD_T.trust_engine_run"}', encoding="utf-8")
+
+    config = load_rule_config(rules)
+    assert config.publish_trust_table == "Db_OBS_STD_T.trust_engine_run"
+    assert config.disabled_test_ids == frozenset()
+    assert config.disabled_scanners == frozenset()
+
+
 def _run(results):
     return ValidationRun(
         prefix="CallCentre",
