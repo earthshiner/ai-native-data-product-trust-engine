@@ -29,10 +29,6 @@ from ai_native_data_product_trust_engine.reports import write_json_report
 from ai_native_data_product_trust_engine.rule_config import load_rule_config
 from ai_native_data_product_trust_engine.test_generation import generate_metadata_tests
 from ai_native_data_product_trust_engine.text_references import text_reference_test_cases
-from ai_native_data_product_trust_engine.trust_area_map import (
-    default_trust_area_table,
-    publish_trust_area_map,
-)
 from ai_native_data_product_trust_engine.trust_publish import (
     default_trust_table,
     publish_trust_result,
@@ -108,13 +104,13 @@ def build_parser() -> argparse.ArgumentParser:
                 ),
             )
             subparser.add_argument(
-                "--publish-trust-area-map",
+                "--publish-validation",
                 nargs="?",
                 const="",
                 help=(
-                    "Publish the per-area trust map (the trust heatmap) the Data Product "
-                    "Browser renders, replacing the previous map. Optional value is a "
-                    "two-part Teradata table name; defaults to <prefix>_OBS_STD_T.trust_area_map."
+                    "Append the run to the standard validation_run and its per-area trust "
+                    "map to validation_area (wire schema 2.1). Optional value is the "
+                    "database holding both tables; defaults to <prefix>_OBS_STD_T."
                 ),
             )
             subparser.add_argument(
@@ -279,13 +275,18 @@ def _main(argv: list[str] | None = None) -> int:
                 )
                 published_table = publish_trust_result(adapter, run, repair_candidates, trust_table)
                 print(f"Trust summary published: {published_table}")
-            if getattr(args, "publish_trust_area_map", None) is not None:
-                area_table, areas = publish_trust_area_map(
-                    adapter,
-                    run,
-                    args.publish_trust_area_map or default_trust_area_table(args.prefix),
+            if getattr(args, "publish_validation", None) is not None:
+                from ai_native_data_product_trust_engine.validation_publish import (
+                    publish_validation,
                 )
-                print(f"Trust area map published: {area_table} ({len(areas)} areas)")
+
+                database, areas = publish_validation(
+                    adapter, run, repair_candidates, args.publish_validation or None
+                )
+                print(
+                    f"Validation published: {database}.validation_run and "
+                    f"{len(areas)} validation_area rows"
+                )
             print(
                 f"Validation complete: {run.passed_count} passed, "
                 f"{run.failed_count} failed, {run.error_count} errors. "
