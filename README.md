@@ -213,10 +213,73 @@ The publish target resolves in precedence order: an explicit two-part table name
 `{prefix}_SEM_STD_T.trust_engine_run`. The flag itself remains the publish trigger — a config
 key alone never publishes. Products that home their validation evidence in the Observability
 module (per the AI-Native validation-results direction) pin the target in their rules config
-so every scheduled run lands in the right table. Agents should read the product's registered
-trust view (by default `{prefix}_SEM_BUS_V.trust_engine_latest`) and treat
-`agent_use_allowed = 0` or `trust_status = 'UNTRUSTED'` as a stop signal before generating SQL
-over the product.
+so every scheduled run lands in the right table. The run row is an advisory summary, not a
+gate: agents read the per-area trust map below for the parts of the product they are about to
+use, and disclose the confidence of each.
+
+### Per-area trust map (trust heatmap)
+
+`--publish-trust-area-map` resolves the same run into one row per area, which the Data Product
+Browser renders as the trust heatmap from `{prefix}_OBS_ACL_V.trust_area_map`. Each check
+belongs to one area by its check family: Semantic (catalogue, discovery, free text),
+Observability (operational evidence, lineage endpoints), Memory (Query_Cookbook), Domain
+(relationship health, temporal contracts), the `physical-design` and `view-contracts`
+patterns, and the `capability-claims` capability. Every module `data_product_map` registers as
+deployed gets a row even when no check covers it, so an unvalidated module reads as
+`no-evidence` rather than sound.
+
+Status (`pass`, `fail`, `partial`, `not-validated`, `no-evidence`) and confidence (`strong`,
+`partial`, `weak`, `unknown`) follow the AI-Native validation pattern. Coverage is checks ran
+over checks expected, and checks disabled by rule configuration count as expected but not
+run. Rows below `strong` carry the failed or missing checks as `gaps` and the first repair
+strategy as `recommendation`. Publishing replaces the map in one request; run history stays in
+`trust_engine_run`.
+
+```sql
+CREATE MULTISET TABLE {ProductPrefix}_OBS_STD_T.trust_area_map
+(
+    trust_area_id INTEGER NOT NULL GENERATED ALWAYS AS IDENTITY
+        (START WITH 1 INCREMENT BY 1 NO CYCLE),
+    scope_type VARCHAR(20) CHARACTER SET LATIN NOT CASESPECIFIC NOT NULL,
+    scope_name VARCHAR(100) CHARACTER SET LATIN NOT CASESPECIFIC NOT NULL,
+    coverage DECIMAL(5,4),
+    status VARCHAR(20) CHARACTER SET LATIN NOT CASESPECIFIC,
+    confidence VARCHAR(20) CHARACTER SET LATIN NOT CASESPECIFIC,
+    gaps VARCHAR(1000) CHARACTER SET LATIN NOT CASESPECIFIC,
+    recommendation VARCHAR(1000) CHARACTER SET LATIN NOT CASESPECIFIC,
+    measured_dts TIMESTAMP(6) WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP(6)
+)
+PRIMARY INDEX (trust_area_id);
+
+REPLACE VIEW {ProductPrefix}_OBS_STD_V.trust_area_map
+(
+    trust_area_id, scope_type, scope_name, coverage, status, confidence,
+    gaps, recommendation, measured_dts
+)
+AS
+LOCKING ROW FOR ACCESS
+SELECT
+    trust_area_id, scope_type, scope_name, coverage, status, confidence,
+    gaps, recommendation, measured_dts
+FROM {ProductPrefix}_OBS_STD_T.trust_area_map;
+
+REPLACE VIEW {ProductPrefix}_OBS_ACL_V.trust_area_map
+(
+    scope_type, scope_name, coverage, status, confidence, gaps, recommendation
+)
+AS
+SELECT
+    scope_type, scope_name, coverage, status, confidence, gaps, recommendation
+FROM {ProductPrefix}_OBS_STD_V.trust_area_map;
+```
+
+The Browser reads `trust_area_map` from the observability view database the product's registry
+row names, so create the view in that database. The shape matches the ANDP example in
+`TaxpayerCompliance_OBS_STD_T.trust_area_map`.
+
+```powershell
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --output reports\productprefix-validation.json --publish-trust-table --publish-trust-area-map
+```
 
 Optional rule configuration can disable specific generated tests or scanner families, and pin
 the publish target, without changing code (all keys optional):

@@ -29,6 +29,10 @@ from ai_native_data_product_trust_engine.reports import write_json_report
 from ai_native_data_product_trust_engine.rule_config import load_rule_config
 from ai_native_data_product_trust_engine.test_generation import generate_metadata_tests
 from ai_native_data_product_trust_engine.text_references import text_reference_test_cases
+from ai_native_data_product_trust_engine.trust_area_map import (
+    default_trust_area_table,
+    publish_trust_area_map,
+)
 from ai_native_data_product_trust_engine.trust_publish import (
     default_trust_table,
     publish_trust_result,
@@ -101,6 +105,16 @@ def build_parser() -> argparse.ArgumentParser:
                     "Publish a compact trust summary row for agent reads. Optional value is a "
                     "two-part Teradata table name; falls back to the rules-config "
                     "publish_trust_table, then <prefix>_SEM_STD_T.trust_engine_run."
+                ),
+            )
+            subparser.add_argument(
+                "--publish-trust-area-map",
+                nargs="?",
+                const="",
+                help=(
+                    "Publish the per-area trust map (the trust heatmap) the Data Product "
+                    "Browser renders, replacing the previous map. Optional value is a "
+                    "two-part Teradata table name; defaults to <prefix>_OBS_STD_T.trust_area_map."
                 ),
             )
             subparser.add_argument(
@@ -265,6 +279,13 @@ def _main(argv: list[str] | None = None) -> int:
                 )
                 published_table = publish_trust_result(adapter, run, repair_candidates, trust_table)
                 print(f"Trust summary published: {published_table}")
+            if getattr(args, "publish_trust_area_map", None) is not None:
+                area_table, areas = publish_trust_area_map(
+                    adapter,
+                    run,
+                    args.publish_trust_area_map or default_trust_area_table(args.prefix),
+                )
+                print(f"Trust area map published: {area_table} ({len(areas)} areas)")
             print(
                 f"Validation complete: {run.passed_count} passed, "
                 f"{run.failed_count} failed, {run.error_count} errors. "
