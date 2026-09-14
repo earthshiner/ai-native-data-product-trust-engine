@@ -44,11 +44,16 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-OPS-001",
         "CALLCENTRE-OPS-002",
         "CALLCENTRE-OPS-003",
+        "CALLCENTRE-OPS-004",
+        "CALLCENTRE-OPS-005",
     ]
     assert all(
         "CallCentre" in test.sql
         for test in tests
-        if test.test_id != "CALLCENTRE-DISCOVERY-001"
+        # DISCOVERY-001 and OPS-005 inspect shared, estate-wide catalogues
+        # (the central registry and the graph-explorer catalogue respectively),
+        # not this product's own schema, so their SQL carries no product prefix.
+        if test.test_id not in ("CALLCENTRE-DISCOVERY-001", "CALLCENTRE-OPS-005")
     )
     # Index shifted by one after SEM-009 was retired (now at 13, was 14).
     assert tests[13].expected == ExpectedResult.NON_EMPTY
@@ -314,6 +319,38 @@ def test_generate_metadata_tests_includes_operational_readiness_contracts():
     assert "change_event/data_quality_metric/data_lineage/lineage_run" in (
         objects_test.inspection_scope
     )
+
+
+def test_generate_metadata_tests_includes_graph_lineage_facet_contracts():
+    tests = generate_metadata_tests("CallCentre")
+    advertised_test = next(test for test in tests if test.test_id == "CALLCENTRE-OPS-004")
+    catalogue_test = next(test for test in tests if test.test_id == "CALLCENTRE-OPS-005")
+
+    # OPS-004 is product-scoped: does *this* product's column-grain lineage data
+    # get advertised anywhere in the shared graph-explorer catalogue.
+    assert advertised_test.category == TestCategory.OPERATIONAL
+    assert advertised_test.severity == TestSeverity.WARNING
+    assert "CallCentre_OBS_STD_V.data_lineage" in advertised_test.sql
+    assert "COLUMN_LINEAGE_NOT_ADVERTISED" in advertised_test.sql
+    assert "Graphs_CAT_STD_0_T.graph_relationship" in advertised_test.sql
+    assert "DERIVES_COLUMN" in advertised_test.sql
+    assert advertised_test.precondition_sql is not None
+    assert "GRAPH_LINEAGE_PREREQUISITES_MISSING" in advertised_test.precondition_sql
+    assert "DBC.TablesV" in advertised_test.precondition_sql
+
+    # OPS-005 inspects the shared catalogue's internal consistency, independent of
+    # any one product, so it carries no product prefix in its main SQL.
+    assert catalogue_test.category == TestCategory.OPERATIONAL
+    assert catalogue_test.severity == TestSeverity.WARNING
+    assert "CallCentre" not in catalogue_test.sql
+    assert "Graphs_CAT_STD_0_T.graph_relationship" in catalogue_test.sql
+    assert "Graphs_CAT_STD_0_T.graph_role" in catalogue_test.sql
+    assert "DERIVES_COLUMN_WITHOUT_COLUMN_ROLE" in catalogue_test.sql
+    assert "COLUMN_ROLE_WITHOUT_DERIVES_COLUMN" in catalogue_test.sql
+    assert "FULL OUTER JOIN" in catalogue_test.sql
+    assert catalogue_test.precondition_sql is not None
+    assert "GRAPH_CATALOGUE_MISSING" in catalogue_test.precondition_sql
+    assert "not scoped to this product alone" in catalogue_test.inspection_scope
 
 
 def test_rule_config_filters_disabled_test_ids_and_scanners(monkeypatch):
