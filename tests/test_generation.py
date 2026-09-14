@@ -46,6 +46,7 @@ def test_generate_metadata_tests_includes_core_contracts():
         "CALLCENTRE-OPS-003",
         "CALLCENTRE-OPS-004",
         "CALLCENTRE-OPS-005",
+        "CALLCENTRE-OPS-006",
     ]
     assert all(
         "CallCentre" in test.sql
@@ -325,14 +326,19 @@ def test_generate_metadata_tests_includes_graph_lineage_facet_contracts():
     tests = generate_metadata_tests("CallCentre")
     advertised_test = next(test for test in tests if test.test_id == "CALLCENTRE-OPS-004")
     catalogue_test = next(test for test in tests if test.test_id == "CALLCENTRE-OPS-005")
+    graph_key_test = next(test for test in tests if test.test_id == "CALLCENTRE-OPS-006")
 
-    # OPS-004 is product-scoped: does *this* product's column-grain lineage data
-    # get advertised anywhere in the shared graph-explorer catalogue.
+    # OPS-004 is scoped to *this* product's own registered graph_key
+    # (data_product_map.graph_key, Teradata/ai-native-data-products#65), not
+    # to whether derives_column appears anywhere in the shared estate.
     assert advertised_test.category == TestCategory.OPERATIONAL
     assert advertised_test.severity == TestSeverity.WARNING
     assert "CallCentre_OBS_STD_V.data_lineage" in advertised_test.sql
+    assert "CallCentre_SEM_STD_V.data_product_map" in advertised_test.sql
+    assert "product_graph AS" in advertised_test.sql
     assert "COLUMN_LINEAGE_NOT_ADVERTISED" in advertised_test.sql
     assert "Graphs_CAT_STD_0_T.graph_relationship" in advertised_test.sql
+    assert "ON gr.graph_key = pg.graph_key" in advertised_test.sql
     assert "DERIVES_COLUMN" in advertised_test.sql
     assert advertised_test.precondition_sql is not None
     assert "GRAPH_LINEAGE_PREREQUISITES_MISSING" in advertised_test.precondition_sql
@@ -351,6 +357,19 @@ def test_generate_metadata_tests_includes_graph_lineage_facet_contracts():
     assert catalogue_test.precondition_sql is not None
     assert "GRAPH_CATALOGUE_MISSING" in catalogue_test.precondition_sql
     assert "not scoped to this product alone" in catalogue_test.inspection_scope
+
+    # OPS-006 checks the write-back from #65 itself: a graph_key recorded on this
+    # product's data_product_map row should resolve to an enabled registration.
+    assert graph_key_test.category == TestCategory.OPERATIONAL
+    assert graph_key_test.severity == TestSeverity.WARNING
+    assert "CallCentre_SEM_STD_V.data_product_map" in graph_key_test.sql
+    assert "GRAPH_KEY_NOT_REGISTERED" in graph_key_test.sql
+    assert "dpm.graph_key IS NOT NULL" in graph_key_test.sql
+    assert "Graphs_CAT_STD_0_T.graph_registry" in graph_key_test.sql
+    assert "gr.graph_key = dpm.graph_key" in graph_key_test.sql
+    assert "COALESCE(gr.is_enabled, 1) = 1" in graph_key_test.sql
+    assert graph_key_test.precondition_sql is not None
+    assert "GRAPH_CATALOGUE_MISSING" in graph_key_test.precondition_sql
 
 
 def test_rule_config_filters_disabled_test_ids_and_scanners(monkeypatch):

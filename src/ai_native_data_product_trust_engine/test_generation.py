@@ -1434,15 +1434,24 @@ OR NOT EXISTS (
 );
 """.strip(),
             sql=f"""
+WITH product_graph AS
+(
+    SELECT graph_key
+    FROM {sem_db}.data_product_map
+    WHERE UPPER(TRIM(module_name)) = 'OBSERVABILITY'
+      AND COALESCE(is_active, 1) = 1
+      AND graph_key IS NOT NULL
+)
 SELECT
     '{observability_view_database(prefix)}' AS database_name
    ,'data_lineage' AS object_name
    ,'COLUMN_LINEAGE_NOT_ADVERTISED' AS issue_code
-   ,'data_lineage carries populated source_column/target_column rows, but no graph in the '
-        || 'shared Graphs_CAT_STD_0_T catalogue registers the derives_column relationship.'
+   ,'data_lineage carries populated source_column/target_column rows, but this product''s '
+        || 'registered graph_key (data_product_map.graph_key) does not advertise the '
+        || 'derives_column relationship in the shared Graphs_CAT_STD_0_T catalogue.'
         AS issue_detail
-   ,'Enable the Observability column-lineage facet end to end: register this product''s '
-        || 'graph_key, COLUMN role and derives_column relationship in Graphs_CAT_STD_0_T, so '
+   ,'Register a graph_key in data_product_map if none is set, then register the COLUMN role '
+        || 'and derives_column relationship for that graph_key in Graphs_CAT_STD_0_T, so '
         || 'ColumnGrainLineageTraversal is discoverable without querying data_lineage directly.'
         AS repair_hint
 FROM {observability_view_database(prefix)}.data_lineage dl
@@ -1451,25 +1460,31 @@ WHERE dl.is_active = 1
   AND dl.target_column IS NOT NULL
   AND NOT EXISTS (
       SELECT 1
-      FROM Graphs_CAT_STD_0_T.graph_relationship gr
+      FROM product_graph pg
+      INNER JOIN Graphs_CAT_STD_0_T.graph_relationship gr
+          ON gr.graph_key = pg.graph_key
       WHERE UPPER(TRIM(gr.relationship)) = 'DERIVES_COLUMN'
   )
 QUALIFY ROW_NUMBER() OVER (ORDER BY dl.lineage_id) = 1;
 """.strip(),
             expected_result=(
-                "Returns zero rows: either data_lineage has no column-grain rows, or the shared "
-                "graph-explorer catalogue registers derives_column somewhere in the estate. "
+                "Returns zero rows: either data_lineage has no column-grain rows, or this "
+                "product's own registered graph_key (data_product_map.graph_key) advertises "
+                "derives_column in the shared catalogue. Scoped to this product's graph_key "
+                "specifically (Teradata/ai-native-data-products#65), not the estate at large. "
                 "Environments without the graph-explorer platform provisioned should disable "
-                "this check (and OPS-005) in the product's rules config instead of leaving it "
-                "permanently failed."
+                "this check (and OPS-005/OPS-006) in the product's rules config instead of "
+                "leaving it permanently failed."
             ),
             repair_strategy=(
-                "Register this product's graph_key, COLUMN role and derives_column relationship "
-                "in Graphs_CAT_STD_0_T so the column-lineage facet is catalogue-discoverable."
+                "Register this product's graph_key in data_product_map, and register the "
+                "COLUMN role and derives_column relationship for that graph_key in "
+                "Graphs_CAT_STD_0_T, so the column-lineage facet is catalogue-discoverable."
             ),
             inspection_scope=(
                 f"{observability_view_database(prefix)}.data_lineage source_column/target_column "
-                "against the shared Graphs_CAT_STD_0_T.graph_relationship vocabulary"
+                f"against {sem_db}.data_product_map.graph_key and the shared "
+                "Graphs_CAT_STD_0_T.graph_relationship vocabulary"
             ),
         ),
         TestCase(
@@ -1541,6 +1556,63 @@ ORDER BY 1;
             inspection_scope=(
                 "Shared Graphs_CAT_STD_0_T.graph_relationship and .graph_role, across every "
                 "registered graph_key in the estate (not scoped to this product alone)"
+            ),
+        ),
+        TestCase(
+            test_id=f"{prefix.upper()}-OPS-006",
+            name="data_product_map.graph_key resolves to an enabled Graph Explorer registration",
+            category=TestCategory.OPERATIONAL,
+            severity=TestSeverity.WARNING,
+            precondition_sql="""
+SELECT
+    'Graphs_CAT_STD_0_T' AS database_name
+   ,'graph_registry' AS object_name
+   ,'GRAPH_CATALOGUE_MISSING' AS issue_code
+   ,'The shared Graphs_CAT_STD_0_T catalogue is required before graph_key resolution can be '
+        || 'checked.' AS issue_detail
+   ,'Deploy the graph-explorer platform''s shared catalogue, or clear graph_key in '
+        || 'data_product_map and disable this check if the graph-lineage facet is not '
+        || 'adopted anywhere in the estate.' AS repair_hint
+WHERE NOT EXISTS (
+    SELECT 1 FROM DBC.TablesV tv
+    WHERE tv.DatabaseName = 'Graphs_CAT_STD_0_T'
+      AND tv.TableName = 'graph_registry'
+);
+""".strip(),
+            sql=f"""
+SELECT
+    dpm.graph_key
+   ,'GRAPH_KEY_NOT_REGISTERED' AS issue_code
+   ,'data_product_map.graph_key is set on this product''s OBSERVABILITY row, but no '
+        || 'enabled row for it exists in the shared Graphs_CAT_STD_0_T.graph_registry '
+        || 'catalogue (Teradata/ai-native-data-products#65: the write-back that keeps these '
+        || 'in step may not have run, or the graph was retired without clearing graph_key).'
+        AS issue_detail
+   ,'Re-run the Observability graph-lineage catalogue seed for this graph_key, or clear '
+        || 'data_product_map.graph_key if the graph-lineage facet was retired.' AS repair_hint
+FROM {sem_db}.data_product_map dpm
+WHERE UPPER(TRIM(dpm.module_name)) = 'OBSERVABILITY'
+  AND COALESCE(dpm.is_active, 1) = 1
+  AND dpm.graph_key IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM Graphs_CAT_STD_0_T.graph_registry gr
+      WHERE gr.graph_key = dpm.graph_key
+        AND COALESCE(gr.is_enabled, 1) = 1
+  );
+""".strip(),
+            expected_result=(
+                "Returns zero rows: either this product has no graph_key registered, or its "
+                "graph_key resolves to an enabled row in the shared graph-explorer registry."
+            ),
+            repair_strategy=(
+                "Re-run the Observability graph-lineage catalogue seed for this product's "
+                "graph_key, keeping data_product_map.graph_key and Graphs_CAT_STD_0_T.graph_registry "
+                "in step, or clear graph_key if the facet was retired."
+            ),
+            inspection_scope=(
+                f"{sem_db}.data_product_map.graph_key against the shared "
+                "Graphs_CAT_STD_0_T.graph_registry"
             ),
         ),
     ]
