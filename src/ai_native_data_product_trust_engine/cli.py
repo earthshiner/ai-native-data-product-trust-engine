@@ -30,8 +30,11 @@ from ai_native_data_product_trust_engine.rule_config import load_rule_config
 from ai_native_data_product_trust_engine.test_generation import generate_metadata_tests
 from ai_native_data_product_trust_engine.text_references import text_reference_test_cases
 from ai_native_data_product_trust_engine.trust_publish import (
+    declared_modules,
     default_trust_table,
+    default_validation_database,
     publish_trust_result,
+    publish_validation_result,
 )
 from ai_native_data_product_trust_engine.validators import run_validation
 from ai_native_data_product_trust_engine.view_contracts import view_contract_test_cases
@@ -101,6 +104,17 @@ def build_parser() -> argparse.ArgumentParser:
                     "Publish a compact trust summary row for agent reads. Optional value is a "
                     "two-part Teradata table name; falls back to the rules-config "
                     "publish_trust_table, then <prefix>_SEM_STD_T.trust_engine_run."
+                ),
+            )
+            subparser.add_argument(
+                "--publish-validation",
+                nargs="?",
+                const="",
+                help=(
+                    "Publish the standard validation results (wire schema 2.1): one "
+                    "validation_run row plus the per-area trust map in validation_area. "
+                    "Optional value is the Observability database; falls back to the "
+                    "rules-config publish_validation_database, then <prefix>_OBS_STD_T."
                 ),
             )
             subparser.add_argument(
@@ -265,6 +279,23 @@ def _main(argv: list[str] | None = None) -> int:
                 )
                 published_table = publish_trust_result(adapter, run, repair_candidates, trust_table)
                 print(f"Trust summary published: {published_table}")
+            if args.publish_validation is not None:
+                validation_db = (
+                    args.publish_validation
+                    or rule_config.publish_validation_database
+                    or default_validation_database(args.prefix)
+                )
+                published_db, area_count = publish_validation_result(
+                    adapter,
+                    run,
+                    repair_candidates,
+                    validation_db,
+                    declared_modules(adapter, args.prefix),
+                )
+                print(
+                    f"Validation results published: {published_db} "
+                    f"(validation_run + {area_count} validation_area rows)"
+                )
             print(
                 f"Validation complete: {run.passed_count} passed, "
                 f"{run.failed_count} failed, {run.error_count} errors. "

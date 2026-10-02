@@ -291,3 +291,58 @@ class _RecordingAdapter:
 class _RecordingValidationAdapter(_RecordingAdapter):
     def fetch_all(self, sql):
         return []
+
+
+def test_validate_cli_publishes_validation_run_and_trust_map(monkeypatch, capsys):
+    adapter = _RecordingValidationAdapter()
+    run = _run(
+        [
+            _result("CALLCENTRE-SEM-001", TestStatus.PASSED),
+            _result("CALLCENTRE-OPS-001", TestStatus.FAILED),
+        ]
+    )
+    _patch_validate_pipeline(monkeypatch, adapter, run)
+
+    main(["validate", "--prefix", "CallCentre", "--publish-validation"])
+
+    out = capsys.readouterr().out
+    assert "Validation results published: CallCentre_OBS_STD_T (validation_run + 2 validation_area rows)" in out
+    assert adapter.sql[0].startswith("INSERT INTO CallCentre_OBS_STD_T.validation_run")
+    assert sum("validation_area" in s for s in adapter.sql) == 2
+    assert not any("trust_engine_run" in s for s in adapter.sql)
+
+
+def test_validation_publish_target_precedence(monkeypatch, capsys, tmp_path):
+    adapter = _RecordingValidationAdapter()
+    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+    _patch_validate_pipeline(monkeypatch, adapter, run)
+    rules = tmp_path / "rules.json"
+    rules.write_text('{"publish_validation_database": "CallCentre_OBS_CFG_T"}', encoding="utf-8")
+
+    main(["validate", "--prefix", "CallCentre", "--rules-config", str(rules), "--publish-validation"])
+    assert "CallCentre_OBS_CFG_T.validation_run" in adapter.sql[0]
+
+    adapter.sql.clear()
+    main(
+        [
+            "validate",
+            "--prefix",
+            "CallCentre",
+            "--rules-config",
+            str(rules),
+            "--publish-validation",
+            "CallCentre_OBS_CLI_T",
+        ]
+    )
+    assert "CallCentre_OBS_CLI_T.validation_run" in adapter.sql[0]
+    capsys.readouterr()
+
+
+def test_rule_config_rejects_malformed_validation_database(tmp_path):
+    from ai_native_data_product_trust_engine.rule_config import load_rule_config
+
+    rules = tmp_path / "rules.json"
+    rules.write_text('{"publish_validation_database": "Db.validation_run"}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="publish_validation_database must be a single"):
+        load_rule_config(rules)

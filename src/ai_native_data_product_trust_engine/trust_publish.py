@@ -10,6 +10,16 @@ from typing import Protocol
 from ai_native_data_product_trust_engine.models import TestSeverity, TestStatus, ValidationRun
 from ai_native_data_product_trust_engine.repairs import RepairCandidate
 from ai_native_data_product_trust_engine.reports import validation_run_to_dict
+from ai_native_data_product_trust_engine.trust_map import (
+    AreaEntry,
+    build_trust_map,
+    scope_for_check,
+)
+
+PRODUCER_ID = "adp-trust-engine"
+PROFILE_ID = "adp-default"
+PROFILE_VERSION = "1"
+PAYLOAD_SCHEMA_VERSION = "2.1"
 
 _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _PUBLISH_COLUMNS = (
@@ -163,7 +173,9 @@ def _publish_row(
         "started_dts": run.started_at,
         "completed_dts": run.completed_at,
         "trust_status": trust_status,
-        "agent_use_allowed": 1 if trust_status in {"TRUSTED", "DEGRADED"} else 0,
+        # Deprecated at schema 2.1: published as 1 and never a decision. The trust
+        # map carries what used to be withheld here; nothing withholds use.
+        "agent_use_allowed": 1,
         "total_checks": report["summary"]["total"],
         "passed_count": report["summary"]["passed"],
         "failed_count": report["summary"]["failed"],
@@ -197,10 +209,12 @@ def _trust_status(
 
 def _failed_checks_json(report: dict[str, object]) -> str:
     failed_checks = []
+    prefix = str(report["prefix"])
     for result in report["results"]:
         if result["status"] not in {"FAILED", "ERROR"}:
             continue
         test_case = result["test_case"]
+        scope_kind, scope_id = scope_for_check(test_case["test_id"], prefix)
         failed_checks.append(
             {
                 "test_id": test_case["test_id"],
@@ -208,6 +222,8 @@ def _failed_checks_json(report: dict[str, object]) -> str:
                 "category": test_case["category"],
                 "severity": test_case["severity"],
                 "status": result["status"],
+                "scope_kind": scope_kind,
+                "scope_id": scope_id,
                 "row_count": result["row_count"],
                 "sample_rows": result["sample_rows"][:3],
                 "error_message": result.get("error_message"),
@@ -260,6 +276,8 @@ def _sql_value(column_name: str, value: object | None) -> str:
         return f"CAST({_sql_literal(value)} AS JSON)"
     if column_name in {"started_dts", "completed_dts"}:
         return _timestamp_literal(value)
+    if column_name == "evidence_expires_dts" and value is not None:
+        return _timestamp_literal(value)
     return _sql_literal(value)
 
 
@@ -307,6 +325,213 @@ def _qualified_identifier(value: str) -> str:
             f"[ADPTrust.InvalidTrustTable] Invalid trust table or view name {value}. "
             "Suggested action: use a two-part Teradata name such as "
             "{ProductPrefix}_SEM_STD_T.trust_engine_run."
+        )
+        raise ValueError(msg)
+    return value
+
+
+# ---------------------------------------------------------------------------
+# Standard validation results: Observability.validation_run / validation_area
+# ---------------------------------------------------------------------------
+
+_RUN_COLUMNS = (
+    "product_prefix",
+    "producer_id",
+    "producer_version",
+    "profile_id",
+    "profile_version",
+    "source_format",
+    "payload_schema_version",
+    "run_id",
+    "started_dts",
+    "completed_dts",
+    "trust_status",
+    "agent_use_allowed",
+    "total_checks",
+    "passed_count",
+    "failed_count",
+    "error_count",
+    "critical_failure_count",
+    "error_failure_count",
+    "data_product_trust_score",
+    "performance_readiness_score",
+    "operational_readiness_score",
+    "repair_candidate_count",
+    "failed_checks_json",
+    "repair_candidates_json",
+    "evidence_expires_dts",
+)
+_AREA_COLUMNS = (
+    "product_prefix",
+    "producer_id",
+    "run_id",
+    "scope_kind",
+    "scope_id",
+    "checks_expected",
+    "checks_ran",
+    "passed_count",
+    "failed_count",
+    "error_count",
+    "critical_failure_count",
+    "error_failure_count",
+    "area_status",
+    "confidence",
+    "open_gaps",
+    "recommended_action",
+    "completed_dts",
+)
+
+
+def default_validation_database(prefix: str) -> str:
+    return f"{prefix}_OBS_STD_T"
+
+
+def producer_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("ai-native-data-product-trust-engine")
+    except Exception:  # noqa: BLE001 - version is provenance only; never block a publish
+        return "unknown"
+
+
+def validation_run_id(run: ValidationRun) -> str:
+    """Standard run id: first 32 hex of SHA-256 over prefix|producer|started|completed|count."""
+    payload = f"{run.prefix}|{PRODUCER_ID}|{run.started_at}|{run.completed_at}|{len(run.results)}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def validation_run_row(
+    run: ValidationRun,
+    repair_candidates: list[RepairCandidate],
+) -> dict[str, object | None]:
+    """The ``validation_run`` row: the legacy summary plus producer identity."""
+    base = _publish_row(run, repair_candidates)
+    row: dict[str, object | None] = {
+        "product_prefix": base["product_prefix"],
+        "producer_id": PRODUCER_ID,
+        "producer_version": producer_version(),
+        "profile_id": PROFILE_ID,
+        "profile_version": PROFILE_VERSION,
+        "source_format": "NATIVE",
+        "payload_schema_version": PAYLOAD_SCHEMA_VERSION,
+        "run_id": validation_run_id(run),
+        "evidence_expires_dts": None,
+    }
+    for column in _RUN_COLUMNS:
+        if column not in row:
+            row[column] = base[column]
+    return row
+
+
+def validation_area_rows(
+    run: ValidationRun,
+    modules: list[str] | None = None,
+) -> list[dict[str, object | None]]:
+    """One ``validation_area`` row per area the run's profile covers (VAL-18)."""
+    run_id = validation_run_id(run)
+    return [_area_row(run, run_id, entry) for entry in build_trust_map(run, modules or [])]
+
+
+def _area_row(run: ValidationRun, run_id: str, entry: AreaEntry) -> dict[str, object | None]:
+    return {
+        "product_prefix": run.prefix,
+        "producer_id": PRODUCER_ID,
+        "run_id": run_id,
+        "scope_kind": entry.scope_kind,
+        "scope_id": entry.scope_id,
+        "checks_expected": entry.checks_expected,
+        "checks_ran": entry.checks_ran,
+        "passed_count": entry.passed_count,
+        "failed_count": entry.failed_count,
+        "error_count": entry.error_count,
+        "critical_failure_count": entry.critical_failure_count,
+        "error_failure_count": entry.error_failure_count,
+        "area_status": entry.area_status,
+        "confidence": entry.confidence,
+        "open_gaps": entry.open_gaps,
+        "recommended_action": entry.recommended_action,
+        "completed_dts": run.completed_at,
+    }
+
+
+def validation_run_insert_sql(
+    run: ValidationRun,
+    repair_candidates: list[RepairCandidate],
+    database: str | None = None,
+) -> str:
+    target = _database_identifier(database or default_validation_database(run.prefix))
+    return _insert_sql(
+        f"{target}.validation_run", _RUN_COLUMNS, validation_run_row(run, repair_candidates)
+    )
+
+
+def validation_area_insert_sql(
+    run: ValidationRun,
+    row: dict[str, object | None],
+    database: str | None = None,
+) -> str:
+    target = _database_identifier(database or default_validation_database(run.prefix))
+    return _insert_sql(f"{target}.validation_area", _AREA_COLUMNS, row)
+
+
+def publish_validation_result(
+    adapter: PublishAdapter,
+    run: ValidationRun,
+    repair_candidates: list[RepairCandidate],
+    database: str | None = None,
+    modules: list[str] | None = None,
+) -> tuple[str, int]:
+    """Append the run and its trust map. Returns ``(database, area_rows_published)``.
+
+    The run row goes first, then one area row per area; each is its own statement
+    so a driver that rejects multi-statement requests still works.
+    """
+    target = _database_identifier(database or default_validation_database(run.prefix))
+    adapter.execute(validation_run_insert_sql(run, repair_candidates, target))
+    rows = validation_area_rows(run, modules)
+    for row in rows:
+        adapter.execute(validation_area_insert_sql(run, row, target))
+    return target, len(rows)
+
+
+def declared_modules(adapter: object, prefix: str) -> list[str]:
+    """Modules the product declares as deployed, from its Semantic ``data_product_map``.
+
+    Soft-fails to an empty list: an unreadable map must not stop a publish, it only
+    means check-less modules cannot be added to the map as no-evidence entries.
+    """
+    from ai_native_data_product_trust_engine.test_generation import semantic_database
+
+    sql = (
+        f"SELECT DISTINCT module_name FROM {semantic_database(prefix)}.data_product_map "
+        "WHERE COALESCE(is_active, 1) = 1 "
+        "AND UPPER(COALESCE(TRIM(deployment_status), 'DEPLOYED')) = 'DEPLOYED'"
+    )
+    try:
+        rows = adapter.fetch_all(sql)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - see docstring
+        return []
+    modules = set()
+    for row in rows:
+        value = next((v for k, v in row.items() if str(k).lower() == "module_name"), None)
+        if value:
+            modules.add(str(value).strip().lower())
+    return sorted(modules)
+
+
+def _insert_sql(table: str, columns: tuple[str, ...], row: dict[str, object | None]) -> str:
+    column_list = ", ".join(columns)
+    values = ", ".join(_sql_value(column, row[column]) for column in columns)
+    return f"INSERT INTO {table} ({column_list}) VALUES ({values});"
+
+
+def _database_identifier(value: str) -> str:
+    if not _IDENTIFIER.fullmatch(value):
+        msg = (
+            f"[ADPTrust.InvalidTrustTable] Invalid validation database name {value}. "
+            "Suggested action: use a single Teradata database name such as "
+            "{ProductPrefix}_OBS_STD_T."
         )
         raise ValueError(msg)
     return value
