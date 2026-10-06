@@ -36,6 +36,7 @@ from ai_native_data_product_trust_engine.trust_publish import (
     publish_trust_result,
     publish_validation_result,
 )
+from ai_native_data_product_trust_engine.validation_ddl import validation_ddl
 from ai_native_data_product_trust_engine.validators import run_validation
 from ai_native_data_product_trust_engine.view_contracts import view_contract_test_cases
 
@@ -125,6 +126,33 @@ def build_parser() -> argparse.ArgumentParser:
                     "Suggestions are advisory and are reported as performance findings."
                 ),
             )
+
+    ddl_parser = subparsers.add_parser(
+        "validation-ddl",
+        help="Generate the validation_run / validation_area DDL for a product prefix.",
+    )
+    ddl_parser.add_argument("--prefix", required=True, help="Data Product prefix, e.g. ProductPrefix")
+    ddl_parser.add_argument(
+        "--table-database",
+        help=(
+            "Database for validation_run and validation_area. Falls back to the rules-config "
+            "publish_validation_database, then <prefix>_OBS_STD_T."
+        ),
+    )
+    ddl_parser.add_argument(
+        "--view-database",
+        help="Database for validation_latest and validation_trust_map. Defaults to <prefix>_OBS_STD_V.",
+    )
+    ddl_parser.add_argument(
+        "--rules-config",
+        type=Path,
+        help="Optional rules JSON; its publish_validation_database sets the table database.",
+    )
+    ddl_parser.add_argument(
+        "--output",
+        type=Path,
+        help="Write the DDL to this file instead of stdout.",
+    )
 
     mcp_parser = subparsers.add_parser(
         "mcp-server",
@@ -307,6 +335,21 @@ def _main(argv: list[str] | None = None) -> int:
             # aborts (e.g. the database is unreachable) — so a failed run never
             # leaves a virtual circuit tied up.
             adapter.close()
+
+    if args.command == "validation-ddl":
+        rule_config = load_rule_config(args.rules_config)
+        ddl = validation_ddl(
+            args.prefix,
+            table_database=args.table_database or rule_config.publish_validation_database,
+            view_database=args.view_database,
+        )
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(ddl, encoding="utf-8")
+            print(f"Validation DDL written: {args.output}")
+        else:
+            print(ddl)
+        return 0
 
     if args.command == "mcp-server":
         from ai_native_data_product_trust_engine.mcp_server import run_mcp_server

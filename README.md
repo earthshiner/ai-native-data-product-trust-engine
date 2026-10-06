@@ -222,7 +222,17 @@ standard binding is `--publish-validation`, which appends one `validation_run` r
 **per-area trust map** (`validation_area`, one row per area) to the product's Observability
 database (default `{prefix}_OBS_STD_T`; override with the flag value or the rules-config
 `publish_validation_database` key). Deploy the standard's `validation_run` / `validation_area`
-tables and `validation_latest` / `validation_trust_map` views first.
+tables and `validation_latest` / `validation_trust_map` views first. The engine generates that
+DDL for any product, so nothing is hand-edited per prefix:
+
+```powershell
+python -m ai_native_data_product_trust_engine validation-ddl --prefix ProductPrefix --output validation-ddl\ProductPrefix_validation_ddl.sql
+```
+
+Tables go to `{prefix}_OBS_STD_T` and views to `{prefix}_OBS_STD_V` by default. Override with
+`--table-database` / `--view-database`; the table database also follows the rules-config
+`publish_validation_database` key, so the DDL and `--publish-validation` always agree. Generated
+files are per-product deployment artefacts and are not committed.
 
 ```powershell
 python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --output reports\productprefix-validation.json --publish-validation
