@@ -53,7 +53,7 @@ Source of truth: `trust_publish._PUBLISH_COLUMNS` / `trust_table_ddl()`.
 
 | Column | Type | Notes |
 |---|---|---|
-| `product_prefix` | VARCHAR(128) | Data product prefix, e.g. `CallCentre` |
+| `product_prefix` | VARCHAR(128) | Data product prefix, e.g. `ExampleProduct` |
 | `run_id` | VARCHAR(64) | Stable hash of prefix + the canonical ISO timestamp strings + check count |
 | `started_dts` / `completed_dts` | TIMESTAMP(6) WITH TIME ZONE | Run instants; UTC persistence |
 | `trust_status` | VARCHAR(16) | `TRUSTED` \| `DEGRADED` \| `UNTRUSTED` |

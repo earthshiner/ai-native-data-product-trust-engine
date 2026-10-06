@@ -23,14 +23,14 @@ from ai_native_data_product_trust_engine.trust_publish import (
 
 
 def test_trust_publish_defaults_to_semantic_standard_table_and_business_view():
-    assert default_trust_table("CallCentre") == "CallCentre_SEM_STD_T.trust_engine_run"
-    assert default_trust_view("CallCentre") == "CallCentre_SEM_BUS_V.trust_engine_latest"
+    assert default_trust_table("ExampleProduct") == "ExampleProduct_SEM_STD_T.trust_engine_run"
+    assert default_trust_view("ExampleProduct") == "ExampleProduct_SEM_BUS_V.trust_engine_latest"
 
 
 def test_trust_table_ddl_defines_compact_agent_evidence_table():
-    ddl = trust_table_ddl("CallCentre")
+    ddl = trust_table_ddl("ExampleProduct")
 
-    assert ddl.startswith("CREATE MULTISET TABLE CallCentre_SEM_STD_T.trust_engine_run")
+    assert ddl.startswith("CREATE MULTISET TABLE ExampleProduct_SEM_STD_T.trust_engine_run")
     assert "trust_status VARCHAR(16)" in ddl
     assert "agent_use_allowed BYTEINT NOT NULL" in ddl
     assert "failed_checks_json JSON(32000) CHARACTER SET UNICODE" in ddl
@@ -41,11 +41,11 @@ def test_trust_table_ddl_defines_compact_agent_evidence_table():
 
 
 def test_trust_latest_view_ddl_uses_bus_v_latest_row_contract():
-    ddl = trust_latest_view_ddl("CallCentre")
+    ddl = trust_latest_view_ddl("ExampleProduct")
 
-    assert ddl.startswith("CREATE VIEW CallCentre_SEM_BUS_V.trust_engine_latest")
+    assert ddl.startswith("CREATE VIEW ExampleProduct_SEM_BUS_V.trust_engine_latest")
     assert "LOCKING ROW FOR ACCESS" in ddl
-    assert "FROM CallCentre_SEM_STD_T.trust_engine_run" in ddl
+    assert "FROM ExampleProduct_SEM_STD_T.trust_engine_run" in ddl
     assert "QUALIFY ROW_NUMBER() OVER" in ddl
     assert "ORDER BY completed_dts DESC, run_id DESC" in ddl
 
@@ -53,9 +53,9 @@ def test_trust_latest_view_ddl_uses_bus_v_latest_row_contract():
 def test_trust_result_insert_sql_summarises_failed_checks_and_repairs():
     run = _run(
         [
-            _result("CALLCENTRE-SEM-001", TestStatus.PASSED),
+            _result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED),
             _result(
-                "CALLCENTRE-SEM-002",
+                "EXAMPLEPRODUCT-SEM-002",
                 TestStatus.FAILED,
                 severity=TestSeverity.WARNING,
                 sample_rows=[{"issue_code": "STALE_METADATA", "object_name": "Bad'Name"}],
@@ -75,9 +75,9 @@ def test_trust_result_insert_sql_summarises_failed_checks_and_repairs():
 
     sql = trust_result_insert_sql(run, repairs)
 
-    assert sql.startswith("INSERT INTO CallCentre_SEM_STD_T.trust_engine_run")
+    assert sql.startswith("INSERT INTO ExampleProduct_SEM_STD_T.trust_engine_run")
     assert "'UNTRUSTED'" in sql
-    assert "CALLCENTRE-SEM-002" in sql
+    assert "EXAMPLEPRODUCT-SEM-002" in sql
     assert "Bad''Name" in sql
     assert "REPAIR-001" in sql
     assert "UPDATE x SET y = ''z'';" in sql
@@ -86,19 +86,19 @@ def test_trust_result_insert_sql_summarises_failed_checks_and_repairs():
 
 def test_publish_trust_result_executes_insert_sql():
     adapter = _RecordingAdapter()
-    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+    run = _run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)])
 
     table_name = publish_trust_result(adapter, run, [])
 
-    assert table_name == "CallCentre_SEM_STD_T.trust_engine_run"
+    assert table_name == "ExampleProduct_SEM_STD_T.trust_engine_run"
     assert len(adapter.sql) == 1
-    assert "INSERT INTO CallCentre_SEM_STD_T.trust_engine_run" in adapter.sql[0]
+    assert "INSERT INTO ExampleProduct_SEM_STD_T.trust_engine_run" in adapter.sql[0]
     assert "'TRUSTED'" in adapter.sql[0]
 
 
 def test_validate_cli_can_publish_trust_summary(monkeypatch, capsys):
     adapter = _RecordingValidationAdapter()
-    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+    run = _run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)])
 
     monkeypatch.setattr(
         "ai_native_data_product_trust_engine.cli.adapter_from_environment",
@@ -117,17 +117,17 @@ def test_validate_cli_can_publish_trust_summary(monkeypatch, capsys):
         lambda run, output_path: None,
     )
 
-    exit_code = main(["validate", "--prefix", "CallCentre", "--publish-trust-table"])
+    exit_code = main(["validate", "--prefix", "ExampleProduct", "--publish-trust-table"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "Trust summary published: CallCentre_SEM_STD_T.trust_engine_run" in captured.out
+    assert "Trust summary published: ExampleProduct_SEM_STD_T.trust_engine_run" in captured.out
     assert len(adapter.sql) == 1
-    assert "INSERT INTO CallCentre_SEM_STD_T.trust_engine_run" in adapter.sql[0]
+    assert "INSERT INTO ExampleProduct_SEM_STD_T.trust_engine_run" in adapter.sql[0]
 
 
 def test_trust_publish_rejects_unqualified_or_unsafe_table_names():
-    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+    run = _run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)])
 
     with pytest.raises(ValueError, match="ADPTrust.InvalidTrustTable"):
         trust_result_insert_sql(run, [], "trust_engine_run")
@@ -154,11 +154,11 @@ def _patch_validate_pipeline(monkeypatch, adapter, run):
 
 def test_rule_config_publish_target_used_when_flag_has_no_value(monkeypatch, capsys, tmp_path):
     adapter = _RecordingValidationAdapter()
-    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+    run = _run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)])
     _patch_validate_pipeline(monkeypatch, adapter, run)
     rules = tmp_path / "rules.json"
     rules.write_text(
-        '{"publish_trust_table": "CallCentre_OBS_STD_T.trust_engine_run"}',
+        '{"publish_trust_table": "ExampleProduct_OBS_STD_T.trust_engine_run"}',
         encoding="utf-8",
     )
 
@@ -166,7 +166,7 @@ def test_rule_config_publish_target_used_when_flag_has_no_value(monkeypatch, cap
         [
             "validate",
             "--prefix",
-            "CallCentre",
+            "ExampleProduct",
             "--rules-config",
             str(rules),
             "--publish-trust-table",
@@ -175,17 +175,17 @@ def test_rule_config_publish_target_used_when_flag_has_no_value(monkeypatch, cap
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "Trust summary published: CallCentre_OBS_STD_T.trust_engine_run" in captured.out
-    assert "INSERT INTO CallCentre_OBS_STD_T.trust_engine_run" in adapter.sql[0]
+    assert "Trust summary published: ExampleProduct_OBS_STD_T.trust_engine_run" in captured.out
+    assert "INSERT INTO ExampleProduct_OBS_STD_T.trust_engine_run" in adapter.sql[0]
 
 
 def test_explicit_cli_publish_target_overrides_rule_config(monkeypatch, capsys, tmp_path):
     adapter = _RecordingValidationAdapter()
-    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+    run = _run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)])
     _patch_validate_pipeline(monkeypatch, adapter, run)
     rules = tmp_path / "rules.json"
     rules.write_text(
-        '{"publish_trust_table": "CallCentre_OBS_STD_T.trust_engine_run"}',
+        '{"publish_trust_table": "ExampleProduct_OBS_STD_T.trust_engine_run"}',
         encoding="utf-8",
     )
 
@@ -193,17 +193,17 @@ def test_explicit_cli_publish_target_overrides_rule_config(monkeypatch, capsys, 
         [
             "validate",
             "--prefix",
-            "CallCentre",
+            "ExampleProduct",
             "--rules-config",
             str(rules),
             "--publish-trust-table",
-            "CallCentre_ALT_STD_T.trust_engine_run",
+            "ExampleProduct_ALT_STD_T.trust_engine_run",
         ]
     )
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "Trust summary published: CallCentre_ALT_STD_T.trust_engine_run" in captured.out
+    assert "Trust summary published: ExampleProduct_ALT_STD_T.trust_engine_run" in captured.out
 
 
 def test_rule_config_rejects_malformed_publish_target(tmp_path):
@@ -229,9 +229,9 @@ def test_rule_config_accepts_partial_files(tmp_path):
 
 
 def test_insert_binds_run_timestamps_as_typed_literals():
-    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+    run = _run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)])
 
-    sql = trust_result_insert_sql(run, [], "CallCentre_OBS_STD_T.trust_engine_run")
+    sql = trust_result_insert_sql(run, [], "ExampleProduct_OBS_STD_T.trust_engine_run")
 
     assert "started_dts, completed_dts" in sql
     assert "TIMESTAMP '2026-06-01 10:00:00+10:00'" in sql
@@ -250,7 +250,7 @@ def test_timestamp_literal_rejects_non_iso_values():
 
 def _run(results):
     return ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at="2026-06-01T10:00:00+10:00",
         completed_at="2026-06-01T10:00:01+10:00",
         results=results,
@@ -297,44 +297,44 @@ def test_validate_cli_publishes_validation_run_and_trust_map(monkeypatch, capsys
     adapter = _RecordingValidationAdapter()
     run = _run(
         [
-            _result("CALLCENTRE-SEM-001", TestStatus.PASSED),
-            _result("CALLCENTRE-OPS-001", TestStatus.FAILED),
+            _result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED),
+            _result("EXAMPLEPRODUCT-OPS-001", TestStatus.FAILED),
         ]
     )
     _patch_validate_pipeline(monkeypatch, adapter, run)
 
-    main(["validate", "--prefix", "CallCentre", "--publish-validation"])
+    main(["validate", "--prefix", "ExampleProduct", "--publish-validation"])
 
     out = capsys.readouterr().out
-    assert "Validation results published: CallCentre_OBS_STD_T (validation_run + 2 validation_area rows)" in out
-    assert adapter.sql[0].startswith("INSERT INTO CallCentre_OBS_STD_T.validation_run")
+    assert "Validation results published: ExampleProduct_OBS_STD_T (validation_run + 2 validation_area rows)" in out
+    assert adapter.sql[0].startswith("INSERT INTO ExampleProduct_OBS_STD_T.validation_run")
     assert sum("validation_area" in s for s in adapter.sql) == 2
     assert not any("trust_engine_run" in s for s in adapter.sql)
 
 
 def test_validation_publish_target_precedence(monkeypatch, capsys, tmp_path):
     adapter = _RecordingValidationAdapter()
-    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+    run = _run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)])
     _patch_validate_pipeline(monkeypatch, adapter, run)
     rules = tmp_path / "rules.json"
-    rules.write_text('{"publish_validation_database": "CallCentre_OBS_CFG_T"}', encoding="utf-8")
+    rules.write_text('{"publish_validation_database": "ExampleProduct_OBS_CFG_T"}', encoding="utf-8")
 
-    main(["validate", "--prefix", "CallCentre", "--rules-config", str(rules), "--publish-validation"])
-    assert "CallCentre_OBS_CFG_T.validation_run" in adapter.sql[0]
+    main(["validate", "--prefix", "ExampleProduct", "--rules-config", str(rules), "--publish-validation"])
+    assert "ExampleProduct_OBS_CFG_T.validation_run" in adapter.sql[0]
 
     adapter.sql.clear()
     main(
         [
             "validate",
             "--prefix",
-            "CallCentre",
+            "ExampleProduct",
             "--rules-config",
             str(rules),
             "--publish-validation",
-            "CallCentre_OBS_CLI_T",
+            "ExampleProduct_OBS_CLI_T",
         ]
     )
-    assert "CallCentre_OBS_CLI_T.validation_run" in adapter.sql[0]
+    assert "ExampleProduct_OBS_CLI_T.validation_run" in adapter.sql[0]
     capsys.readouterr()
 
 

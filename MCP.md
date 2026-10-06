@@ -48,9 +48,9 @@ The MCP server reads Trust Engine JSON reports. Generate a report before startin
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_native_data_product_trust_engine validate `
-  --prefix CallCentre `
-  --output reports\callcentre-validation.json `
-  --html-output reports\callcentre-validation.html
+  --prefix ExampleProduct `
+  --output reports\exampleproduct-validation.json `
+  --html-output reports\exampleproduct-validation.html
 ```
 
 The server discovers products by reading `*.json` files in the reports directory and selecting the
@@ -207,8 +207,8 @@ If a product cannot be found, rerun validation for that prefix:
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_native_data_product_trust_engine validate `
-  --prefix CallCentre `
-  --output reports\callcentre-validation.json
+  --prefix ExampleProduct `
+  --output reports\exampleproduct-validation.json
 ```
 
 If an MCP client starts the server but cannot find reports, change `--reports-dir` to an absolute

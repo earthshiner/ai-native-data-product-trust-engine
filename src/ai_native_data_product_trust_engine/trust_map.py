@@ -73,7 +73,7 @@ class AreaEntry:
 
 
 def scope_for_check(check_id: str, prefix: str) -> tuple[str, str]:
-    """Return ``(scope_kind, scope_id)`` for a check id such as ``CALLCENTRE-SEM-008``.
+    """Return ``(scope_kind, scope_id)`` for a check id such as ``EXAMPLEPRODUCT-SEM-008``.
 
     The family is the dash-separated token run after the product prefix. A check
     whose family is not catalogued falls back to the ``PRODUCT`` area, which is

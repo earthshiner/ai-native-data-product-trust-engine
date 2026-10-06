@@ -27,29 +27,29 @@ from ai_native_data_product_trust_engine.trust_publish import (
 @pytest.mark.parametrize(
     ("check_id", "expected"),
     [
-        ("CALLCENTRE-SEM-008", ("MODULE", "semantic")),
-        ("CALLCENTRE-DISCOVERY-002", ("MODULE", "semantic")),
-        ("CALLCENTRE-REL-ORPHANS", ("MODULE", "semantic")),
-        ("CALLCENTRE-OPS-004", ("MODULE", "observability")),
-        ("CALLCENTRE-QUERY-EXPLAIN-BQ-1", ("MODULE", "memory")),
-        ("CALLCENTRE-QUERY-BOUNDS-BQ-1", ("MODULE", "memory")),
-        ("CALLCENTRE-PERF-001", ("MODULE", "memory")),
-        ("CALLCENTRE-TEMPORAL-CURRENT-AGENT", ("PATTERN", "temporal-lifecycle-metadata")),
-        ("CALLCENTRE-STD-VIEW-1TO1-DB.V", ("PATTERN", "object-placement")),
-        ("CALLCENTRE-STD-TABLE-VIEW-COVERAGE", ("PATTERN", "object-placement")),
-        ("CALLCENTRE-BUS-VIEW-SOURCES-DB.V", ("PATTERN", "object-placement")),
-        ("CALLCENTRE-VIEW-COLUMNS", ("PATTERN", "object-placement")),
-        ("CALLCENTRE-STRUCT-001", ("PRODUCT", "CallCentre")),
-        ("CALLCENTRE-CAP-002", ("PRODUCT", "CallCentre")),
-        ("CALLCENTRE-SOMETHING-NEW-001", ("PRODUCT", "CallCentre")),
+        ("EXAMPLEPRODUCT-SEM-008", ("MODULE", "semantic")),
+        ("EXAMPLEPRODUCT-DISCOVERY-002", ("MODULE", "semantic")),
+        ("EXAMPLEPRODUCT-REL-ORPHANS", ("MODULE", "semantic")),
+        ("EXAMPLEPRODUCT-OPS-004", ("MODULE", "observability")),
+        ("EXAMPLEPRODUCT-QUERY-EXPLAIN-BQ-1", ("MODULE", "memory")),
+        ("EXAMPLEPRODUCT-QUERY-BOUNDS-BQ-1", ("MODULE", "memory")),
+        ("EXAMPLEPRODUCT-PERF-001", ("MODULE", "memory")),
+        ("EXAMPLEPRODUCT-TEMPORAL-CURRENT-AGENT", ("PATTERN", "temporal-lifecycle-metadata")),
+        ("EXAMPLEPRODUCT-STD-VIEW-1TO1-DB.V", ("PATTERN", "object-placement")),
+        ("EXAMPLEPRODUCT-STD-TABLE-VIEW-COVERAGE", ("PATTERN", "object-placement")),
+        ("EXAMPLEPRODUCT-BUS-VIEW-SOURCES-DB.V", ("PATTERN", "object-placement")),
+        ("EXAMPLEPRODUCT-VIEW-COLUMNS", ("PATTERN", "object-placement")),
+        ("EXAMPLEPRODUCT-STRUCT-001", ("PRODUCT", "ExampleProduct")),
+        ("EXAMPLEPRODUCT-CAP-002", ("PRODUCT", "ExampleProduct")),
+        ("EXAMPLEPRODUCT-SOMETHING-NEW-001", ("PRODUCT", "ExampleProduct")),
     ],
 )
 def test_scope_follows_the_owning_module_or_pattern(check_id, expected):
-    assert scope_for_check(check_id, "CallCentre") == expected
+    assert scope_for_check(check_id, "ExampleProduct") == expected
 
 
 def test_a_clean_fully_covered_area_is_pass_and_strong_without_guidance():
-    area = _only(build_trust_map(_run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])))
+    area = _only(build_trust_map(_run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)])))
 
     assert (area.area_status, area.confidence) == ("pass", "strong")
     assert (area.checks_expected, area.checks_ran) == (1, 1)
@@ -61,8 +61,8 @@ def test_critical_failure_is_fail_weak_with_guidance():
         build_trust_map(
             _run(
                 [
-                    _result("CALLCENTRE-SEM-001", TestStatus.PASSED),
-                    _result("CALLCENTRE-SEM-002", TestStatus.FAILED, TestSeverity.CRITICAL),
+                    _result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED),
+                    _result("EXAMPLEPRODUCT-SEM-002", TestStatus.FAILED, TestSeverity.CRITICAL),
                 ]
             )
         )
@@ -75,7 +75,7 @@ def test_critical_failure_is_fail_weak_with_guidance():
 
 def test_warning_only_failure_is_fail_but_partial_not_weak():
     area = _only(
-        build_trust_map(_run([_result("CALLCENTRE-SEM-001", TestStatus.FAILED, TestSeverity.WARNING)]))
+        build_trust_map(_run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.FAILED, TestSeverity.WARNING)]))
     )
 
     assert (area.area_status, area.confidence) == ("fail", "partial")
@@ -84,7 +84,7 @@ def test_warning_only_failure_is_fail_but_partial_not_weak():
 
 def test_errored_check_counts_as_ran_and_failed():
     area = _only(
-        build_trust_map(_run([_result("CALLCENTRE-SEM-001", TestStatus.ERROR, TestSeverity.ERROR)]))
+        build_trust_map(_run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.ERROR, TestSeverity.ERROR)]))
     )
 
     assert area.area_status == "fail"
@@ -93,8 +93,8 @@ def test_errored_check_counts_as_ran_and_failed():
 
 def test_excluded_checks_lower_coverage_to_partial():
     run = _run(
-        [_result("CALLCENTRE-SEM-001", TestStatus.PASSED), _result("CALLCENTRE-SEM-002", TestStatus.PASSED)],
-        excluded=[ExcludedCheck("CALLCENTRE-SEM-003", "Skipped", "SEMANTIC", "disabled")],
+        [_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED), _result("EXAMPLEPRODUCT-SEM-002", TestStatus.PASSED)],
+        excluded=[ExcludedCheck("EXAMPLEPRODUCT-SEM-003", "Skipped", "SEMANTIC", "disabled")],
     )
 
     area = _only(build_trust_map(run))
@@ -106,8 +106,8 @@ def test_excluded_checks_lower_coverage_to_partial():
 
 def test_coverage_below_half_is_weak_even_when_everything_that_ran_passed():
     run = _run(
-        [_result("CALLCENTRE-SEM-001", TestStatus.PASSED)],
-        excluded=[ExcludedCheck(f"CALLCENTRE-SEM-00{n}", "Skipped", "SEMANTIC", "x") for n in (2, 3)],
+        [_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)],
+        excluded=[ExcludedCheck(f"EXAMPLEPRODUCT-SEM-00{n}", "Skipped", "SEMANTIC", "x") for n in (2, 3)],
     )
 
     area = _only(build_trust_map(run))
@@ -116,7 +116,7 @@ def test_coverage_below_half_is_weak_even_when_everything_that_ran_passed():
 
 
 def test_all_checks_excluded_is_not_validated_and_unknown():
-    run = _run([], excluded=[ExcludedCheck("CALLCENTRE-SEM-001", "Skipped", "SEMANTIC", "x")])
+    run = _run([], excluded=[ExcludedCheck("EXAMPLEPRODUCT-SEM-001", "Skipped", "SEMANTIC", "x")])
 
     area = _only(build_trust_map(run))
 
@@ -126,7 +126,7 @@ def test_all_checks_excluded_is_not_validated_and_unknown():
 
 def test_declared_module_with_no_checks_is_published_as_no_evidence():
     entries = build_trust_map(
-        _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)]), declared_modules=["domain", "semantic"]
+        _run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)]), declared_modules=["domain", "semantic"]
     )
 
     by_id = {(e.scope_kind, e.scope_id): e for e in entries}
@@ -139,26 +139,26 @@ def test_declared_module_with_no_checks_is_published_as_no_evidence():
 def test_every_failed_check_scope_resolves_to_an_entry_in_the_same_run():
     run = _run(
         [
-            _result("CALLCENTRE-SEM-001", TestStatus.FAILED, TestSeverity.CRITICAL),
-            _result("CALLCENTRE-OPS-002", TestStatus.FAILED),
-            _result("CALLCENTRE-STRUCT-001", TestStatus.FAILED),
+            _result("EXAMPLEPRODUCT-SEM-001", TestStatus.FAILED, TestSeverity.CRITICAL),
+            _result("EXAMPLEPRODUCT-OPS-002", TestStatus.FAILED),
+            _result("EXAMPLEPRODUCT-STRUCT-001", TestStatus.FAILED),
         ]
     )
 
     keys = {(e.scope_kind, e.scope_id) for e in build_trust_map(run)}
 
     for result in run.results:
-        assert scope_for_check(result.test_case.test_id, "CallCentre") in keys
+        assert scope_for_check(result.test_case.test_id, "ExampleProduct") in keys
 
 
 def test_area_counts_satisfy_the_standard_invariants():
     run = _run(
         [
-            _result("CALLCENTRE-SEM-001", TestStatus.PASSED),
-            _result("CALLCENTRE-SEM-002", TestStatus.FAILED, TestSeverity.ERROR),
-            _result("CALLCENTRE-SEM-003", TestStatus.ERROR, TestSeverity.CRITICAL),
+            _result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED),
+            _result("EXAMPLEPRODUCT-SEM-002", TestStatus.FAILED, TestSeverity.ERROR),
+            _result("EXAMPLEPRODUCT-SEM-003", TestStatus.ERROR, TestSeverity.CRITICAL),
         ],
-        excluded=[ExcludedCheck("CALLCENTRE-SEM-004", "Skipped", "SEMANTIC", "x")],
+        excluded=[ExcludedCheck("EXAMPLEPRODUCT-SEM-004", "Skipped", "SEMANTIC", "x")],
     )
 
     for area in build_trust_map(run):
@@ -176,7 +176,7 @@ def test_area_counts_satisfy_the_standard_invariants():
 
 
 def test_agent_use_allowed_is_always_published_as_go():
-    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.FAILED, TestSeverity.CRITICAL)])
+    run = _run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.FAILED, TestSeverity.CRITICAL)])
 
     row = validation_run_row(run, [])
 
@@ -185,17 +185,17 @@ def test_agent_use_allowed_is_always_published_as_go():
 
 
 def test_run_row_carries_producer_identity_and_schema_version():
-    row = validation_run_row(_run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)]), [])
+    row = validation_run_row(_run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)]), [])
 
     assert row["producer_id"] == PRODUCER_ID
     assert row["payload_schema_version"] == "2.1"
     assert row["source_format"] == "NATIVE"
-    assert row["run_id"] == validation_run_id(_run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)]))
+    assert row["run_id"] == validation_run_id(_run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)]))
     assert row["evidence_expires_dts"] is None
 
 
 def test_area_rows_share_the_run_id_and_completion_instant():
-    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)])
+    run = _run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)])
 
     rows = validation_area_rows(run, ["domain"])
 
@@ -205,29 +205,29 @@ def test_area_rows_share_the_run_id_and_completion_instant():
 
 
 def test_run_insert_targets_observability_validation_run_with_typed_timestamps():
-    sql = validation_run_insert_sql(_run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED)]), [])
+    sql = validation_run_insert_sql(_run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED)]), [])
 
-    assert sql.startswith("INSERT INTO CallCentre_OBS_STD_T.validation_run")
+    assert sql.startswith("INSERT INTO ExampleProduct_OBS_STD_T.validation_run")
     assert "TIMESTAMP '2026-06-01 10:00:00+10:00'" in sql
     assert "'2.1'" in sql and f"'{PRODUCER_ID}'" in sql
 
 
 def test_publish_appends_the_run_then_one_statement_per_area():
     adapter = _Recorder()
-    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.PASSED), _result("CALLCENTRE-OPS-001", TestStatus.PASSED)])
+    run = _run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED), _result("EXAMPLEPRODUCT-OPS-001", TestStatus.PASSED)])
 
     database, area_count = publish_validation_result(adapter, run, [], modules=["domain"])
 
-    assert database == "CallCentre_OBS_STD_T"
+    assert database == "ExampleProduct_OBS_STD_T"
     assert area_count == 3  # semantic, observability, domain(no-evidence)
-    assert adapter.sql[0].startswith("INSERT INTO CallCentre_OBS_STD_T.validation_run")
+    assert adapter.sql[0].startswith("INSERT INTO ExampleProduct_OBS_STD_T.validation_run")
     assert len(adapter.sql) == 1 + area_count
-    assert all(s.startswith("INSERT INTO CallCentre_OBS_STD_T.validation_area") for s in adapter.sql[1:])
+    assert all(s.startswith("INSERT INTO ExampleProduct_OBS_STD_T.validation_area") for s in adapter.sql[1:])
 
 
 def test_publish_escapes_quotes_in_guidance_text():
     adapter = _Recorder()
-    run = _run([_result("CALLCENTRE-SEM-001", TestStatus.FAILED, TestSeverity.ERROR, name="Owner's view")])
+    run = _run([_result("EXAMPLEPRODUCT-SEM-001", TestStatus.FAILED, TestSeverity.ERROR, name="Owner's view")])
 
     publish_validation_result(adapter, run, [])
 
@@ -242,15 +242,15 @@ def test_publish_rejects_an_unsafe_database_name():
 def test_declared_modules_reads_the_data_product_map_and_soft_fails():
     class Reads:
         def fetch_all(self, sql):
-            assert "CallCentre_SEM_STD_V.data_product_map" in sql
+            assert "ExampleProduct_SEM_STD_V.data_product_map" in sql
             return [{"module_name": "SEMANTIC"}, {"MODULE_NAME": "Memory"}, {"module_name": "semantic"}]
 
     class Broken:
         def fetch_all(self, sql):
             raise RuntimeError("no such table")
 
-    assert declared_modules(Reads(), "CallCentre") == ["memory", "semantic"]
-    assert declared_modules(Broken(), "CallCentre") == []
+    assert declared_modules(Reads(), "ExampleProduct") == ["memory", "semantic"]
+    assert declared_modules(Broken(), "ExampleProduct") == []
 
 
 def _only(entries):
@@ -260,7 +260,7 @@ def _only(entries):
 
 def _run(results, excluded=None):
     return ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at="2026-06-01T10:00:00+10:00",
         completed_at="2026-06-01T10:00:01+10:00",
         results=results,

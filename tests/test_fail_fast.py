@@ -49,13 +49,13 @@ class ObjectMissingAdapter:
         raise AssertionError("execute should not be called")
 
 
-def _case(test_id: str = "CALLCENTRE-SEM-001") -> TestCase:
+def _case(test_id: str = "EXAMPLEPRODUCT-SEM-001") -> TestCase:
     return TestCase(
         test_id=test_id,
         name="check",
         category=TestCategory.SEMANTIC,
         severity=TestSeverity.CRITICAL,
-        sql="SELECT 1 FROM CallCentre_SEM_STD_V.entity_metadata;",
+        sql="SELECT 1 FROM ExampleProduct_SEM_STD_V.entity_metadata;",
         expected_result="Returns zero rows.",
         expected=ExpectedResult.ZERO_ROWS,
     )
@@ -76,9 +76,9 @@ def test_run_validation_stops_when_database_unavailable():
     adapter = LoggingAdapter(UnavailableAdapter())
     with pytest.raises(DatabaseUnavailableError) as excinfo:
         run_validation(
-            "CallCentre",
+            "ExampleProduct",
             adapter,
-            [_case(), _case("CALLCENTRE-SEM-002")],
+            [_case(), _case("EXAMPLEPRODUCT-SEM-002")],
             include_capability_scans=False,
             include_query_template_scans=False,
             include_relationship_health_scans=False,
@@ -102,7 +102,7 @@ def test_cli_validate_returns_distinct_code_and_writes_no_report(monkeypatch, tm
     report = tmp_path / "trust-report.json"
 
     code = cli.main(
-        ["validate", "--prefix", "CallCentre", "--database-url", "teradatasql://x",
+        ["validate", "--prefix", "ExampleProduct", "--database-url", "teradatasql://x",
          "--output", str(report)]
     )
 

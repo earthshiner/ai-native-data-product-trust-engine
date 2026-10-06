@@ -78,7 +78,7 @@ def _example_results() -> list[TestResult]:
     return [
         TestResult(
             test_case=_case(
-                "CALLCENTRE-SEM-001",
+                "EXAMPLEPRODUCT-SEM-001",
                 "Entity metadata references deployed objects",
                 TestCategory.SEMANTIC,
                 TestSeverity.CRITICAL,
@@ -90,7 +90,7 @@ def _example_results() -> list[TestResult]:
         ),
         TestResult(
             test_case=_case(
-                "CALLCENTRE-SEM-008",
+                "EXAMPLEPRODUCT-SEM-008",
                 "Entity metadata publishes BUS_V view names",
                 TestCategory.SEMANTIC,
                 TestSeverity.CRITICAL,
@@ -101,22 +101,22 @@ def _example_results() -> list[TestResult]:
             sample_rows=[
                 {
                     "entity_name": "Agent",
-                    "view_name": "CallCentre_DOM_BUS_V.Agent_Current",
-                    "business_database_name": "CallCentre_DOM_BUS_V",
+                    "view_name": "ExampleProduct_DOM_BUS_V.Customer_Current",
+                    "business_database_name": "ExampleProduct_DOM_BUS_V",
                     "issue_code": "ENTITY_VIEW_NAME_NOT_DEPLOYED",
                     "repair_hint": "Deploy the BUS_V view for agent access.",
                 },
                 {
                     "entity_name": "AgentInteraction",
                     "view_name": None,
-                    "business_database_name": "CallCentre_MEM_BUS_V",
+                    "business_database_name": "ExampleProduct_MEM_BUS_V",
                     "issue_code": "ENTITY_VIEW_NAME_MISSING",
                     "repair_hint": "Populate entity_metadata.view_name.",
                 },
                 {
                     "entity_name": "Call",
-                    "view_name": "CallCentre_DOM_BUS_V.Call_Current",
-                    "business_database_name": "CallCentre_DOM_BUS_V",
+                    "view_name": "ExampleProduct_DOM_BUS_V.Order_Current",
+                    "business_database_name": "ExampleProduct_DOM_BUS_V",
                     "issue_code": "ENTITY_VIEW_NAME_NOT_DEPLOYED",
                     "repair_hint": "Deploy the BUS_V view for agent access.",
                 },
@@ -124,7 +124,7 @@ def _example_results() -> list[TestResult]:
         ),
         TestResult(
             test_case=_case(
-                "CALLCENTRE-DISCOVERY-002",
+                "EXAMPLEPRODUCT-DISCOVERY-002",
                 "Central registry matches orientation metadata",
                 TestCategory.SEMANTIC,
                 TestSeverity.CRITICAL,
@@ -134,7 +134,7 @@ def _example_results() -> list[TestResult]:
             row_count=1,
             sample_rows=[
                 {
-                    "product_id": "callcentre",
+                    "product_id": "exampleproduct",
                     "issue_code": "MISSING_ORIENTATION_MANIFEST",
                     "issue_detail": "manifest_json is required for the MCP orientation layer.",
                     "repair_hint": "Populate manifest_json with the discovery manifest.",
@@ -143,7 +143,7 @@ def _example_results() -> list[TestResult]:
         ),
         TestResult(
             test_case=_case(
-                "CALLCENTRE-QUERY-BOUNDS-BQ-COMP-ALL-HIT-RATE",
+                "EXAMPLEPRODUCT-QUERY-BOUNDS-BQ-COMP-ALL-HIT-RATE",
                 "Interactive recipe is bounded: Quality all-hit rate by category",
                 TestCategory.PERFORMANCE,
                 TestSeverity.CRITICAL,
@@ -166,7 +166,7 @@ def _example_results() -> list[TestResult]:
         ),
         TestResult(
             test_case=_case(
-                "CALLCENTRE-STRUCT-001",
+                "EXAMPLEPRODUCT-STRUCT-001",
                 "Similar table column names use consistent datatypes",
                 TestCategory.STRUCTURAL,
                 TestSeverity.WARNING,
@@ -176,8 +176,8 @@ def _example_results() -> list[TestResult]:
             row_count=31,
             sample_rows=[
                 {
-                    "database_name": "CallCentre_DOM_STD_T",
-                    "table_name": "Agent_H",
+                    "database_name": "ExampleProduct_DOM_STD_T",
+                    "table_name": "Customer_H",
                     "column_name": "agent_key",
                     "issue_code": "COLUMN_TYPE_DRIFT",
                     "repair_hint": "Align datatype/length for same-named columns.",
@@ -186,7 +186,7 @@ def _example_results() -> list[TestResult]:
         ),
         TestResult(
             test_case=_case(
-                "CALLCENTRE-OPS-002",
+                "EXAMPLEPRODUCT-OPS-002",
                 "Observability evidence objects are deployed",
                 TestCategory.OPERATIONAL,
                 TestSeverity.WARNING,
@@ -197,7 +197,7 @@ def _example_results() -> list[TestResult]:
             sample_rows=[
                 {
                     "object_name": "data_lineage",
-                    "observability_database": "CallCentre_OBS_STD_T",
+                    "observability_database": "ExampleProduct_OBS_STD_T",
                     "issue_code": "MISSING_OBSERVABILITY_TABLE",
                     "issue_detail": "Required Observability table is not deployed.",
                     "repair_hint": "Deploy the Observability table.",
@@ -210,7 +210,7 @@ def _example_results() -> list[TestResult]:
 def _example_repairs() -> list[RepairCandidate]:
     return [
         RepairCandidate(
-            candidate_id="CALLCENTRE-STRUCT-001-COLUMN-TYPE-DRIFT",
+            candidate_id="EXAMPLEPRODUCT-STRUCT-001-COLUMN-TYPE-DRIFT",
             issue_code="COLUMN_TYPE_DRIFT",
             summary="Align datatype, length, precision and scale for same/similar columns.",
             mode=RepairMode.PROPOSAL,
@@ -218,7 +218,7 @@ def _example_repairs() -> list[RepairCandidate]:
             sql="-- review and align column datatypes",
         ),
         RepairCandidate(
-            candidate_id="CALLCENTRE-SEM-008-ENTITY-VIEW-NAME",
+            candidate_id="EXAMPLEPRODUCT-SEM-008-ENTITY-VIEW-NAME",
             issue_code="ENTITY_VIEW_NAME_MISSING",
             summary="Populate entity_metadata.view_name for the flagged entities.",
             mode=RepairMode.PROPOSAL,
@@ -238,7 +238,7 @@ def example_payload() -> dict[str, object]:
     ISO-8601 string forms because JSON has no timestamp type.
     """
     run = ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at=_STARTED_AT,
         completed_at=_COMPLETED_AT,
         results=_example_results(),
@@ -248,13 +248,13 @@ def example_payload() -> dict[str, object]:
 
 def _example_run() -> ValidationRun:
     return ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at=_STARTED_AT,
         completed_at=_COMPLETED_AT,
         results=_example_results(),
         excluded_checks=[
             ExcludedCheck(
-                check_id="CALLCENTRE-CAP-001",
+                check_id="EXAMPLEPRODUCT-CAP-001",
                 name="Capability claims match deployed features",
                 category="CAPABILITY",
                 reason="Disabled by rules config.",

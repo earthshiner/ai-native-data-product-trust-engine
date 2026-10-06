@@ -16,13 +16,13 @@ from ai_native_data_product_trust_engine.reports import write_json_report
 def test_write_json_report_serialises_decimal_evidence(tmp_path):
     report_path = tmp_path / "report.json"
     run = ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at="2026-06-01T10:00:00+10:00",
         completed_at="2026-06-01T10:00:01+10:00",
         results=[
             TestResult(
                 test_case=TestCase(
-                    test_id="CALLCENTRE-STRUCT-002",
+                    test_id="EXAMPLEPRODUCT-STRUCT-002",
                     name="Product tables stay within skew threshold",
                     category=TestCategory.STRUCTURAL,
                     severity=TestSeverity.WARNING,

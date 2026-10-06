@@ -10,7 +10,7 @@ from ai_native_data_product_trust_engine.capabilities import (
 def test_discover_native_vector_capability_marks_unavailable_without_evidence():
     adapter = StubAdapter(native_rows=[], fallback_rows=[])
 
-    capability = discover_native_vector_capability("CallCentre", adapter)
+    capability = discover_native_vector_capability("ExampleProduct", adapter)
 
     assert capability.name == "NATIVE_VECTOR"
     assert capability.status == CapabilityStatus.UNAVAILABLE
@@ -21,15 +21,15 @@ def test_discover_fallback_embedding_capability_marks_available_with_embedding_c
         native_rows=[],
         fallback_rows=[
             {
-                "DatabaseName": "CallCentre_SCH_STD_T",
-                "TableName": "call_embedding",
+                "DatabaseName": "ExampleProduct_SCH_STD_T",
+                "TableName": "order_embedding",
                 "ColumnName": "embedding_value",
                 "ColumnType": "F",
             }
         ],
     )
 
-    capability = discover_fallback_embedding_capability("CallCentre", adapter)
+    capability = discover_fallback_embedding_capability("ExampleProduct", adapter)
 
     assert capability.name == "FALLBACK_EMBEDDING"
     assert capability.status == CapabilityStatus.AVAILABLE
@@ -38,7 +38,7 @@ def test_discover_fallback_embedding_capability_marks_available_with_embedding_c
 def test_run_capability_validations_flags_native_vector_references_when_unavailable():
     adapter = StubAdapter(
         native_rows=[],
-        fallback_rows=[{"TableName": "call_embedding", "ColumnName": "embedding_value"}],
+        fallback_rows=[{"TableName": "order_embedding", "ColumnName": "embedding_value"}],
         reference_rows=[
             {
                 "recipe_id": "QC-SEARCH-001",
@@ -52,7 +52,7 @@ def test_run_capability_validations_flags_native_vector_references_when_unavaila
     )
 
     inventory_result, alignment_result, semantic_result = run_capability_validations(
-        "CallCentre",
+        "ExampleProduct",
         adapter,
     )
 
@@ -77,7 +77,7 @@ def test_run_capability_validations_flags_semantic_search_without_any_evidence()
         ],
     )
 
-    _, _, semantic_result = run_capability_validations("CallCentre", adapter)
+    _, _, semantic_result = run_capability_validations("ExampleProduct", adapter)
 
     assert semantic_result.status.value == "FAILED"
     assert semantic_result.sample_rows[0]["issue_code"] == "SEMANTIC_SEARCH_CAPABILITY_UNAVAILABLE"
@@ -88,7 +88,7 @@ def test_run_capability_validations_flags_semantic_search_without_any_evidence()
 def test_run_capability_validations_allows_semantic_search_with_fallback_evidence():
     adapter = StubAdapter(
         native_rows=[],
-        fallback_rows=[{"TableName": "call_embedding", "ColumnName": "embedding_value"}],
+        fallback_rows=[{"TableName": "order_embedding", "ColumnName": "embedding_value"}],
         semantic_rows=[
             {
                 "source_table": "Query_Cookbook",
@@ -101,7 +101,7 @@ def test_run_capability_validations_allows_semantic_search_with_fallback_evidenc
         ],
     )
 
-    _, _, semantic_result = run_capability_validations("CallCentre", adapter)
+    _, _, semantic_result = run_capability_validations("ExampleProduct", adapter)
 
     assert semantic_result.status.value == "PASSED"
 

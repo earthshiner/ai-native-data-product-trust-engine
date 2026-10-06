@@ -35,7 +35,7 @@ def test_mcp_server_cli_starts_server_over_report_directory(monkeypatch, tmp_pat
 
 
 def test_discover_products_payload_lists_orientation_entrypoint(tmp_path):
-    report_path = tmp_path / "callcentre-validation.json"
+    report_path = tmp_path / "exampleproduct-validation.json"
     report_path.write_text(json.dumps(_report()), encoding="utf-8")
 
     payload = discover_products_payload(tmp_path)
@@ -43,9 +43,9 @@ def test_discover_products_payload_lists_orientation_entrypoint(tmp_path):
     assert payload["resource"] == "trust://products"
     assert payload["products"] == [
         {
-            "prefix": "CallCentre",
-            "orientation": "trust://products/CallCentre/orientation",
-            "latest_report": "trust://products/CallCentre/latest-report",
+            "prefix": "ExampleProduct",
+            "orientation": "trust://products/ExampleProduct/orientation",
+            "latest_report": "trust://products/ExampleProduct/latest-report",
             "completed_at": "2026-06-01T10:01:30+10:00",
             "summary": _report()["summary"],
             "scores": _report()["scores"],
@@ -59,22 +59,22 @@ def test_load_latest_report_chooses_newest_report_for_prefix(tmp_path):
     (tmp_path / "old.json").write_text(json.dumps(old_report), encoding="utf-8")
     (tmp_path / "new.json").write_text(json.dumps(newest_report), encoding="utf-8")
 
-    report = load_latest_report("callcentre", tmp_path)
+    report = load_latest_report("exampleproduct", tmp_path)
 
     assert report["completed_at"] == "2026-06-01T10:01:30+10:00"
 
 
 def test_load_latest_report_raises_friendly_error(tmp_path):
     with pytest.raises(ValueError, match=r"\[ADPTrust.ReportNotFound\]"):
-        load_latest_report("CallCentre", tmp_path)
+        load_latest_report("ExampleProduct", tmp_path)
 
 
 def test_orientation_resource_is_metadata_first_manifest():
     orientation = build_orientation_resource(_report())
 
-    assert orientation["resource"] == "trust://products/CallCentre/orientation"
-    assert orientation["data_product_id"] == "CallCentre"
-    assert orientation["entrypoints"]["failures"] == "trust://products/CallCentre/failures"
+    assert orientation["resource"] == "trust://products/ExampleProduct/orientation"
+    assert orientation["data_product_id"] == "ExampleProduct"
+    assert orientation["entrypoints"]["failures"] == "trust://products/ExampleProduct/failures"
     assert orientation["recommended_navigation"] == [
         "latest-report",
         "scores",
@@ -86,7 +86,7 @@ def test_orientation_resource_is_metadata_first_manifest():
     assert orientation["status"]["critical_failure_count"] == 2
     assert orientation["status"]["repair_candidate_count"] == 3
     assert orientation["status"]["recommended_next_resource"] == (
-        "trust://products/CallCentre/failures"
+        "trust://products/ExampleProduct/failures"
     )
 
 
@@ -114,9 +114,9 @@ def test_repair_candidates_resource_splits_safe_auto_and_approval_required():
 
 
 def test_check_explanation_returns_single_check():
-    explanation = build_check_explanation(_report(), "CALLCENTRE-TEXT-001")
+    explanation = build_check_explanation(_report(), "EXAMPLEPRODUCT-TEXT-001")
 
-    assert explanation["test_id"] == "CALLCENTRE-TEXT-001"
+    assert explanation["test_id"] == "EXAMPLEPRODUCT-TEXT-001"
     assert explanation["status"] == "FAILED"
     assert explanation["sample_rows"][0]["replacement"] == "relationship_paths"
 
@@ -128,7 +128,7 @@ def test_check_explanation_raises_friendly_error_for_missing_check():
 
 def _report(completed_at="2026-06-01T10:01:30+10:00"):
     return {
-        "prefix": "CallCentre",
+        "prefix": "ExampleProduct",
         "started_at": "2026-06-01T10:00:00+10:00",
         "completed_at": completed_at,
         "summary": {
@@ -152,7 +152,7 @@ def _report(completed_at="2026-06-01T10:01:30+10:00"):
                 "row_count": 0,
                 "sample_rows": [],
                 "test_case": {
-                    "test_id": "CALLCENTRE-SEM-001",
+                    "test_id": "EXAMPLEPRODUCT-SEM-001",
                     "name": "Entity metadata references deployed objects",
                     "category": "SEMANTIC",
                     "severity": "CRITICAL",
@@ -171,7 +171,7 @@ def _report(completed_at="2026-06-01T10:01:30+10:00"):
                     }
                 ],
                 "test_case": {
-                    "test_id": "CALLCENTRE-VIEW-LOCKING-001",
+                    "test_id": "EXAMPLEPRODUCT-VIEW-LOCKING-001",
                     "name": "Every table has a standard locking view",
                     "category": "STRUCTURAL",
                     "severity": "CRITICAL",
@@ -186,7 +186,7 @@ def _report(completed_at="2026-06-01T10:01:30+10:00"):
                 "sample_rows": [
                     {
                         "safe_auto_apply": True,
-                        "database_name": "CallCentre_SEM_STD_T",
+                        "database_name": "ExampleProduct_SEM_STD_T",
                         "table_name": "Query_Cookbook",
                         "column_name": "recipe_description",
                         "token": "v_relationship_patsh",
@@ -195,7 +195,7 @@ def _report(completed_at="2026-06-01T10:01:30+10:00"):
                     }
                 ],
                 "test_case": {
-                    "test_id": "CALLCENTRE-TEXT-001",
+                    "test_id": "EXAMPLEPRODUCT-TEXT-001",
                     "name": "Free-text references are current",
                     "category": "FREE_TEXT",
                     "severity": "WARNING",
@@ -210,7 +210,7 @@ def _report(completed_at="2026-06-01T10:01:30+10:00"):
                 "sample_rows": [],
                 "error_message": "Backend error",
                 "test_case": {
-                    "test_id": "CALLCENTRE-DISCOVERY-001",
+                    "test_id": "EXAMPLEPRODUCT-DISCOVERY-001",
                     "name": "Data product registry exists",
                     "category": "SEMANTIC",
                     "severity": "CRITICAL",
