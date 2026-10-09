@@ -144,6 +144,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Database for validation_latest and validation_trust_map. Defaults to <prefix>_OBS_STD_V.",
     )
     ddl_parser.add_argument(
+        "--acl-view-database",
+        help="Database for the access-layer validation_trust_map view. Defaults to <prefix>_OBS_ACL_V.",
+    )
+    ddl_parser.add_argument(
         "--rules-config",
         type=Path,
         help="Optional rules JSON; its publish_validation_database sets the table database.",
@@ -342,6 +346,7 @@ def _main(argv: list[str] | None = None) -> int:
             args.prefix,
             table_database=args.table_database or rule_config.publish_validation_database,
             view_database=args.view_database,
+            acl_view_database=args.acl_view_database,
         )
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
