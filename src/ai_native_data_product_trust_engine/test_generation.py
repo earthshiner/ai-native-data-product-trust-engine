@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ai_native_data_product_trust_engine.layout import Layout, derive_layout, sql_string
 from ai_native_data_product_trust_engine.models import (
     ExpectedResult,
     TestCase,
@@ -19,11 +20,12 @@ def observability_view_database(prefix: str) -> str:
     return f"{prefix}_OBS_STD_V"
 
 
-def business_view_database(physical_database_expression: str) -> str:
-    return (
-        f"OREPLACE(OREPLACE({physical_database_expression}, '_STD_T', '_BUS_V'), "
-        "'_STD_V', '_BUS_V')"
-    )
+def business_view_database(
+    physical_database_expression: str, layout: Layout | None = None
+) -> str:
+    """SQL expression for the CONSUMER container serving a physical container."""
+    resolved = layout or derive_layout("")
+    return resolved.consumer_database_expression(physical_database_expression)
 
 
 def memory_database(prefix: str) -> str:
@@ -38,31 +40,65 @@ def data_products_registry_view() -> str:
     return "active_data_product_registry"
 
 
-def deployed_module_database_filter(sem_db: str, database_expression: str) -> str:
-    return f"""
-EXISTS (
-    SELECT 1
-    FROM {sem_db}.data_product_map module_scope
-    WHERE COALESCE(module_scope.is_active, 1) = 1
-      AND UPPER(COALESCE(TRIM(module_scope.deployment_status), 'DEPLOYED')) = 'DEPLOYED'
-      AND (
-          UPPER(TRIM(module_scope.database_name)) = UPPER(TRIM({database_expression}))
-          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_STD_V'), '_BUS_V', '_STD_V'))
-                = UPPER(TRIM({database_expression}))
-          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_BUS_V'), '_STD_V', '_BUS_V'))
-                = UPPER(TRIM({database_expression}))
-      )
-)""".strip()
-
-
-def generate_metadata_tests(prefix: str) -> list[TestCase]:
-    sem_db = semantic_database(prefix)
+def generate_metadata_tests(prefix: str, layout: Layout | None = None) -> list[TestCase]:
+    layout = layout or derive_layout(prefix)
+    sem_db = layout.semantic_database
     # Base table behind the semantic locking view — the target for entity_metadata
-    # repair DML (SEM-008). semantic_database() returns the _STD_V locking view.
-    sem_std_t = sem_db.replace("_STD_V", "_STD_T")
-    mem_db = memory_database(prefix)
-    registry_db = data_products_registry_database()
-    registry_view = data_products_registry_view()
+    # repair DML (SEM-008).
+    sem_std_t = layout.semantic_storage_database
+    mem_db = layout.memory_database
+    obs_db = layout.observability_database
+    registry_db = layout.registry_database
+    registry_view = layout.registry_view
+    graph_db = layout.graph_catalogue_database
+    label = layout.consumer_label()
+    obs_consumer_db = layout.observability_consumer_database
+
+    if layout.uses_container_sets:
+        # Declared bindings: the entity's current-state view is its CONSUMER object
+        # with CURRENT_ONLY semantics. No suffix is stripped or appended.
+        derived_view_sql = layout.current_view_expression(
+            "ae.entity_name", "ae.business_database_name || '.' || TRIM(ae.table_name)"
+        )
+        module_map_derived_columns = ""
+    else:
+        derived_view_sql = (
+            "ae.business_database_name || '.' ||\n"
+            "        CASE\n"
+            "            WHEN ae.table_name LIKE '%\\_H' ESCAPE '\\'\n"
+            "            THEN SUBSTR(TRIM(ae.table_name), 1, CHARACTER_LENGTH(TRIM(ae.table_name)) - 2)"
+            " || '_Current'\n"
+            "            ELSE TRIM(ae.table_name)\n"
+            "        END"
+        )
+        module_map_derived_columns = (
+            "\n       ,OREPLACE(OREPLACE(TRIM(database_name), '_STD_T', '_STD_V'), '_BUS_V', '_STD_V')"
+            "\n            AS standard_view_database_name"
+            "\n       ,OREPLACE(OREPLACE(TRIM(database_name), '_STD_T', '_BUS_V'), '_STD_V', '_BUS_V')"
+            "\n            AS business_view_database_name"
+        )
+
+    def module_match(module: str, database_column: str, view_column: str) -> str:
+        """Predicate lines matching a registry database to a module's containers."""
+        if not layout.uses_container_sets:
+            return (
+                f"mm.database_name = ar.{database_column}\n"
+                f"              OR mm.database_name = ar.{view_column}\n"
+                f"              OR mm.standard_view_database_name = ar.{database_column}\n"
+                f"              OR mm.standard_view_database_name = ar.{view_column}\n"
+                f"              OR mm.business_view_database_name = ar.{database_column}\n"
+                f"              OR mm.business_view_database_name = ar.{view_column}"
+            )
+        lines = [
+            f"mm.database_name = ar.{database_column}",
+            f"OR mm.database_name = ar.{view_column}",
+        ]
+        declared = layout.modules.get(module)
+        if declared and declared.all_containers():
+            members = ", ".join(sql_string(c.upper()) for c in declared.all_containers())
+            lines.append(f"OR UPPER(TRIM(ar.{database_column})) IN ({members})")
+            lines.append(f"OR UPPER(TRIM(ar.{view_column})) IN ({members})")
+        return "\n              ".join(lines)
 
     return [
         TestCase(
@@ -80,7 +116,7 @@ LEFT OUTER JOIN DBC.TablesV tv
    AND tv.TableName = em.table_name
 WHERE tv.TableName IS NULL
   AND COALESCE(em.is_active, 1) = 1
-  AND {deployed_module_database_filter(sem_db, 'em.database_name')}
+  AND {layout.module_scope_filter('em.database_name')}
   AND {backup_object_exclusion_sql('em.table_name')};
 """.strip(),
             expected_result="Returns zero rows.",
@@ -103,7 +139,7 @@ LEFT OUTER JOIN DBC.ColumnsV colv
    AND colv.ColumnName = cmeta.column_name
 WHERE colv.ColumnName IS NULL
   AND COALESCE(cmeta.is_active, 1) = 1
-  AND {deployed_module_database_filter(sem_db, 'cmeta.database_name')}
+  AND {layout.module_scope_filter('cmeta.database_name')}
   AND {backup_object_exclusion_sql('cmeta.table_name')};
 """.strip(),
             expected_result="Returns zero rows.",
@@ -133,8 +169,8 @@ LEFT OUTER JOIN DBC.ColumnsV tgt
    AND tgt.TableName = tr.target_table
    AND tgt.ColumnName = tr.target_column
 WHERE COALESCE(tr.is_active, 1) = 1
-  AND {deployed_module_database_filter(sem_db, 'tr.source_database')}
-  AND {deployed_module_database_filter(sem_db, 'tr.target_database')}
+  AND {layout.module_scope_filter('tr.source_database')}
+  AND {layout.module_scope_filter('tr.target_database')}
   AND {backup_object_exclusion_sql('tr.source_table')}
   AND {backup_object_exclusion_sql('tr.target_table')}
   AND (src.ColumnName IS NULL OR tgt.ColumnName IS NULL);
@@ -178,8 +214,8 @@ WITH deployed_relationship_columns AS
        AND tgt.TableName = tr.target_table
        AND tgt.ColumnName = tr.target_column
     WHERE COALESCE(tr.is_active, 1) = 1
-      AND {deployed_module_database_filter(sem_db, 'tr.source_database')}
-      AND {deployed_module_database_filter(sem_db, 'tr.target_database')}
+      AND {layout.module_scope_filter('tr.source_database')}
+      AND {layout.module_scope_filter('tr.target_database')}
       AND {backup_object_exclusion_sql('tr.source_table')}
       AND {backup_object_exclusion_sql('tr.target_table')}
 ),
@@ -282,9 +318,9 @@ WITH product_columns AS
     INNER JOIN DBC.TablesV tv
         ON tv.DatabaseName = colv.DatabaseName
        AND tv.TableName = colv.TableName
-    WHERE colv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+    WHERE {layout.product_scope('colv.DatabaseName')}
       AND tv.TableKind = 'T'
-      AND {deployed_module_database_filter(sem_db, 'colv.DatabaseName')}
+      AND {layout.module_scope_filter('colv.DatabaseName')}
       AND {backup_object_exclusion_sql('colv.TableName')}
 ),
 drifted_names AS
@@ -338,7 +374,7 @@ INNER JOIN DBC.ColumnsV colv
    AND colv.TableName = cmeta.table_name
    AND colv.ColumnName = cmeta.column_name
 WHERE COALESCE(cmeta.is_active, 1) = 1
-  AND {deployed_module_database_filter(sem_db, 'cmeta.database_name')}
+  AND {layout.module_scope_filter('cmeta.database_name')}
   AND {backup_object_exclusion_sql('cmeta.table_name')}
   AND UPPER(cmeta.data_type) NOT LIKE
     CASE TRIM(colv.ColumnType)
@@ -385,7 +421,7 @@ LEFT OUTER JOIN {sem_db}.column_metadata cmeta
    AND cmeta.column_name = colv.ColumnName
    AND COALESCE(cmeta.is_active, 1) = 1
 WHERE COALESCE(em.is_active, 1) = 1
-  AND {deployed_module_database_filter(sem_db, 'em.database_name')}
+  AND {layout.module_scope_filter('em.database_name')}
   AND {backup_object_exclusion_sql('em.table_name')}
   AND {backup_object_exclusion_sql('colv.TableName')}
   AND cmeta.column_name IS NULL
@@ -405,9 +441,9 @@ SELECT
    ,'data_product_map' AS object_name
    ,'primary_views' AS column_name
    ,'DATA_PRODUCT_MAP_PRIMARY_VIEWS_MISSING' AS issue_code
-   ,'The primary_views metadata column is required before BUS_V deployment can be checked.'
+   ,'The primary_views metadata column is required before {label} deployment can be checked.'
         AS issue_detail
-   ,'Add primary_views to data_product_map and populate the approved BUS_V view names.'
+   ,'Add primary_views to data_product_map and populate the approved {label} view names.'
         AS repair_hint
 WHERE NOT EXISTS (
     SELECT 1
@@ -423,7 +459,7 @@ WITH module_primary_views AS
     SELECT
         dpm.module_name
        ,dpm.database_name AS physical_database_name
-       ,{business_view_database('dpm.database_name')} AS business_database_name
+       ,{layout.consumer_database_expression('dpm.database_name')} AS business_database_name
        ,TRIM(REGEXP_SUBSTR(dpm.primary_views, '[^,]+', 1, token_numbers.token_number))
             AS primary_view_name
     FROM {sem_db}.data_product_map dpm
@@ -450,7 +486,7 @@ SELECT
    ,business_database_name
    ,primary_view_name
    ,'PRIMARY_VIEW_NOT_DEPLOYED' AS issue_code
-   ,'Create the BUS_V view or update data_product_map.primary_views to the deployed view name.' AS repair_hint
+   ,'Create the {label} view or update data_product_map.primary_views to the deployed view name.' AS repair_hint
 FROM module_primary_views mpv
 LEFT OUTER JOIN DBC.TablesV tv
     ON tv.DatabaseName = mpv.business_database_name
@@ -476,10 +512,10 @@ WITH active_entities AS
        ,em.database_name
        ,em.table_name
        ,em.view_name
-       ,{business_view_database('em.database_name')} AS business_database_name
+       ,{layout.consumer_database_expression('em.database_name')} AS business_database_name
     FROM {sem_db}.entity_metadata em
     WHERE COALESCE(em.is_active, 1) = 1
-      AND {deployed_module_database_filter(sem_db, 'em.database_name')}
+      AND {layout.module_scope_filter('em.database_name')}
       AND {backup_object_exclusion_sql('em.table_name')}
 ),
 resolved_entities AS
@@ -490,12 +526,7 @@ resolved_entities AS
        ,ae.table_name
        ,ae.view_name
        ,ae.business_database_name
-       ,ae.business_database_name || '.' ||
-        CASE
-            WHEN ae.table_name LIKE '%\\_H' ESCAPE '\\'
-            THEN SUBSTR(TRIM(ae.table_name), 1, CHARACTER_LENGTH(TRIM(ae.table_name)) - 2) || '_Current'
-            ELSE TRIM(ae.table_name)
-        END AS derived_view_name
+       ,{derived_view_sql} AS derived_view_name
     FROM active_entities ae
 )
 SELECT
@@ -511,7 +542,7 @@ SELECT
    ,'entity_metadata' AS metadata_table_name
    ,re.derived_view_name
    ,CASE WHEN dv.TableName IS NOT NULL THEN 1 ELSE 0 END AS derived_view_deployed
-   ,'Populate entity_metadata.view_name with the approved BUS_V view for agent access.' AS repair_hint
+   ,'Populate entity_metadata.view_name with the approved {label} view for agent access.' AS repair_hint
 FROM resolved_entities re
 LEFT OUTER JOIN DBC.TablesV tv
     ON TRIM(tv.DatabaseName) || '.' || TRIM(tv.TableName) = TRIM(re.view_name)
@@ -544,12 +575,12 @@ SELECT
    ,tr.source_table AS object_name
    ,tr.source_column AS column_name
    ,'RELATIONSHIP_SOURCE_NOT_BUS_V' AS issue_code
-   ,'Update source_database/source_table to the approved BUS_V database and view.' AS repair_hint
+   ,'Update source_database/source_table to the approved {label} database and view.' AS repair_hint
 FROM {sem_db}.table_relationship tr
 WHERE COALESCE(tr.is_active, 1) = 1
-  AND {deployed_module_database_filter(sem_db, 'tr.source_database')}
+  AND {layout.module_scope_filter('tr.source_database')}
   AND {backup_object_exclusion_sql('tr.source_table')}
-  AND UPPER(tr.source_database) NOT LIKE '%\\_BUS\\_V' ESCAPE '\\'
+  AND {layout.not_consumer_endpoint('tr.source_database')}
 UNION ALL
 SELECT
     tr.relationship_name
@@ -557,12 +588,12 @@ SELECT
    ,tr.target_table AS object_name
    ,tr.target_column AS column_name
    ,'RELATIONSHIP_TARGET_NOT_BUS_V' AS issue_code
-   ,'Update target_database/target_table to the approved BUS_V database and view.' AS repair_hint
+   ,'Update target_database/target_table to the approved {label} database and view.' AS repair_hint
 FROM {sem_db}.table_relationship tr
 WHERE COALESCE(tr.is_active, 1) = 1
-  AND {deployed_module_database_filter(sem_db, 'tr.target_database')}
+  AND {layout.module_scope_filter('tr.target_database')}
   AND {backup_object_exclusion_sql('tr.target_table')}
-  AND UPPER(tr.target_database) NOT LIKE '%\\_BUS\\_V' ESCAPE '\\'
+  AND {layout.not_consumer_endpoint('tr.target_database')}
 ORDER BY 1, 5, 2, 3, 4;
 """.strip(),
             expected_result="Returns zero rows when generated joins use governed BUS_V endpoints.",
@@ -579,16 +610,16 @@ ORDER BY 1, 5, 2, 3, 4;
             severity=TestSeverity.WARNING,
             precondition_sql=f"""
 SELECT
-    '{observability_view_database(prefix)}' AS database_name
+    '{obs_db}' AS database_name
    ,'data_lineage' AS object_name
    ,'LINEAGE_VIEW_NOT_DEPLOYED' AS issue_code
-   ,'{observability_view_database(prefix)}.data_lineage is required before lineage endpoint '
+   ,'{obs_db}.data_lineage is required before lineage endpoint '
      || 'semantics can be inspected.' AS issue_detail
    ,'Deploy the standard data_lineage view, then rerun validation.' AS repair_hint
 WHERE NOT EXISTS (
     SELECT 1
     FROM DBC.TablesV tv
-    WHERE tv.DatabaseName = '{observability_view_database(prefix)}'
+    WHERE tv.DatabaseName = '{obs_db}'
       AND tv.TableName = 'data_lineage'
       AND tv.TableKind IN ('V', 'O', 'Q')
 );
@@ -599,24 +630,24 @@ SELECT
    ,dl.source_database AS database_name
    ,dl.source_table AS object_name
    ,'LINEAGE_SOURCE_NOT_BUS_V' AS issue_code
-   ,'Expose source lineage through BUS_V database and view names for agent-facing consumption.' AS repair_hint
-FROM {observability_view_database(prefix)}.data_lineage dl
-WHERE UPPER(dl.source_database) NOT LIKE '%\\_BUS\\_V' ESCAPE '\\'
+   ,'Expose source lineage through {label} database and view names for agent-facing consumption.' AS repair_hint
+FROM {obs_db}.data_lineage dl
+WHERE {layout.not_consumer_endpoint('dl.source_database')}
 UNION ALL
 SELECT
     dl.lineage_id
    ,dl.target_database AS database_name
    ,dl.target_table AS object_name
    ,'LINEAGE_TARGET_NOT_BUS_V' AS issue_code
-   ,'Expose target lineage through BUS_V database and view names for agent-facing consumption.' AS repair_hint
-FROM {observability_view_database(prefix)}.data_lineage dl
-WHERE UPPER(dl.target_database) NOT LIKE '%\\_BUS\\_V' ESCAPE '\\'
+   ,'Expose target lineage through {label} database and view names for agent-facing consumption.' AS repair_hint
+FROM {obs_db}.data_lineage dl
+WHERE {layout.not_consumer_endpoint('dl.target_database')}
 ORDER BY 1, 4, 2, 3;
 """.strip(),
             expected_result="Returns zero rows when lineage consumed by agents references BUS_V endpoints.",
             repair_strategy="Publish agent-facing lineage through BUS_V databases and views.",
             inspection_scope=(
-                f"{observability_view_database(prefix)}.data_lineage "
+                f"{obs_db}.data_lineage "
                 "source_database/source_table and target_database/target_table"
             ),
         ),
@@ -685,11 +716,7 @@ module_map AS
 (
     SELECT
         UPPER(TRIM(module_name)) AS module_name
-       ,TRIM(database_name) AS database_name
-       ,OREPLACE(OREPLACE(TRIM(database_name), '_STD_T', '_STD_V'), '_BUS_V', '_STD_V')
-            AS standard_view_database_name
-       ,OREPLACE(OREPLACE(TRIM(database_name), '_STD_T', '_BUS_V'), '_STD_V', '_BUS_V')
-            AS business_view_database_name
+       ,TRIM(database_name) AS database_name{module_map_derived_columns}
     FROM {sem_db}.data_product_map
     WHERE COALESCE(is_active, 1) = 1
 ),
@@ -768,12 +795,7 @@ registry_issues AS
         FROM module_map mm
         WHERE mm.module_name = 'SEMANTIC'
           AND (
-              mm.database_name = ar.semantic_database
-              OR mm.database_name = ar.semantic_view_database
-              OR mm.standard_view_database_name = ar.semantic_database
-              OR mm.standard_view_database_name = ar.semantic_view_database
-              OR mm.business_view_database_name = ar.semantic_database
-              OR mm.business_view_database_name = ar.semantic_view_database
+              {module_match('SEMANTIC', 'semantic_database', 'semantic_view_database')}
           )
     )
 
@@ -795,12 +817,7 @@ registry_issues AS
         FROM module_map mm
         WHERE mm.module_name = 'MEMORY'
           AND (
-              mm.database_name = ar.memory_database
-              OR mm.database_name = ar.memory_view_database
-              OR mm.standard_view_database_name = ar.memory_database
-              OR mm.standard_view_database_name = ar.memory_view_database
-              OR mm.business_view_database_name = ar.memory_database
-              OR mm.business_view_database_name = ar.memory_view_database
+              {module_match('MEMORY', 'memory_database', 'memory_view_database')}
           )
     )
 
@@ -822,12 +839,7 @@ registry_issues AS
         FROM module_map mm
         WHERE mm.module_name = 'OBSERVABILITY'
           AND (
-              mm.database_name = ar.observability_database
-              OR mm.database_name = ar.observability_view_database
-              OR mm.standard_view_database_name = ar.observability_database
-              OR mm.standard_view_database_name = ar.observability_view_database
-              OR mm.business_view_database_name = ar.observability_database
-              OR mm.business_view_database_name = ar.observability_view_database
+              {module_match('OBSERVABILITY', 'observability_database', 'observability_view_database')}
           )
     )
 
@@ -908,9 +920,9 @@ WITH table_amp_usage AS
     INNER JOIN DBC.TablesV tv
         ON tv.DatabaseName = tsv.DatabaseName
        AND tv.TableName = tsv.TableName
-    WHERE tsv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+    WHERE {layout.product_scope('tsv.DatabaseName')}
       AND tv.TableKind = 'T'
-      AND {deployed_module_database_filter(sem_db, 'tsv.DatabaseName')}
+      AND {layout.module_scope_filter('tsv.DatabaseName')}
       AND {backup_object_exclusion_sql('tsv.TableName')}
 ),
 table_skew AS
@@ -965,9 +977,9 @@ WITH product_tables AS
        ,TRIM(tv.TableName) AS table_name
        ,COALESCE(tv.PIColumnCount, 0) AS pi_column_count
     FROM DBC.TablesV tv
-    WHERE tv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+    WHERE {layout.product_scope('tv.DatabaseName')}
       AND tv.TableKind = 'T'
-      AND {deployed_module_database_filter(sem_db, 'tv.DatabaseName')}
+      AND {layout.module_scope_filter('tv.DatabaseName')}
       AND {backup_object_exclusion_sql('tv.TableName')}
 ),
 table_size AS
@@ -987,7 +999,7 @@ table_size AS
             )
         END AS skew_percent
     FROM DBC.TableSizeV tsv
-    WHERE {deployed_module_database_filter(sem_db, 'tsv.DatabaseName')}
+    WHERE {layout.module_scope_filter('tsv.DatabaseName')}
       AND {backup_object_exclusion_sql('tsv.TableName')}
     GROUP BY TRIM(tsv.DatabaseName), TRIM(tsv.TableName)
 ),
@@ -1006,8 +1018,8 @@ primary_index_column_rows AS
        AND colv.ColumnName = iv.ColumnName
     WHERE iv.IndexNumber = 1
       AND iv.IndexType IN ('P', 'Q', 'A', 'K')
-      AND iv.DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
-      AND {deployed_module_database_filter(sem_db, 'iv.DatabaseName')}
+      AND {layout.product_scope('iv.DatabaseName')}
+      AND {layout.module_scope_filter('iv.DatabaseName')}
       AND {backup_object_exclusion_sql('iv.TableName')}
 ),
 primary_index_columns AS
@@ -1146,7 +1158,7 @@ WITH required_stats AS
        ,'RELATIONSHIP_SOURCE_JOIN' AS usage_type
     FROM {sem_db}.table_relationship tr
     WHERE COALESCE(tr.is_active, 1) = 1
-      AND {deployed_module_database_filter(sem_db, 'tr.source_database')}
+      AND {layout.module_scope_filter('tr.source_database')}
       AND tr.source_database IS NOT NULL
       AND tr.source_table IS NOT NULL
       AND tr.source_column IS NOT NULL
@@ -1160,7 +1172,7 @@ WITH required_stats AS
        ,'RELATIONSHIP_TARGET_JOIN' AS usage_type
     FROM {sem_db}.table_relationship tr
     WHERE COALESCE(tr.is_active, 1) = 1
-      AND {deployed_module_database_filter(sem_db, 'tr.target_database')}
+      AND {layout.module_scope_filter('tr.target_database')}
       AND tr.target_database IS NOT NULL
       AND tr.target_table IS NOT NULL
       AND tr.target_column IS NOT NULL
@@ -1383,14 +1395,14 @@ WITH required_observability_views AS
     FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'
 )
 SELECT
-    '{prefix}_OBS_BUS_V' AS database_name
+    '{obs_consumer_db}' AS database_name
    ,rov.object_name
    ,'MISSING_OBSERVABILITY_BUS_VIEW' AS issue_code
-   ,'Required Observability BUS_V view is not deployed for governed agent access.' AS issue_detail
-   ,'Create the Observability BUS_V database and expose this object as a governed access view.' AS repair_hint
+   ,'Required Observability {label} view is not deployed for governed agent access.' AS issue_detail
+   ,'Create the Observability {label} database and expose this object as a governed access view.' AS repair_hint
 FROM required_observability_views rov
 LEFT OUTER JOIN DBC.TablesV tv
-    ON tv.DatabaseName = '{prefix}_OBS_BUS_V'
+    ON tv.DatabaseName = '{obs_consumer_db}'
    AND tv.TableName = rov.object_name
    AND tv.TableKind IN ('V', 'O', 'Q')
 WHERE tv.TableName IS NULL
@@ -1411,11 +1423,11 @@ ORDER BY rov.object_name;
             severity=TestSeverity.WARNING,
             precondition_sql=f"""
 SELECT
-    '{observability_view_database(prefix)}' AS database_name
+    '{obs_db}' AS database_name
    ,'data_lineage' AS object_name
    ,'GRAPH_LINEAGE_PREREQUISITES_MISSING' AS issue_code
-   ,'{observability_view_database(prefix)}.data_lineage and/or the shared '
-        || 'Graphs_CAT_STD_0_T.graph_relationship catalogue are required before column-lineage '
+   ,'{obs_db}.data_lineage and/or the shared '
+        || '{graph_db}.graph_relationship catalogue are required before column-lineage '
         || 'advertisement can be checked.' AS issue_detail
    ,'Deploy data_lineage (Observability) and the graph-explorer platform''s shared catalogue '
         || 'before enabling the Observability graph-lineage facet, or disable '
@@ -1423,13 +1435,13 @@ SELECT
         || 'config if the graph-lineage facet is not adopted.' AS repair_hint
 WHERE NOT EXISTS (
     SELECT 1 FROM DBC.TablesV tv
-    WHERE tv.DatabaseName = '{observability_view_database(prefix)}'
+    WHERE tv.DatabaseName = '{obs_db}'
       AND tv.TableName = 'data_lineage'
       AND tv.TableKind IN ('V', 'O', 'Q')
 )
 OR NOT EXISTS (
     SELECT 1 FROM DBC.TablesV tv
-    WHERE tv.DatabaseName = 'Graphs_CAT_STD_0_T'
+    WHERE tv.DatabaseName = '{graph_db}'
       AND tv.TableName = 'graph_relationship'
 );
 """.strip(),
@@ -1443,25 +1455,25 @@ WITH product_graph AS
       AND graph_key IS NOT NULL
 )
 SELECT
-    '{observability_view_database(prefix)}' AS database_name
+    '{obs_db}' AS database_name
    ,'data_lineage' AS object_name
    ,'COLUMN_LINEAGE_NOT_ADVERTISED' AS issue_code
    ,'data_lineage carries populated source_column/target_column rows, but this product''s '
         || 'registered graph_key (data_product_map.graph_key) does not advertise the '
-        || 'derives_column relationship in the shared Graphs_CAT_STD_0_T catalogue.'
+        || 'derives_column relationship in the shared {graph_db} catalogue.'
         AS issue_detail
    ,'Register a graph_key in data_product_map if none is set, then register the COLUMN role '
-        || 'and derives_column relationship for that graph_key in Graphs_CAT_STD_0_T, so '
+        || 'and derives_column relationship for that graph_key in {graph_db}, so '
         || 'ColumnGrainLineageTraversal is discoverable without querying data_lineage directly.'
         AS repair_hint
-FROM {observability_view_database(prefix)}.data_lineage dl
+FROM {obs_db}.data_lineage dl
 WHERE dl.is_active = 1
   AND dl.source_column IS NOT NULL
   AND dl.target_column IS NOT NULL
   AND NOT EXISTS (
       SELECT 1
       FROM product_graph pg
-      INNER JOIN Graphs_CAT_STD_0_T.graph_relationship gr
+      INNER JOIN {graph_db}.graph_relationship gr
           ON gr.graph_key = pg.graph_key
       WHERE UPPER(TRIM(gr.relationship)) = 'DERIVES_COLUMN'
   )
@@ -1479,12 +1491,12 @@ QUALIFY ROW_NUMBER() OVER (ORDER BY dl.lineage_id) = 1;
             repair_strategy=(
                 "Register this product's graph_key in data_product_map, and register the "
                 "COLUMN role and derives_column relationship for that graph_key in "
-                "Graphs_CAT_STD_0_T, so the column-lineage facet is catalogue-discoverable."
+                f"{graph_db}, so the column-lineage facet is catalogue-discoverable."
             ),
             inspection_scope=(
-                f"{observability_view_database(prefix)}.data_lineage source_column/target_column "
+                f"{obs_db}.data_lineage source_column/target_column "
                 f"against {sem_db}.data_product_map.graph_key and the shared "
-                "Graphs_CAT_STD_0_T.graph_relationship vocabulary"
+                f"{graph_db}.graph_relationship vocabulary"
             ),
         ),
         TestCase(
@@ -1494,36 +1506,36 @@ QUALIFY ROW_NUMBER() OVER (ORDER BY dl.lineage_id) = 1;
             severity=TestSeverity.WARNING,
             precondition_sql=f"""
 SELECT
-    'Graphs_CAT_STD_0_T' AS database_name
+    '{graph_db}' AS database_name
    ,'graph_relationship' AS object_name
    ,'GRAPH_CATALOGUE_MISSING' AS issue_code
-   ,'The shared Graphs_CAT_STD_0_T catalogue is required before column-lineage catalogue '
+   ,'The shared {graph_db} catalogue is required before column-lineage catalogue '
         || 'consistency can be checked.' AS issue_detail
    ,'Deploy the graph-explorer platform''s shared catalogue, or disable '
         || '{prefix.upper()}-OPS-005 in this product''s rules config if the graph-lineage '
         || 'facet is not adopted anywhere in the estate.' AS repair_hint
 WHERE NOT EXISTS (
     SELECT 1 FROM DBC.TablesV tv
-    WHERE tv.DatabaseName = 'Graphs_CAT_STD_0_T'
+    WHERE tv.DatabaseName = '{graph_db}'
       AND tv.TableName = 'graph_relationship'
 )
 OR NOT EXISTS (
     SELECT 1 FROM DBC.TablesV tv
-    WHERE tv.DatabaseName = 'Graphs_CAT_STD_0_T'
+    WHERE tv.DatabaseName = '{graph_db}'
       AND tv.TableName = 'graph_role'
 );
 """.strip(),
-            sql="""
+            sql=f"""
 WITH relationship_graphs AS
 (
     SELECT DISTINCT graph_key
-    FROM Graphs_CAT_STD_0_T.graph_relationship
+    FROM {graph_db}.graph_relationship
     WHERE UPPER(TRIM(relationship)) = 'DERIVES_COLUMN'
 ),
 role_graphs AS
 (
     SELECT DISTINCT graph_key
-    FROM Graphs_CAT_STD_0_T.graph_role
+    FROM {graph_db}.graph_role
     WHERE UPPER(TRIM(category)) = 'COLUMN'
 )
 SELECT
@@ -1554,7 +1566,7 @@ ORDER BY 1;
                 "column_lineage_enabled flag for the affected graph_key."
             ),
             inspection_scope=(
-                "Shared Graphs_CAT_STD_0_T.graph_relationship and .graph_role, across every "
+                f"Shared {graph_db}.graph_relationship and .graph_role, across every "
                 "registered graph_key in the estate (not scoped to this product alone)"
             ),
         ),
@@ -1563,19 +1575,19 @@ ORDER BY 1;
             name="data_product_map.graph_key resolves to an enabled Graph Explorer registration",
             category=TestCategory.OPERATIONAL,
             severity=TestSeverity.WARNING,
-            precondition_sql="""
+            precondition_sql=f"""
 SELECT
-    'Graphs_CAT_STD_0_T' AS database_name
+    '{graph_db}' AS database_name
    ,'graph_registry' AS object_name
    ,'GRAPH_CATALOGUE_MISSING' AS issue_code
-   ,'The shared Graphs_CAT_STD_0_T catalogue is required before graph_key resolution can be '
+   ,'The shared {graph_db} catalogue is required before graph_key resolution can be '
         || 'checked.' AS issue_detail
    ,'Deploy the graph-explorer platform''s shared catalogue, or clear graph_key in '
         || 'data_product_map and disable this check if the graph-lineage facet is not '
         || 'adopted anywhere in the estate.' AS repair_hint
 WHERE NOT EXISTS (
     SELECT 1 FROM DBC.TablesV tv
-    WHERE tv.DatabaseName = 'Graphs_CAT_STD_0_T'
+    WHERE tv.DatabaseName = '{graph_db}'
       AND tv.TableName = 'graph_registry'
 );
 """.strip(),
@@ -1584,7 +1596,7 @@ SELECT
     dpm.graph_key
    ,'GRAPH_KEY_NOT_REGISTERED' AS issue_code
    ,'data_product_map.graph_key is set on this product''s OBSERVABILITY row, but no '
-        || 'enabled row for it exists in the shared Graphs_CAT_STD_0_T.graph_registry '
+        || 'enabled row for it exists in the shared {graph_db}.graph_registry '
         || 'catalogue (Teradata/ai-native-data-products#65: the write-back that keeps these '
         || 'in step may not have run, or the graph was retired without clearing graph_key).'
         AS issue_detail
@@ -1596,7 +1608,7 @@ WHERE UPPER(TRIM(dpm.module_name)) = 'OBSERVABILITY'
   AND dpm.graph_key IS NOT NULL
   AND NOT EXISTS (
       SELECT 1
-      FROM Graphs_CAT_STD_0_T.graph_registry gr
+      FROM {graph_db}.graph_registry gr
       WHERE gr.graph_key = dpm.graph_key
         AND COALESCE(gr.is_enabled, 1) = 1
   );
@@ -1607,12 +1619,12 @@ WHERE UPPER(TRIM(dpm.module_name)) = 'OBSERVABILITY'
             ),
             repair_strategy=(
                 "Re-run the Observability graph-lineage catalogue seed for this product's "
-                "graph_key, keeping data_product_map.graph_key and Graphs_CAT_STD_0_T.graph_registry "
+                f"graph_key, keeping data_product_map.graph_key and {graph_db}.graph_registry "
                 "in step, or clear graph_key if the facet was retired."
             ),
             inspection_scope=(
                 f"{sem_db}.data_product_map.graph_key against the shared "
-                "Graphs_CAT_STD_0_T.graph_registry"
+                f"{graph_db}.graph_registry"
             ),
         ),
     ]

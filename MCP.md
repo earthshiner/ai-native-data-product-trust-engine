@@ -166,6 +166,13 @@ The server exposes read-only tools backed by the latest report:
 - `generate_repair_plan`
 - `explain_check`
 
+`describe_data_product` (and the `orientation` resource) include a `layout` object taken from the
+report: whether the product declared its layout (`declared`), `platform_profile`, `standard_version`,
+the `sources` of each resolved name (`invocation`, `configuration`, `declaration` or `derivation`),
+the resolved `names`, the `undeclared_values` the engine had to infer (`LAYOUT_NOT_DECLARED`) and
+`excluded_for_layout`, the checks left out with their reason because the declared layout has no
+ACCESS container. It is `null` for reports written before layout resolution existed.
+
 The tools are deliberately read-only in this slice. They do not connect to Teradata, run validation
 or apply repairs. Mutation-oriented self-healing tools should be added later with explicit approval
 semantics.

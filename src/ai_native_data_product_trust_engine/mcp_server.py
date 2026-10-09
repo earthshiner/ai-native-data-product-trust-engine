@@ -394,6 +394,7 @@ def build_orientation_resource(report: dict[str, Any]) -> dict[str, Any]:
             "summary": report.get("summary", {}),
         },
         "scores": report.get("scores", {}),
+        "layout": build_layout_summary(report),
         "status": {
             "safe_for_broad_agent_use": not critical_failures,
             "failure_count": len(failures),
@@ -403,6 +404,27 @@ def build_orientation_resource(report: dict[str, Any]) -> dict[str, Any]:
                 prefix, "failures" if failures else "latest-report"
             ),
         },
+    }
+
+
+def build_layout_summary(report: dict[str, Any]) -> dict[str, Any] | None:
+    """How the run resolved the product's physical names (None for older reports)."""
+    layout = report.get("layout")
+    if not isinstance(layout, dict):
+        return None
+    layout_exclusions = [
+        {"check_id": check.get("check_id"), "reason": check.get("reason")}
+        for check in report.get("excluded_checks", [])
+        if isinstance(check, dict) and check.get("counts_as_expected") is False
+    ]
+    return {
+        "declared": layout.get("declared"),
+        "platform_profile": layout.get("platform_profile"),
+        "standard_version": layout.get("standard_version"),
+        "sources": layout.get("sources", {}),
+        "undeclared_values": layout.get("undeclared_values", []),
+        "names": layout.get("names", {}),
+        "excluded_for_layout": layout_exclusions,
     }
 
 

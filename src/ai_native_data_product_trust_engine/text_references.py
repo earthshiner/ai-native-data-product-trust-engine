@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+from ai_native_data_product_trust_engine.layout import Layout, derive_layout
 from ai_native_data_product_trust_engine.models import (
     ExpectedResult,
     TestCase,
@@ -100,9 +101,12 @@ def apply_safe_text_repairs(
     return repaired
 
 
-def default_text_metadata_sources(prefix: str) -> list[TextMetadataSource]:
-    sem_db = f"{prefix}_SEM_STD_V"
-    mem_db = f"{prefix}_MEM_STD_V"
+def default_text_metadata_sources(
+    prefix: str, layout: Layout | None = None
+) -> list[TextMetadataSource]:
+    layout = layout or derive_layout(prefix)
+    sem_db = layout.semantic_database
+    mem_db = layout.memory_database
     return [
         TextMetadataSource(
             test_id=f"{prefix.upper()}-TEXT-001",
@@ -173,13 +177,17 @@ def run_text_reference_validations(
     prefix: str,
     adapter,
     sources: list[TextMetadataSource] | None = None,
+    layout: Layout | None = None,
 ) -> list[TestResult]:
-    resolved_sources = sources or default_text_metadata_sources(prefix)
+    resolved_sources = sources or default_text_metadata_sources(prefix, layout)
     return [run_text_reference_validation(adapter, source) for source in resolved_sources]
 
 
-def text_reference_test_cases(prefix: str) -> list[TestCase]:
-    return [text_reference_test_case(source) for source in default_text_metadata_sources(prefix)]
+def text_reference_test_cases(prefix: str, layout: Layout | None = None) -> list[TestCase]:
+    return [
+        text_reference_test_case(source)
+        for source in default_text_metadata_sources(prefix, layout)
+    ]
 
 
 def text_reference_test_case(source: TextMetadataSource) -> TestCase:

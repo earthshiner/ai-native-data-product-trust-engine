@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 
+from ai_native_data_product_trust_engine.layout import SOURCE_DERIVATION, Layout, derive_layout
 from ai_native_data_product_trust_engine.trust_publish import default_validation_database
 
 _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
@@ -27,11 +28,16 @@ _VIEW_DB = "__VIEW_DB__"
 _ACL_DB = "__ACL_DB__"
 
 
-def default_validation_view_database(prefix: str) -> str:
-    return f"{prefix}_OBS_STD_V"
+def default_validation_view_database(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
+    return layout.observability_database
 
 
-def default_validation_acl_database(prefix: str) -> str:
+def default_validation_acl_database(prefix: str, layout: Layout | None = None) -> str:
+    """The access-layer view database: the declared Observability consumer container, if any."""
+    layout = layout or derive_layout(prefix)
+    if layout.source_of("observability_consumer_database") != SOURCE_DERIVATION:
+        return layout.observability_consumer_database
     return f"{prefix}_OBS_ACL_V"
 
 
@@ -40,11 +46,18 @@ def validation_ddl(
     table_database: str | None = None,
     view_database: str | None = None,
     acl_view_database: str | None = None,
+    layout: Layout | None = None,
 ) -> str:
     """Render the validation_run / validation_area tables and their views for ``prefix``."""
-    table_db = _database_identifier(table_database or default_validation_database(prefix))
-    view_db = _database_identifier(view_database or default_validation_view_database(prefix))
-    acl_db = _database_identifier(acl_view_database or default_validation_acl_database(prefix))
+    table_db = _database_identifier(
+        table_database or default_validation_database(prefix, layout)
+    )
+    view_db = _database_identifier(
+        view_database or default_validation_view_database(prefix, layout)
+    )
+    acl_db = _database_identifier(
+        acl_view_database or default_validation_acl_database(prefix, layout)
+    )
     return (
         _TEMPLATE.replace(_TABLE_DB, table_db).replace(_VIEW_DB, view_db).replace(_ACL_DB, acl_db)
     )

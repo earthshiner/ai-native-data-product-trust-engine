@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+from ai_native_data_product_trust_engine.layout import Layout, derive_layout
 from ai_native_data_product_trust_engine.models import (
     ExpectedResult,
     TestCase,
@@ -39,24 +40,28 @@ class ProductCapability:
     evidence: list[dict[str, object]]
 
 
-def run_capability_validations(prefix: str, adapter) -> list[TestResult]:
-    native_vector = discover_native_vector_capability(prefix, adapter)
-    fallback_embedding = discover_fallback_embedding_capability(prefix, adapter)
+def run_capability_validations(
+    prefix: str, adapter, layout: Layout | None = None
+) -> list[TestResult]:
+    native_vector = discover_native_vector_capability(prefix, adapter, layout)
+    fallback_embedding = discover_fallback_embedding_capability(prefix, adapter, layout)
     return [
-        _capability_inventory_result(prefix, native_vector, fallback_embedding),
-        _native_vector_alignment_result(prefix, adapter, native_vector),
-        _semantic_search_alignment_result(prefix, adapter, native_vector, fallback_embedding),
+        _capability_inventory_result(prefix, native_vector, fallback_embedding, layout),
+        _native_vector_alignment_result(prefix, adapter, native_vector, layout),
+        _semantic_search_alignment_result(
+            prefix, adapter, native_vector, fallback_embedding, layout
+        ),
     ]
 
 
-def capability_test_cases(prefix: str) -> list[TestCase]:
+def capability_test_cases(prefix: str, layout: Layout | None = None) -> list[TestCase]:
     return [
         TestCase(
             test_id=f"{prefix.upper()}-CAP-001",
             name="Product capability inventory is discoverable",
             category=TestCategory.CAPABILITY,
             severity=TestSeverity.INFO,
-            sql=_native_vector_evidence_sql(prefix),
+            sql=_native_vector_evidence_sql(prefix, layout),
             expected_result="Records discovered capability status and physical evidence.",
             expected=ExpectedResult.NON_EMPTY,
             repair_strategy="Refresh Product_Capability metadata or physical capability evidence.",
@@ -66,7 +71,7 @@ def capability_test_cases(prefix: str) -> list[TestCase]:
             name="Native VECTOR references align to deployed capability",
             category=TestCategory.CAPABILITY,
             severity=TestSeverity.CRITICAL,
-            sql=_native_vector_reference_sql(prefix),
+            sql=_native_vector_reference_sql(prefix, layout),
             expected_result="Returns zero native VECTOR references when native VECTOR is unavailable.",
             expected=ExpectedResult.ZERO_ROWS,
             repair_strategy="Use fallback embedding recipes or mark native VECTOR unavailable.",
@@ -76,7 +81,7 @@ def capability_test_cases(prefix: str) -> list[TestCase]:
             name="Semantic search claims align to deployed capability",
             category=TestCategory.CAPABILITY,
             severity=TestSeverity.CRITICAL,
-            sql=_semantic_search_reference_sql(prefix),
+            sql=_semantic_search_reference_sql(prefix, layout),
             expected_result=(
                 "Returns zero semantic-search metadata claims that lack native VECTOR or "
                 "fallback embedding evidence."
@@ -90,8 +95,10 @@ def capability_test_cases(prefix: str) -> list[TestCase]:
     ]
 
 
-def discover_native_vector_capability(prefix: str, adapter) -> ProductCapability:
-    evidence = adapter.fetch_all(_native_vector_evidence_sql(prefix))
+def discover_native_vector_capability(
+    prefix: str, adapter, layout: Layout | None = None
+) -> ProductCapability:
+    evidence = adapter.fetch_all(_native_vector_evidence_sql(prefix, layout))
     return ProductCapability(
         name="NATIVE_VECTOR",
         status=CapabilityStatus.AVAILABLE if evidence else CapabilityStatus.UNAVAILABLE,
@@ -99,8 +106,10 @@ def discover_native_vector_capability(prefix: str, adapter) -> ProductCapability
     )
 
 
-def discover_fallback_embedding_capability(prefix: str, adapter) -> ProductCapability:
-    evidence = adapter.fetch_all(_fallback_embedding_evidence_sql(prefix))
+def discover_fallback_embedding_capability(
+    prefix: str, adapter, layout: Layout | None = None
+) -> ProductCapability:
+    evidence = adapter.fetch_all(_fallback_embedding_evidence_sql(prefix, layout))
     return ProductCapability(
         name="FALLBACK_EMBEDDING",
         status=CapabilityStatus.AVAILABLE if evidence else CapabilityStatus.UNAVAILABLE,
@@ -112,8 +121,9 @@ def _capability_inventory_result(
     prefix: str,
     native_vector: ProductCapability,
     fallback_embedding: ProductCapability,
+    layout: Layout | None = None,
 ) -> TestResult:
-    test_case = capability_test_cases(prefix)[0]
+    test_case = capability_test_cases(prefix, layout)[0]
     return TestResult(
         test_case=test_case,
         status=TestStatus.PASSED,
@@ -129,8 +139,9 @@ def _native_vector_alignment_result(
     prefix: str,
     adapter,
     native_vector: ProductCapability,
+    layout: Layout | None = None,
 ) -> TestResult:
-    test_case = capability_test_cases(prefix)[1]
+    test_case = capability_test_cases(prefix, layout)[1]
     try:
         reference_rows = adapter.fetch_all(test_case.sql)
     except Exception as exc:  # noqa: BLE001 - adapters normalise backend errors later.
@@ -158,8 +169,9 @@ def _semantic_search_alignment_result(
     adapter,
     native_vector: ProductCapability,
     fallback_embedding: ProductCapability,
+    layout: Layout | None = None,
 ) -> TestResult:
-    test_case = capability_test_cases(prefix)[2]
+    test_case = capability_test_cases(prefix, layout)[2]
     try:
         reference_rows = adapter.fetch_all(test_case.sql)
     except Exception as exc:  # noqa: BLE001 - adapters normalise backend errors later.
@@ -252,7 +264,8 @@ def _row_matches(row: dict[str, object], pattern: re.Pattern[str]) -> bool:
     return any(value is not None and pattern.search(str(value)) for value in values)
 
 
-def _native_vector_evidence_sql(prefix: str) -> str:
+def _native_vector_evidence_sql(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
     return f"""
 SELECT
     DatabaseName
@@ -260,7 +273,7 @@ SELECT
    ,ColumnName
    ,ColumnType
 FROM DBC.ColumnsV
-WHERE DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+WHERE {layout.product_scope('DatabaseName')}
   AND {backup_object_exclusion_sql('TableName')}
   AND (
        UPPER(ColumnType) IN ('VECTOR', 'VE')
@@ -269,7 +282,8 @@ WHERE DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
 """.strip()
 
 
-def _fallback_embedding_evidence_sql(prefix: str) -> str:
+def _fallback_embedding_evidence_sql(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
     return f"""
 SELECT
     DatabaseName
@@ -277,7 +291,7 @@ SELECT
    ,ColumnName
    ,ColumnType
 FROM DBC.ColumnsV
-WHERE DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
+WHERE {layout.product_scope('DatabaseName')}
   AND {backup_object_exclusion_sql('TableName')}
   AND (
        UPPER(TableName) LIKE '%EMBED%'
@@ -286,7 +300,8 @@ WHERE DatabaseName LIKE '{prefix}\\_%' ESCAPE '\\'
 """.strip()
 
 
-def _native_vector_reference_sql(prefix: str) -> str:
+def _native_vector_reference_sql(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
     return f"""
 SELECT
     recipe_id
@@ -295,14 +310,15 @@ SELECT
    ,use_case
    ,performance_notes
    ,sql_template
-FROM {prefix}_MEM_STD_V.Query_Cookbook
+FROM {layout.memory_database}.Query_Cookbook
 WHERE COALESCE(is_active, 1) = 1
 """.strip()
 
 
-def _semantic_search_reference_sql(prefix: str) -> str:
-    sem_db = f"{prefix}_SEM_STD_V"
-    mem_db = f"{prefix}_MEM_STD_V"
+def _semantic_search_reference_sql(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
+    sem_db = layout.semantic_database
+    mem_db = layout.memory_database
     return f"""
 SELECT
     'Query_Cookbook' AS source_table

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ai_native_data_product_trust_engine.layout import Layout
 
 
 class TestCategory(str, Enum):
@@ -82,6 +86,10 @@ class ExcludedCheck:
     name: str
     category: str
     reason: str
+    # False for a check that does not apply to this product's declared layout
+    # (Platform Layout Standard section 7): it is reported with its reason but is
+    # not part of the area's expected checks, so exclusion does not lower coverage.
+    counts_as_expected: bool = True
 
 
 @dataclass(frozen=True)
@@ -91,6 +99,8 @@ class ValidationRun:
     completed_at: str
     results: list[TestResult]
     excluded_checks: list[ExcludedCheck] = field(default_factory=list)
+    # The resolved layout (a ``layout.Layout``) the run used, when known.
+    layout: Layout | None = None
 
     @property
     def passed_count(self) -> int:

@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ai_native_data_product_trust_engine.layout import LAYER_ROLES, LayoutOverrides
 from ai_native_data_product_trust_engine.models import ExcludedCheck, TestCase
 
 SCANNER_IDS = {
@@ -70,6 +71,9 @@ class RuleConfig:
     # Single-database target for the standard validation results (validation_run
     # and validation_area). Sets WHERE a valueless --publish-validation writes.
     publish_validation_database: str | None = None
+    # Priority-2 layout names (Platform Layout Standard section 6). Local to this
+    # evaluator: they are never written into the product.
+    layout: LayoutOverrides | None = None
 
     def filter_tests(self, tests: Iterable[TestCase]) -> list[TestCase]:
         return [test for test in tests if test.test_id.upper() not in self.disabled_test_ids]
@@ -149,7 +153,77 @@ def load_rule_config(path: Path | None) -> RuleConfig:
         publish_validation_database=_publish_validation_database(
             payload.get("publish_validation_database")
         ),
+        layout=_layout_overrides(payload.get("layout")),
     )
+
+
+_LAYOUT_NAME_KEYS = (
+    "semantic_database",
+    "observability_database",
+    "memory_database",
+    "registry_database",
+    "registry_view",
+    "graph_catalogue_database",
+    "governance_database",
+)
+_LAYOUT_KEYS = (*_LAYOUT_NAME_KEYS, "layer_code_map")
+_LAYOUT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_$#]*")
+
+
+def _layout_overrides(value: object) -> LayoutOverrides | None:
+    """Validate the optional ``layout`` object: container names and a layer code map."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        msg = (
+            "[ADPTrust.InvalidRuleConfig] layout must be an object. "
+            f"Suggested action: use keys from {', '.join(_LAYOUT_KEYS)}."
+        )
+        raise ValueError(msg)
+    unknown = sorted(set(value) - set(_LAYOUT_KEYS))
+    if unknown:
+        msg = (
+            f"[ADPTrust.InvalidRuleConfig] Unknown layout key: {', '.join(unknown)}. "
+            f"Suggested action: use keys from {', '.join(_LAYOUT_KEYS)}."
+        )
+        raise ValueError(msg)
+    names: dict[str, str | None] = {}
+    for key in _LAYOUT_NAME_KEYS:
+        raw = value.get(key)
+        name = str(raw).strip() if raw is not None else ""
+        if name and not _LAYOUT_NAME.fullmatch(name):
+            msg = (
+                f"[ADPTrust.InvalidRuleConfig] layout.{key} must be a single Teradata "
+                f"object name, got: {name!r}. "
+                "Suggested action: set it like 'ProductPrefix_SEM_ACL_V'."
+            )
+            raise ValueError(msg)
+        names[key] = name or None
+    layer_code_map = _layer_code_map(value.get("layer_code_map"))
+    overrides = LayoutOverrides(layer_code_map=layer_code_map, **names)
+    return None if overrides.is_empty() else overrides
+
+
+def _layer_code_map(value: object) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        msg = (
+            "[ADPTrust.InvalidRuleConfig] layout.layer_code_map must map layer codes to "
+            f"layer roles. Suggested action: use roles from {', '.join(LAYER_ROLES)}."
+        )
+        raise ValueError(msg)
+    mapped: dict[str, str] = {}
+    for code, role in value.items():
+        role_name = str(role).strip().upper()
+        if not str(code).strip() or role_name not in LAYER_ROLES:
+            msg = (
+                f"[ADPTrust.InvalidRuleConfig] layout.layer_code_map entry {code!r}: {role!r} "
+                f"is not a layer role. Suggested action: use one of {', '.join(LAYER_ROLES)}."
+            )
+            raise ValueError(msg)
+        mapped[str(code).strip().upper()] = role_name
+    return mapped or None
 
 
 def _publish_validation_database(value: object) -> str | None:

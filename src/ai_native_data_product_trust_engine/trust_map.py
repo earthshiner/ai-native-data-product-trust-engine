@@ -35,6 +35,7 @@ SCOPE_KINDS = ("MODULE", "ENTITY", "PATTERN", "CAPABILITY", "PRODUCT")
 # listed here belongs to the product as a whole.
 _FAMILY_SCOPES: tuple[tuple[tuple[str, ...], tuple[str, str]], ...] = (
     (("SEM",), ("MODULE", "semantic")),
+    (("LAYOUT",), ("MODULE", "semantic")),
     (("DISCOVERY",), ("MODULE", "semantic")),
     (("REL",), ("MODULE", "semantic")),
     (("RELATIONSHIP",), ("MODULE", "semantic")),
@@ -133,7 +134,9 @@ def _entry(
     excluded: list[ExcludedCheck],
 ) -> AreaEntry:
     ran = len(results)
-    expected = ran + len(excluded)
+    # A layout exclusion is reported but is not an expected check (INV-LAYOUT-007).
+    counted_exclusions = [check for check in excluded if check.counts_as_expected]
+    expected = ran + len(counted_exclusions)
     passed = sum(1 for r in results if r.status == TestStatus.PASSED)
     failed = sum(1 for r in results if r.status == TestStatus.FAILED)
     errored = sum(1 for r in results if r.status == TestStatus.ERROR)
@@ -143,7 +146,9 @@ def _entry(
 
     status = _area_status(expected, ran, failed + errored)
     confidence = _confidence(expected, ran, failed + errored, critical + error_sev)
-    gaps, action = _guidance(kind, scope_id, confidence, results, excluded, expected, ran)
+    gaps, action = _guidance(
+        kind, scope_id, confidence, results, counted_exclusions, expected, ran
+    )
     return AreaEntry(
         scope_kind=kind,
         scope_id=scope_id,
