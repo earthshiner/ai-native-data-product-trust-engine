@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from ai_native_data_product_trust_engine.layout import Layout, derive_layout
 from ai_native_data_product_trust_engine.models import (
     ExpectedResult,
     TestCase,
@@ -16,14 +17,14 @@ from ai_native_data_product_trust_engine.models import (
 SAMPLE_LIMIT = 1000
 
 
-def relationship_health_test_cases(prefix: str) -> list[TestCase]:
+def relationship_health_test_cases(prefix: str, layout: Layout | None = None) -> list[TestCase]:
     return [
         TestCase(
             test_id=f"{prefix.upper()}-REL-ORPHANS",
             name="Declared relationships have bounded orphan evidence",
             category=TestCategory.DATA_QUALITY,
             severity=TestSeverity.WARNING,
-            sql=_relationship_metadata_sql(prefix),
+            sql=_relationship_metadata_sql(prefix, layout),
             expected_result=(
                 "Active relationships have no source-to-target or target-to-source orphan "
                 "evidence in the bounded sample."
@@ -39,7 +40,7 @@ def relationship_health_test_cases(prefix: str) -> list[TestCase]:
             name="Declared relationship cardinality matches bounded key behaviour",
             category=TestCategory.DATA_QUALITY,
             severity=TestSeverity.WARNING,
-            sql=_relationship_metadata_sql(prefix),
+            sql=_relationship_metadata_sql(prefix, layout),
             expected_result=(
                 "Observed duplicate key behaviour does not contradict declared 1:1, 1:M or M:1 "
                 "relationship cardinality in the bounded sample."
@@ -55,7 +56,7 @@ def relationship_health_test_cases(prefix: str) -> list[TestCase]:
             name="Temporal entities have valid current-record contracts",
             category=TestCategory.DATA_QUALITY,
             severity=TestSeverity.WARNING,
-            sql=_temporal_entity_metadata_sql(prefix),
+            sql=_temporal_entity_metadata_sql(prefix, layout),
             expected_result=(
                 "Temporal entities have at most one current non-deleted row per natural key and "
                 "declared current views filter on the current flag."
@@ -69,48 +70,57 @@ def relationship_health_test_cases(prefix: str) -> list[TestCase]:
     ]
 
 
-def run_relationship_health_validations(prefix: str, adapter) -> list[TestResult]:
+def run_relationship_health_validations(
+    prefix: str, adapter, layout: Layout | None = None
+) -> list[TestResult]:
     return [
-        *run_relationship_orphan_validations(prefix, adapter),
-        *run_relationship_cardinality_validations(prefix, adapter),
-        *run_temporal_current_validations(prefix, adapter),
+        *run_relationship_orphan_validations(prefix, adapter, layout),
+        *run_relationship_cardinality_validations(prefix, adapter, layout),
+        *run_temporal_current_validations(prefix, adapter, layout),
     ]
 
 
-def run_relationship_orphan_validations(prefix: str, adapter) -> list[TestResult]:
-    test_case_template = relationship_health_test_cases(prefix)[0]
+def run_relationship_orphan_validations(
+    prefix: str, adapter, layout: Layout | None = None
+) -> list[TestResult]:
+    test_case_template = relationship_health_test_cases(prefix, layout)[0]
     rows = _fetch_metadata(adapter, test_case_template)
     if isinstance(rows, TestResult):
         return [rows]
     return [
-        _run_relationship_orphan_validation(prefix, adapter, row)
+        _run_relationship_orphan_validation(prefix, adapter, row, layout)
         for row in rows
     ]
 
 
-def run_relationship_cardinality_validations(prefix: str, adapter) -> list[TestResult]:
-    test_case_template = relationship_health_test_cases(prefix)[1]
+def run_relationship_cardinality_validations(
+    prefix: str, adapter, layout: Layout | None = None
+) -> list[TestResult]:
+    test_case_template = relationship_health_test_cases(prefix, layout)[1]
     rows = _fetch_metadata(adapter, test_case_template)
     if isinstance(rows, TestResult):
         return [rows]
     return [
-        _run_relationship_cardinality_validation(prefix, adapter, row)
+        _run_relationship_cardinality_validation(prefix, adapter, row, layout)
         for row in rows
     ]
 
 
-def run_temporal_current_validations(prefix: str, adapter) -> list[TestResult]:
-    test_case_template = relationship_health_test_cases(prefix)[2]
+def run_temporal_current_validations(
+    prefix: str, adapter, layout: Layout | None = None
+) -> list[TestResult]:
+    test_case_template = relationship_health_test_cases(prefix, layout)[2]
     rows = _fetch_metadata(adapter, test_case_template)
     if isinstance(rows, TestResult):
         return [rows]
-    return [_run_temporal_current_validation(prefix, adapter, row) for row in rows]
+    return [_run_temporal_current_validation(prefix, adapter, row, layout) for row in rows]
 
 
 def _run_relationship_orphan_validation(
     prefix: str,
     adapter,
     row: dict[str, object],
+    layout: Layout | None = None,
 ) -> TestResult:
     test_case = _relationship_test_case(
         prefix,
@@ -120,10 +130,10 @@ def _run_relationship_orphan_validation(
         TestSeverity.WARNING,
     )
     try:
-        endpoint_findings = adapter.fetch_all(_relationship_endpoint_sql(row))
+        endpoint_findings = adapter.fetch_all(_relationship_endpoint_sql(row, layout))
         if endpoint_findings:
             return _failed_result(test_case, endpoint_findings)
-        findings = adapter.fetch_all(_relationship_orphan_sql(row))
+        findings = adapter.fetch_all(_relationship_orphan_sql(row, layout))
     except Exception as exc:  # noqa: BLE001 - backend errors are reported as validation evidence.
         return _error_result(test_case, exc)
 
@@ -134,6 +144,7 @@ def _run_relationship_cardinality_validation(
     prefix: str,
     adapter,
     row: dict[str, object],
+    layout: Layout | None = None,
 ) -> TestResult:
     test_case = _relationship_test_case(
         prefix,
@@ -152,10 +163,10 @@ def _run_relationship_cardinality_validation(
         )
 
     try:
-        endpoint_findings = adapter.fetch_all(_relationship_endpoint_sql(row))
+        endpoint_findings = adapter.fetch_all(_relationship_endpoint_sql(row, layout))
         if endpoint_findings:
             return _failed_result(test_case, endpoint_findings)
-        findings = adapter.fetch_all(_relationship_cardinality_sql(row, cardinality))
+        findings = adapter.fetch_all(_relationship_cardinality_sql(row, cardinality, layout))
     except Exception as exc:  # noqa: BLE001 - backend errors are reported as validation evidence.
         return _error_result(test_case, exc)
 
@@ -166,6 +177,7 @@ def _run_temporal_current_validation(
     prefix: str,
     adapter,
     row: dict[str, object],
+    layout: Layout | None = None,
 ) -> TestResult:
     entity_name = str(row.get("entity_name") or row.get("table_name") or "UNKNOWN_ENTITY")
     test_case = TestCase(
@@ -173,7 +185,7 @@ def _run_temporal_current_validation(
         name=f"Temporal current-record contract: {entity_name}",
         category=TestCategory.DATA_QUALITY,
         severity=TestSeverity.WARNING,
-        sql=_temporal_current_duplicate_sql(row),
+        sql=_temporal_current_duplicate_sql(row, layout),
         expected_result=(
             "Returns zero duplicate current rows and verifies the declared current view filters "
             "on the current flag."
@@ -188,7 +200,7 @@ def _run_temporal_current_validation(
     findings: list[dict[str, object]] = []
     try:
         findings.extend(adapter.fetch_all(test_case.sql))
-        findings.extend(_current_view_findings(adapter, row))
+        findings.extend(_current_view_findings(adapter, row, layout))
     except Exception as exc:  # noqa: BLE001 - backend errors are reported as validation evidence.
         return _error_result(test_case, exc)
 
@@ -227,11 +239,11 @@ def _relationship_test_case(
     )
 
 
-def _relationship_orphan_sql(row: dict[str, object]) -> str:
+def _relationship_orphan_sql(row: dict[str, object], layout: Layout | None = None) -> str:
     source_db, source_table, source_col = _relationship_source(row)
     target_db, target_table, target_col = _relationship_target(row)
-    source_db = _governed_access_database(source_db)
-    target_db = _governed_access_database(target_db)
+    source_db = _governed_access_database(source_db, layout)
+    target_db = _governed_access_database(target_db, layout)
     relationship_name = _sql_string(row.get("relationship_name"))
     return f"""
 WITH source_sample AS
@@ -291,11 +303,11 @@ WHERE orphan_count > 0
 """.strip()
 
 
-def _relationship_endpoint_sql(row: dict[str, object]) -> str:
+def _relationship_endpoint_sql(row: dict[str, object], layout: Layout | None = None) -> str:
     source_db, source_table, source_col = _relationship_source(row)
     target_db, target_table, target_col = _relationship_target(row)
-    source_db = _governed_access_database(source_db)
-    target_db = _governed_access_database(target_db)
+    source_db = _governed_access_database(source_db, layout)
+    target_db = _governed_access_database(target_db, layout)
     relationship_name = _sql_string(row.get("relationship_name"))
     endpoints = (
         ("SOURCE", source_db, source_table, source_col),
@@ -352,11 +364,13 @@ WHERE EXISTS (
     return "\nUNION ALL\n".join(queries)
 
 
-def _relationship_cardinality_sql(row: dict[str, object], cardinality: str) -> str:
+def _relationship_cardinality_sql(
+    row: dict[str, object], cardinality: str, layout: Layout | None = None
+) -> str:
     source_db, source_table, source_col = _relationship_source(row)
     target_db, target_table, target_col = _relationship_target(row)
-    source_db = _governed_access_database(source_db)
-    target_db = _governed_access_database(target_db)
+    source_db = _governed_access_database(source_db, layout)
+    target_db = _governed_access_database(target_db, layout)
     relationship_name = _sql_string(row.get("relationship_name"))
     source_unique_required = "1" if cardinality in {"1:1", "1:M"} else "0"
     target_unique_required = "1" if cardinality in {"1:1", "M:1"} else "0"
@@ -419,8 +433,8 @@ HAVING COUNT(*) > 0
 """.strip()
 
 
-def _temporal_current_duplicate_sql(row: dict[str, object]) -> str:
-    database_name = _governed_access_database(_required_text(row, "database_name"))
+def _temporal_current_duplicate_sql(row: dict[str, object], layout: Layout | None = None) -> str:
+    database_name = _governed_access_database(_required_text(row, "database_name"), layout)
     table_name = _required_text(row, "table_name")
     natural_key_column = _required_text(row, "natural_key_column")
     current_flag_column = _required_text(row, "current_flag_column")
@@ -455,9 +469,19 @@ ORDER BY current_row_count DESC, natural_key
 """.strip()
 
 
-def _current_view_findings(adapter, row: dict[str, object]) -> list[dict[str, object]]:
+def _current_view_findings(
+    adapter, row: dict[str, object], layout: Layout | None = None
+) -> list[dict[str, object]]:
     view_name = str(row.get("view_name") or "").strip()
     current_flag_column = str(row.get("current_flag_column") or "").strip()
+    view_database = _required_text(row, "database_name")
+    binding = _declared_current_view(layout, row)
+    if binding is not None:
+        # The declared CONSUMER / CURRENT_ONLY object is the current-state view.
+        view_database, view_name = binding
+    elif layout is not None and layout.uses_container_sets and "." in view_name:
+        # entity_metadata.view_name publishes the qualified name.
+        view_database, view_name = (part.strip() for part in view_name.split(".", maxsplit=1))
     if not view_name:
         return [
             {
@@ -466,7 +490,7 @@ def _current_view_findings(adapter, row: dict[str, object]) -> list[dict[str, ob
                 "repair_hint": "Populate entity_metadata.view_name for temporal current access.",
             }
         ]
-    view_rows = adapter.fetch_all(_view_text_sql(_required_text(row, "database_name"), view_name))
+    view_rows = adapter.fetch_all(_view_text_sql(view_database, view_name))
     if not view_rows:
         return [
             {
@@ -504,8 +528,9 @@ def _relationship_pass_row(row: dict[str, object], validation_mode: str) -> dict
     }
 
 
-def _relationship_metadata_sql(prefix: str) -> str:
-    sem_db = f"{prefix}_SEM_STD_V"
+def _relationship_metadata_sql(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
+    sem_db = layout.semantic_database
     return f"""
 SELECT
     relationship_id
@@ -522,14 +547,15 @@ FROM {sem_db}.table_relationship
 WHERE COALESCE(is_active, 1) = 1
   AND source_database IS NOT NULL
   AND target_database IS NOT NULL
-  AND {_deployed_module_database_filter(sem_db, 'source_database')}
-  AND {_deployed_module_database_filter(sem_db, 'target_database')}
+  AND {layout.module_scope_filter('source_database')}
+  AND {layout.module_scope_filter('target_database')}
 ORDER BY relationship_id
 """.strip()
 
 
-def _temporal_entity_metadata_sql(prefix: str) -> str:
-    sem_db = f"{prefix}_SEM_STD_V"
+def _temporal_entity_metadata_sql(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
+    sem_db = layout.semantic_database
     return f"""
 SELECT
     entity_metadata_id
@@ -545,29 +571,12 @@ FROM {sem_db}.entity_metadata
 WHERE COALESCE(is_active, 1) = 1
   AND database_name IS NOT NULL
   AND table_name IS NOT NULL
-  AND {_deployed_module_database_filter(sem_db, 'database_name')}
+  AND {layout.module_scope_filter('database_name')}
   AND natural_key_column IS NOT NULL
   AND current_flag_column IS NOT NULL
   AND COALESCE(UPPER(TRIM(temporal_pattern)), 'NONE') <> 'NONE'
 ORDER BY entity_metadata_id
 """.strip()
-
-
-def _deployed_module_database_filter(sem_db: str, database_expression: str) -> str:
-    return f"""
-EXISTS (
-    SELECT 1
-    FROM {sem_db}.data_product_map module_scope
-    WHERE COALESCE(module_scope.is_active, 1) = 1
-      AND UPPER(COALESCE(TRIM(module_scope.deployment_status), 'DEPLOYED')) = 'DEPLOYED'
-      AND (
-          UPPER(TRIM(module_scope.database_name)) = UPPER(TRIM({database_expression}))
-          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_STD_V'), '_BUS_V', '_STD_V'))
-                = UPPER(TRIM({database_expression}))
-          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_BUS_V'), '_STD_V', '_BUS_V'))
-                = UPPER(TRIM({database_expression}))
-      )
-)""".strip()
 
 
 def _view_text_sql(database_name: str, view_name: str) -> str:
@@ -599,7 +608,22 @@ def _relationship_target(row: dict[str, object]) -> tuple[str, str, str]:
     )
 
 
-def _governed_access_database(database_name: str) -> str:
+def _declared_current_view(
+    layout: Layout | None, row: dict[str, object]
+) -> tuple[str, str] | None:
+    """The declared (database, view) serving the row's entity, if the product declares one."""
+    if layout is None or not layout.current_views:
+        return None
+    entity = str(row.get("entity_name") or "").strip().upper()
+    binding = layout.current_views.get(entity)
+    if binding is None:
+        return None
+    return binding.database_name, binding.object_name
+
+
+def _governed_access_database(database_name: str, layout: Layout | None = None) -> str:
+    if layout is not None:
+        return layout.governed_access_database(database_name)
     if database_name.upper().endswith("_STD_T"):
         return database_name[:-6] + "_STD_V"
     return database_name

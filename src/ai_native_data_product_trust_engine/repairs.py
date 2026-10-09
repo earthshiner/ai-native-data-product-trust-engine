@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ai_native_data_product_trust_engine.layout import (
+    ISSUE_LAYOUT_NOT_DECLARED,
+    PLATFORM_TERADATA,
+    Layout,
+)
 from ai_native_data_product_trust_engine.models import RepairMode, TestStatus, ValidationRun
 
 
@@ -40,14 +45,23 @@ def classify_stale_relationship_path_name(object_name: str) -> RepairCandidate |
     )
 
 
-def generate_repair_candidates(run: ValidationRun) -> list[RepairCandidate]:
+def generate_repair_candidates(
+    run: ValidationRun, layout: Layout | None = None
+) -> list[RepairCandidate]:
+    layout = layout or run.layout
     candidates: list[RepairCandidate] = []
+    seen_layout_candidates: set[str] = set()
     for result in run.results:
         if result.status == TestStatus.PASSED:
             continue
         for sample_row in result.sample_rows or [{}]:
-            candidate = _candidate_from_sample(result.test_case.test_id, sample_row)
+            candidate = _candidate_from_sample(result.test_case.test_id, sample_row, layout)
             if candidate:
+                if candidate.issue_code == ISSUE_LAYOUT_NOT_DECLARED:
+                    # One declaration proposal per check, however many values it names.
+                    if candidate.candidate_id in seen_layout_candidates:
+                        continue
+                    seen_layout_candidates.add(candidate.candidate_id)
                 candidates.append(candidate)
     return candidates
 
@@ -81,9 +95,14 @@ def write_repair_reports(candidates: list[RepairCandidate], output_path: Path) -
     return markdown_path, sql_path
 
 
-def _candidate_from_sample(test_id: str, sample_row: dict[str, object]) -> RepairCandidate | None:
+def _candidate_from_sample(
+    test_id: str, sample_row: dict[str, object], layout: Layout | None = None
+) -> RepairCandidate | None:
+    if _is_layout_declaration_repair(sample_row):
+        return _layout_declaration_candidate(test_id, sample_row)
+
     if _is_safe_text_alias(sample_row):
-        return _safe_text_alias_candidate(test_id, sample_row)
+        return _safe_text_alias_candidate(test_id, sample_row, layout)
 
     if _is_entity_view_name_repair(sample_row):
         return _entity_view_name_candidate(test_id, sample_row)
@@ -102,6 +121,60 @@ def _candidate_from_sample(test_id: str, sample_row: dict[str, object]) -> Repai
     )
 
 
+def _is_layout_declaration_repair(sample_row: dict[str, object]) -> bool:
+    """True for LAYOUT-001 evidence, which carries the registry location to update."""
+    return bool(
+        str(sample_row.get("issue_code") or "") == ISSUE_LAYOUT_NOT_DECLARED
+        and sample_row.get("registry_database")
+        and sample_row.get("registry_view")
+        and sample_row.get("product_id")
+    )
+
+
+def _layout_declaration_candidate(test_id: str, sample_row: dict[str, object]) -> RepairCandidate:
+    """Propose the layout declaration the engine inferred (VAL-20).
+
+    It is a proposal only: the product's registry is the authoritative home, an
+    override on this run is never written back, and a steward approves the change.
+    """
+    registry = f"{_identifier(str(sample_row['registry_database']))}.{_identifier(str(sample_row['registry_view']))}"
+    product_id = str(sample_row["product_id"])
+    profile = str(sample_row.get("inferred_platform_profile") or PLATFORM_TERADATA)
+    version = str(sample_row.get("inferred_standard_version") or "").strip()
+    if version:
+        version_line = f"   ,standard_version = {_sql_string(version)}"
+    else:
+        version_line = (
+            "-- ,standard_version = '<Master Design version this product was built against>'\n"
+            "-- No standard_version could be read from the registry; set it before applying."
+        )
+    sql = (
+        f"-- PROPOSAL: record the layout declaration inferred for {product_id} so readers stop "
+        "inferring it.\n"
+        "-- Applies to the registry row; if the registry location below is a view, run it against "
+        "the base table behind it.\n"
+        "-- Layer bindings (governance.data_product_container / access_object) are recorded by "
+        "the build, not by this statement.\n"
+        f"UPDATE {registry}\n"
+        f"SET platform_profile = {_sql_string(profile)}\n"
+        f"{version_line}\n"
+        f"WHERE product_id = {_sql_string(product_id)};"
+    )
+    return RepairCandidate(
+        candidate_id=_candidate_id(test_id, ISSUE_LAYOUT_NOT_DECLARED, {"row_key": "declaration"}),
+        issue_code=ISSUE_LAYOUT_NOT_DECLARED,
+        summary=(
+            f"{ISSUE_LAYOUT_NOT_DECLARED}: record platform_profile '{profile}' and the "
+            "standard version on the product registry row."
+        ),
+        mode=RepairMode.PROPOSAL,
+        sql=sql,
+        requires_approval=True,
+        test_id=test_id,
+        evidence=sample_row,
+    )
+
+
 def _is_safe_text_alias(sample_row: dict[str, object]) -> bool:
     return bool(
         sample_row.get("safe_auto_apply")
@@ -114,10 +187,12 @@ def _is_safe_text_alias(sample_row: dict[str, object]) -> bool:
     )
 
 
-def _safe_text_alias_candidate(test_id: str, sample_row: dict[str, object]) -> RepairCandidate:
+def _safe_text_alias_candidate(
+    test_id: str, sample_row: dict[str, object], layout: Layout | None = None
+) -> RepairCandidate:
     token = str(sample_row["token"])
     replacement = str(sample_row["replacement"])
-    sql = _safe_text_repair_sql(sample_row)
+    sql = _safe_text_repair_sql(sample_row, layout)
     return RepairCandidate(
         candidate_id=_candidate_id(test_id, "STALE_OBJECT_NAME", sample_row),
         issue_code="STALE_OBJECT_NAME",
@@ -246,16 +321,18 @@ def _entity_view_name_proposal_sql(
     )
 
 
-def _safe_text_repair_sql(sample_row: dict[str, object]) -> str:
+def _safe_text_repair_sql(sample_row: dict[str, object], layout: Layout | None = None) -> str:
     table_name = _identifier(str(sample_row["table_name"]))
     if table_name == "Query_Cookbook":
-        return _query_cookbook_temporal_repair_sql(sample_row)
+        return _query_cookbook_temporal_repair_sql(sample_row, layout)
 
-    return _safe_text_update_sql(sample_row)
+    return _safe_text_update_sql(sample_row, layout)
 
 
-def _query_cookbook_temporal_repair_sql(sample_row: dict[str, object]) -> str:
-    database_name = _repair_database_name(str(sample_row["database_name"]))
+def _query_cookbook_temporal_repair_sql(
+    sample_row: dict[str, object], layout: Layout | None = None
+) -> str:
+    database_name = _repair_database_name(str(sample_row["database_name"]), layout)
     table_name = _identifier(str(sample_row["table_name"]))
     column_name = _identifier(str(sample_row["column_name"]))
     token = _sql_string(str(sample_row["token"]))
@@ -320,8 +397,8 @@ WHERE {where_clause}
 """.strip()
 
 
-def _safe_text_update_sql(sample_row: dict[str, object]) -> str:
-    database_name = _repair_database_name(str(sample_row["database_name"]))
+def _safe_text_update_sql(sample_row: dict[str, object], layout: Layout | None = None) -> str:
+    database_name = _repair_database_name(str(sample_row["database_name"]), layout)
     table_name = _identifier(str(sample_row["table_name"]))
     column_name = _identifier(str(sample_row["column_name"]))
     token = _sql_string(str(sample_row["token"]))
@@ -410,7 +487,9 @@ def _identifier(value: str) -> str:
     return value
 
 
-def _repair_database_name(database_name: str) -> str:
+def _repair_database_name(database_name: str, layout: Layout | None = None) -> str:
+    if layout is not None:
+        return layout.storage_database_for(database_name)
     if database_name.endswith("_STD_V"):
         return _identifier(database_name.removesuffix("_STD_V") + "_STD_T")
     return _identifier(database_name)

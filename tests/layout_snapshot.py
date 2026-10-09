@@ -83,7 +83,11 @@ class RecordingAdapter:
 
 def _case_dict(case) -> dict[str, object]:
     return {
-        field.name: (getattr(case, field.name).value if hasattr(getattr(case, field.name), "value") else getattr(case, field.name))
+        field.name: (
+            getattr(case, field.name).value
+            if hasattr(getattr(case, field.name), "value")
+            else getattr(case, field.name)
+        )
         for field in fields(case)
     }
 
@@ -136,7 +140,9 @@ def build_snapshot(extra: dict[str, object] | None = None) -> dict[str, object]:
             for name in ("SnapProduct_DOM_STD_T", "SnapProduct_DOM_STD_V", "Other_DB")
         ],
         "repair_database": [
-            repairs._repair_database_name(name) if not extra else extra["layout"].storage_database_for(name)
+            repairs._repair_database_name(name)
+            if not extra
+            else extra["layout"].storage_database_for(name)
             for name in ("SnapProduct_SEM_STD_V", "SnapProduct_MEM_STD_T")
         ],
     }

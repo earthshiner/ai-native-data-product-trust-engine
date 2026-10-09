@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from ai_native_data_product_trust_engine.capabilities import run_capability_validations
+from ai_native_data_product_trust_engine.layout import Layout
+from ai_native_data_product_trust_engine.layout_checks import layout_excluded_checks
 from ai_native_data_product_trust_engine.models import (
     ExcludedCheck,
     ExpectedResult,
@@ -96,6 +98,7 @@ def run_validation(
     include_view_contract_scans: bool = True,
     enable_helpstats: bool = False,
     excluded_checks: list[ExcludedCheck] | None = None,
+    layout: Layout | None = None,
 ) -> ValidationRun:
     started_at = _utc_now()
     results = [run_test_case(adapter, test_case) for test_case in tests]
@@ -108,6 +111,7 @@ def run_validation(
                 TestCategory.CAPABILITY,
                 run_capability_validations,
                 adapter,
+                layout=layout,
             )
         )
     if include_query_template_scans:
@@ -120,6 +124,7 @@ def run_validation(
                 run_query_template_validations,
                 adapter,
                 enable_helpstats=enable_helpstats,
+                layout=layout,
             )
         )
     if include_relationship_health_scans:
@@ -131,6 +136,7 @@ def run_validation(
                 TestCategory.DATA_QUALITY,
                 run_relationship_health_validations,
                 adapter,
+                layout=layout,
             )
         )
     if include_text_reference_scans:
@@ -142,6 +148,7 @@ def run_validation(
                 TestCategory.FREE_TEXT,
                 run_text_reference_validations,
                 adapter,
+                layout=layout,
             )
         )
     if include_view_contract_scans:
@@ -153,15 +160,21 @@ def run_validation(
                 TestCategory.STRUCTURAL,
                 run_view_contract_validations,
                 adapter,
+                layout=layout,
             )
         )
     completed_at = _utc_now()
+    excluded = list(excluded_checks or [])
+    if include_view_contract_scans:
+        # Checks that need an ACCESS layer the product does not declare (section 7).
+        excluded.extend(layout_excluded_checks(prefix, layout))
     return ValidationRun(
         prefix=prefix,
         started_at=started_at,
         completed_at=completed_at,
         results=results,
-        excluded_checks=excluded_checks or [],
+        excluded_checks=excluded,
+        layout=layout,
     )
 
 

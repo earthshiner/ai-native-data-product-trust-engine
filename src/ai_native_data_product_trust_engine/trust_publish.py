@@ -7,6 +7,7 @@ import json
 import re
 from typing import Protocol
 
+from ai_native_data_product_trust_engine.layout import Layout, derive_layout
 from ai_native_data_product_trust_engine.models import TestSeverity, TestStatus, ValidationRun
 from ai_native_data_product_trust_engine.repairs import RepairCandidate
 from ai_native_data_product_trust_engine.reports import validation_run_to_dict
@@ -49,16 +50,20 @@ class PublishAdapter(Protocol):
         """Execute a non-query SQL statement."""
 
 
-def default_trust_table(prefix: str) -> str:
-    return f"{prefix}_SEM_STD_T.trust_engine_run"
+def default_trust_table(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
+    return f"{layout.semantic_storage_database}.trust_engine_run"
 
 
-def default_trust_view(prefix: str) -> str:
-    return f"{prefix}_SEM_BUS_V.trust_engine_latest"
+def default_trust_view(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
+    return f"{layout.semantic_consumer_database}.trust_engine_latest"
 
 
-def trust_table_ddl(prefix: str, table_name: str | None = None) -> str:
-    qualified_table = _qualified_identifier(table_name or default_trust_table(prefix))
+def trust_table_ddl(
+    prefix: str, table_name: str | None = None, layout: Layout | None = None
+) -> str:
+    qualified_table = _qualified_identifier(table_name or default_trust_table(prefix, layout))
     return f"""CREATE MULTISET TABLE {qualified_table}
 (
     product_prefix VARCHAR(128) CHARACTER SET LATIN NOT NULL,
@@ -87,9 +92,10 @@ def trust_latest_view_ddl(
     prefix: str,
     table_name: str | None = None,
     view_name: str | None = None,
+    layout: Layout | None = None,
 ) -> str:
-    qualified_table = _qualified_identifier(table_name or default_trust_table(prefix))
-    qualified_view = _qualified_identifier(view_name or default_trust_view(prefix))
+    qualified_table = _qualified_identifier(table_name or default_trust_table(prefix, layout))
+    qualified_view = _qualified_identifier(view_name or default_trust_view(prefix, layout))
     columns = ",\n    ".join(_PUBLISH_COLUMNS)
     return f"""CREATE VIEW {qualified_view}
 (
@@ -129,7 +135,9 @@ def publish_trust_result(
     repair_candidates: list[RepairCandidate],
     table_name: str | None = None,
 ) -> str:
-    qualified_table = _qualified_identifier(table_name or default_trust_table(run.prefix))
+    qualified_table = _qualified_identifier(
+        table_name or default_trust_table(run.prefix, run.layout)
+    )
     sql = trust_result_insert_sql(run, repair_candidates, qualified_table)
     adapter.execute(sql)
     return qualified_table
@@ -140,7 +148,9 @@ def trust_result_insert_sql(
     repair_candidates: list[RepairCandidate],
     table_name: str | None = None,
 ) -> str:
-    qualified_table = _qualified_identifier(table_name or default_trust_table(run.prefix))
+    qualified_table = _qualified_identifier(
+        table_name or default_trust_table(run.prefix, run.layout)
+    )
     row = _publish_row(run, repair_candidates)
     columns = ", ".join(_PUBLISH_COLUMNS)
     values = ", ".join(_sql_value(column, row[column]) for column in _PUBLISH_COLUMNS)
@@ -382,8 +392,9 @@ _AREA_COLUMNS = (
 )
 
 
-def default_validation_database(prefix: str) -> str:
-    return f"{prefix}_OBS_STD_T"
+def default_validation_database(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
+    return layout.observability_storage_database
 
 
 def producer_version() -> str:
@@ -460,7 +471,9 @@ def validation_run_insert_sql(
     repair_candidates: list[RepairCandidate],
     database: str | None = None,
 ) -> str:
-    target = _database_identifier(database or default_validation_database(run.prefix))
+    target = _database_identifier(
+        database or default_validation_database(run.prefix, run.layout)
+    )
     return _insert_sql(
         f"{target}.validation_run", _RUN_COLUMNS, validation_run_row(run, repair_candidates)
     )
@@ -471,7 +484,9 @@ def validation_area_insert_sql(
     row: dict[str, object | None],
     database: str | None = None,
 ) -> str:
-    target = _database_identifier(database or default_validation_database(run.prefix))
+    target = _database_identifier(
+        database or default_validation_database(run.prefix, run.layout)
+    )
     return _insert_sql(f"{target}.validation_area", _AREA_COLUMNS, row)
 
 
@@ -487,7 +502,9 @@ def publish_validation_result(
     The run row goes first, then one area row per area; each is its own statement
     so a driver that rejects multi-statement requests still works.
     """
-    target = _database_identifier(database or default_validation_database(run.prefix))
+    target = _database_identifier(
+        database or default_validation_database(run.prefix, run.layout)
+    )
     adapter.execute(validation_run_insert_sql(run, repair_candidates, target))
     rows = validation_area_rows(run, modules)
     for row in rows:
@@ -495,16 +512,15 @@ def publish_validation_result(
     return target, len(rows)
 
 
-def declared_modules(adapter: object, prefix: str) -> list[str]:
+def declared_modules(adapter: object, prefix: str, layout: Layout | None = None) -> list[str]:
     """Modules the product declares as deployed, from its Semantic ``data_product_map``.
 
     Soft-fails to an empty list: an unreadable map must not stop a publish, it only
     means check-less modules cannot be added to the map as no-evidence entries.
     """
-    from ai_native_data_product_trust_engine.test_generation import semantic_database
-
+    layout = layout or derive_layout(prefix)
     sql = (
-        f"SELECT DISTINCT module_name FROM {semantic_database(prefix)}.data_product_map "
+        f"SELECT DISTINCT module_name FROM {layout.semantic_database}.data_product_map "
         "WHERE COALESCE(is_active, 1) = 1 "
         "AND UPPER(COALESCE(TRIM(deployment_status), 'DEPLOYED')) = 'DEPLOYED'"
     )

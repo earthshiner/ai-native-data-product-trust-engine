@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import re
 
+from ai_native_data_product_trust_engine.layout import (
+    Layout,
+    derive_layout,
+    layout_excluded_check_ids,
+)
 from ai_native_data_product_trust_engine.models import (
     ExpectedResult,
     TestCase,
@@ -16,14 +21,27 @@ from ai_native_data_product_trust_engine.object_filters import backup_object_exc
 from ai_native_data_product_trust_engine.query_templates import extract_sql_error_evidence
 
 
-def view_contract_test_cases(prefix: str) -> list[TestCase]:
+def view_contract_test_cases(prefix: str, layout: Layout | None = None) -> list[TestCase]:
+    """The view-contract checks that apply to this layout.
+
+    A check that depends on the ACCESS layer is left out (and reported as excluded)
+    when the declared layout has no ACCESS container.
+    """
+    excluded = layout_excluded_check_ids(prefix, layout)
+    return [
+        case for case in _all_view_contract_cases(prefix, layout) if case.test_id not in excluded
+    ]
+
+
+def _all_view_contract_cases(prefix: str, layout: Layout | None = None) -> list[TestCase]:
+    layout = layout or derive_layout(prefix)
     return [
         TestCase(
             test_id=f"{prefix.upper()}-VIEW-COLUMNS",
             name="Deployed data product view columns resolve successfully",
             category=TestCategory.STRUCTURAL,
             severity=TestSeverity.CRITICAL,
-            sql=_product_views_sql(prefix),
+            sql=_product_views_sql(prefix, layout),
             expected_result="Every deployed data product view resolves through HELP COLUMN.",
             expected=ExpectedResult.NON_EMPTY,
             repair_strategy=(
@@ -36,7 +54,7 @@ def view_contract_test_cases(prefix: str) -> list[TestCase]:
             name="Standard views are thin 1:1 table contracts",
             category=TestCategory.STRUCTURAL,
             severity=TestSeverity.CRITICAL,
-            sql=_standard_view_inventory_sql(prefix),
+            sql=_standard_view_inventory_sql(prefix, layout),
             expected_result=(
                 "Every %_STD_V view is a LOCKING ROW FOR ACCESS 1:1 projection over its "
                 "matching %_STD_T table."
@@ -52,7 +70,7 @@ def view_contract_test_cases(prefix: str) -> list[TestCase]:
             name="Standard tables have matching locking views",
             category=TestCategory.STRUCTURAL,
             severity=TestSeverity.CRITICAL,
-            sql=_standard_table_view_coverage_sql(prefix),
+            sql=_standard_table_view_coverage_sql(prefix, layout),
             expected_result=(
                 "Every %_STD_T table has a same-named %_STD_V access view for governed "
                 "agent and application access."
@@ -68,7 +86,7 @@ def view_contract_test_cases(prefix: str) -> list[TestCase]:
             name="Standard view columns match source tables",
             category=TestCategory.STRUCTURAL,
             severity=TestSeverity.CRITICAL,
-            sql=_standard_view_inventory_sql(prefix),
+            sql=_standard_view_inventory_sql(prefix, layout),
             expected_result=(
                 "Every %_STD_V view exposes the same column list in the same ColumnId order "
                 "as its matching %_STD_T table."
@@ -84,7 +102,7 @@ def view_contract_test_cases(prefix: str) -> list[TestCase]:
             name="Business views select from standard views",
             category=TestCategory.STRUCTURAL,
             severity=TestSeverity.CRITICAL,
-            sql=_business_view_inventory_sql(prefix),
+            sql=_business_view_inventory_sql(prefix, layout),
             expected_result=(
                 "Every %_BUS_V view selects from %_STD_V views, not directly from tables."
             ),
@@ -99,7 +117,7 @@ def view_contract_test_cases(prefix: str) -> list[TestCase]:
             name="Views that query tables directly use access locks",
             category=TestCategory.STRUCTURAL,
             severity=TestSeverity.CRITICAL,
-            sql=_view_text_inventory_sql(prefix),
+            sql=_view_text_inventory_sql(prefix, layout),
             expected_result=(
                 "Every product view that directly queries a table includes LOCKING ROW FOR "
                 "ACCESS or a matching LOCKING TABLE <table> FOR ACCESS modifier."
@@ -113,42 +131,62 @@ def view_contract_test_cases(prefix: str) -> list[TestCase]:
     ]
 
 
-def run_view_contract_validations(prefix: str, adapter) -> list[TestResult]:
-    view_rows = adapter.fetch_all(_product_views_sql(prefix))
+def run_view_contract_validations(
+    prefix: str, adapter, layout: Layout | None = None
+) -> list[TestResult]:
+    layout = layout or derive_layout(prefix)
+    excluded = layout_excluded_check_ids(prefix, layout)
+    coverage_applies = f"{prefix.upper()}-STD-TABLE-VIEW-COVERAGE" not in excluded
+    view_rows = adapter.fetch_all(_product_views_sql(prefix, layout))
     if not view_rows:
-        return [
-            _missing_inventory_result(prefix),
-            _run_standard_table_view_coverage_validation(prefix, adapter),
-        ]
+        results = [_missing_inventory_result(prefix, layout)]
+        if coverage_applies:
+            results.append(_run_standard_table_view_coverage_validation(prefix, adapter, layout))
+        return results
     results = [_run_view_validation(prefix, adapter, row) for row in view_rows]
-    results.append(_run_standard_table_view_coverage_validation(prefix, adapter))
-    results.extend(_run_standard_view_contract_validations(prefix, adapter))
-    results.extend(_run_standard_view_column_contract_validations(prefix, adapter))
-    results.extend(_run_business_view_source_validations(prefix, adapter))
-    results.extend(_run_view_table_locking_validations(prefix, adapter))
+    if not excluded:
+        results.append(_run_standard_table_view_coverage_validation(prefix, adapter, layout))
+        results.extend(_run_standard_view_contract_validations(prefix, adapter, layout))
+        results.extend(_run_standard_view_column_contract_validations(prefix, adapter, layout))
+        results.extend(_run_business_view_source_validations(prefix, adapter, layout))
+        results.extend(_run_view_table_locking_validations(prefix, adapter, layout))
     return results
 
 
-def _run_standard_view_contract_validations(prefix: str, adapter) -> list[TestResult]:
-    view_rows = adapter.fetch_all(_standard_view_inventory_sql(prefix))
-    return [_run_standard_view_contract_validation(prefix, adapter, row) for row in view_rows]
-
-
-def _run_standard_view_column_contract_validations(prefix: str, adapter) -> list[TestResult]:
-    view_rows = adapter.fetch_all(_standard_view_inventory_sql(prefix))
+def _run_standard_view_contract_validations(
+    prefix: str, adapter, layout: Layout | None = None
+) -> list[TestResult]:
+    layout = layout or derive_layout(prefix)
+    view_rows = adapter.fetch_all(_standard_view_inventory_sql(prefix, layout))
     return [
-        _run_standard_view_column_contract_validation(prefix, adapter, row)
+        _run_standard_view_contract_validation(prefix, adapter, row, layout) for row in view_rows
+    ]
+
+
+def _run_standard_view_column_contract_validations(
+    prefix: str, adapter, layout: Layout | None = None
+) -> list[TestResult]:
+    layout = layout or derive_layout(prefix)
+    view_rows = adapter.fetch_all(_standard_view_inventory_sql(prefix, layout))
+    return [
+        _run_standard_view_column_contract_validation(prefix, adapter, row, layout)
         for row in view_rows
     ]
 
 
-def _run_business_view_source_validations(prefix: str, adapter) -> list[TestResult]:
-    view_rows = adapter.fetch_all(_business_view_inventory_sql(prefix))
-    return [_run_business_view_source_validation(prefix, row) for row in view_rows]
+def _run_business_view_source_validations(
+    prefix: str, adapter, layout: Layout | None = None
+) -> list[TestResult]:
+    layout = layout or derive_layout(prefix)
+    view_rows = adapter.fetch_all(_business_view_inventory_sql(prefix, layout))
+    return [_run_business_view_source_validation(prefix, row, layout) for row in view_rows]
 
 
-def _run_standard_table_view_coverage_validation(prefix: str, adapter) -> TestResult:
-    test_case = view_contract_test_cases(prefix)[2]
+def _run_standard_table_view_coverage_validation(
+    prefix: str, adapter, layout: Layout | None = None
+) -> TestResult:
+    layout = layout or derive_layout(prefix)
+    test_case = _all_view_contract_cases(prefix, layout)[2]
     missing_rows = adapter.fetch_all(test_case.sql)
     if missing_rows:
         return TestResult(
@@ -171,9 +209,12 @@ def _run_standard_table_view_coverage_validation(prefix: str, adapter) -> TestRe
     )
 
 
-def _run_view_table_locking_validations(prefix: str, adapter) -> list[TestResult]:
-    view_rows = adapter.fetch_all(_view_text_inventory_sql(prefix))
-    return [_run_view_table_locking_validation(prefix, row) for row in view_rows]
+def _run_view_table_locking_validations(
+    prefix: str, adapter, layout: Layout | None = None
+) -> list[TestResult]:
+    layout = layout or derive_layout(prefix)
+    view_rows = adapter.fetch_all(_view_text_inventory_sql(prefix, layout))
+    return [_run_view_table_locking_validation(prefix, row, layout) for row in view_rows]
 
 
 def _run_view_validation(prefix: str, adapter, row: dict[str, object]) -> TestResult:
@@ -235,11 +276,13 @@ def _run_standard_view_contract_validation(
     prefix: str,
     adapter,
     row: dict[str, object],
+    layout: Layout | None = None,
 ) -> TestResult:
+    layout = layout or derive_layout(prefix)
     database_name = str(row.get("database_name") or row.get("DatabaseName") or "").strip()
     view_name = str(row.get("view_name") or row.get("TableName") or "").strip()
     view_text = str(row.get("view_text") or row.get("RequestText") or "")
-    base_database_name = database_name.removesuffix("_STD_V") + "_STD_T"
+    base_database_name = layout.base_database_for_access(database_name)
     violations = _standard_view_text_violations(database_name, view_name, view_text)
     test_case = TestCase(
         test_id=f"{prefix.upper()}-STD-VIEW-1TO1-{database_name}.{view_name}",
@@ -283,10 +326,12 @@ def _run_standard_view_column_contract_validation(
     prefix: str,
     adapter,
     row: dict[str, object],
+    layout: Layout | None = None,
 ) -> TestResult:
+    layout = layout or derive_layout(prefix)
     database_name = str(row.get("database_name") or row.get("DatabaseName") or "").strip()
     view_name = str(row.get("view_name") or row.get("TableName") or "").strip()
-    base_database_name = database_name.removesuffix("_STD_V") + "_STD_T"
+    base_database_name = layout.base_database_for_access(database_name)
     violations = _standard_view_column_violations(
         adapter,
         database_name,
@@ -334,11 +379,13 @@ def _run_standard_view_column_contract_validation(
 def _run_business_view_source_validation(
     prefix: str,
     row: dict[str, object],
+    layout: Layout | None = None,
 ) -> TestResult:
+    layout = layout or derive_layout(prefix)
     database_name = str(row.get("database_name") or row.get("DatabaseName") or "").strip()
     view_name = str(row.get("view_name") or row.get("TableName") or "").strip()
     view_text = str(row.get("view_text") or row.get("RequestText") or "")
-    violations = _business_view_source_violations(database_name, view_name, view_text)
+    violations = _business_view_source_violations(database_name, view_name, view_text, layout)
     test_case = TestCase(
         test_id=f"{prefix.upper()}-BUS-VIEW-SOURCES-{database_name}.{view_name}",
         name=f"Business view sources are standard views: {database_name}.{view_name}",
@@ -375,11 +422,13 @@ def _run_business_view_source_validation(
 def _run_view_table_locking_validation(
     prefix: str,
     row: dict[str, object],
+    layout: Layout | None = None,
 ) -> TestResult:
+    layout = layout or derive_layout(prefix)
     database_name = str(row.get("database_name") or row.get("DatabaseName") or "").strip()
     view_name = str(row.get("view_name") or row.get("TableName") or "").strip()
     view_text = str(row.get("view_text") or row.get("RequestText") or "")
-    violations = _view_table_locking_violations(database_name, view_name, view_text)
+    violations = _view_table_locking_violations(database_name, view_name, view_text, layout)
     test_case = TestCase(
         test_id=f"{prefix.upper()}-VIEW-TABLE-LOCKING-{database_name}.{view_name}",
         name=f"Direct table view has access locks: {database_name}.{view_name}",
@@ -413,8 +462,9 @@ def _run_view_table_locking_validation(
     )
 
 
-def _missing_inventory_result(prefix: str) -> TestResult:
-    test_case = view_contract_test_cases(prefix)[0]
+def _missing_inventory_result(prefix: str, layout: Layout | None = None) -> TestResult:
+    layout = layout or derive_layout(prefix)
+    test_case = _all_view_contract_cases(prefix, layout)[0]
     return TestResult(
         test_case=test_case,
         status=TestStatus.FAILED,
@@ -431,68 +481,68 @@ def _missing_inventory_result(prefix: str) -> TestResult:
     )
 
 
-def _product_views_sql(prefix: str) -> str:
-    escaped_prefix = prefix.replace("'", "''")
+def _product_views_sql(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
     return f"""
 SELECT
     TRIM(DatabaseName) AS database_name
    ,TRIM(TableName) AS view_name
 FROM DBC.TablesV
-WHERE DatabaseName LIKE '{escaped_prefix}\\_%' ESCAPE '\\'
+WHERE {layout.product_scope('DatabaseName')}
   AND TableKind = 'V'
-  AND {_deployed_module_database_filter(prefix, 'DatabaseName')}
+  AND {layout.module_scope_filter('DatabaseName')}
   AND {backup_object_exclusion_sql('TableName')}
 ORDER BY DatabaseName, TableName
 """.strip()
 
 
-def _standard_view_inventory_sql(prefix: str) -> str:
-    escaped_prefix = prefix.replace("'", "''")
-    return f"""
-SELECT
-    TRIM(DatabaseName) AS database_name
-   ,TRIM(TableName) AS view_name
-   ,COALESCE(RequestText, '') AS view_text
-FROM DBC.TablesV
-WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_STD\\_V' ESCAPE '\\'
-  AND TableKind = 'V'
-  AND {_deployed_module_database_filter(prefix, 'DatabaseName')}
-  AND {backup_object_exclusion_sql('TableName')}
-ORDER BY DatabaseName, TableName
-""".strip()
-
-
-def _business_view_inventory_sql(prefix: str) -> str:
-    escaped_prefix = prefix.replace("'", "''")
+def _standard_view_inventory_sql(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
     return f"""
 SELECT
     TRIM(DatabaseName) AS database_name
    ,TRIM(TableName) AS view_name
    ,COALESCE(RequestText, '') AS view_text
 FROM DBC.TablesV
-WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_BUS\\_V' ESCAPE '\\'
+WHERE {layout.access_database_predicate('DatabaseName')}
   AND TableKind = 'V'
-  AND {_deployed_module_database_filter(prefix, 'DatabaseName')}
+  AND {layout.module_scope_filter('DatabaseName')}
   AND {backup_object_exclusion_sql('TableName')}
 ORDER BY DatabaseName, TableName
 """.strip()
 
 
-def _standard_table_view_coverage_sql(prefix: str) -> str:
-    escaped_prefix = prefix.replace("'", "''")
+def _business_view_inventory_sql(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
+    return f"""
+SELECT
+    TRIM(DatabaseName) AS database_name
+   ,TRIM(TableName) AS view_name
+   ,COALESCE(RequestText, '') AS view_text
+FROM DBC.TablesV
+WHERE {layout.consumer_database_predicate('DatabaseName')}
+  AND TableKind = 'V'
+  AND {layout.module_scope_filter('DatabaseName')}
+  AND {backup_object_exclusion_sql('TableName')}
+ORDER BY DatabaseName, TableName
+""".strip()
+
+
+def _standard_table_view_coverage_sql(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
     return f"""
 WITH standard_tables AS
 (
     SELECT
         TRIM(DatabaseName) AS table_database_name
        ,TRIM(TableName) AS table_name
-       ,TRIM(SUBSTRING(DatabaseName FROM 1 FOR CHARACTER_LENGTH(DatabaseName) - 6) || '_STD_V')
+       ,{layout.expected_access_database_expression('DatabaseName')}
             AS expected_view_database_name
        ,TRIM(TableName) AS expected_view_name
     FROM DBC.TablesV
-    WHERE DatabaseName LIKE '{escaped_prefix}\\_%\\_STD\\_T' ESCAPE '\\'
+    WHERE {layout.storage_database_predicate('DatabaseName')}
       AND TableKind = 'T'
-      AND {_deployed_module_database_filter(prefix, 'DatabaseName')}
+      AND {layout.module_scope_filter('DatabaseName')}
       AND {backup_object_exclusion_sql('TableName')}
 ),
 missing_views AS
@@ -523,38 +573,20 @@ ORDER BY table_database_name, table_name
 """.strip()
 
 
-def _view_text_inventory_sql(prefix: str) -> str:
-    escaped_prefix = prefix.replace("'", "''")
+def _view_text_inventory_sql(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
     return f"""
 SELECT
     TRIM(DatabaseName) AS database_name
    ,TRIM(TableName) AS view_name
    ,COALESCE(RequestText, '') AS view_text
 FROM DBC.TablesV
-WHERE DatabaseName LIKE '{escaped_prefix}\\_%' ESCAPE '\\'
+WHERE {layout.product_scope('DatabaseName')}
   AND TableKind = 'V'
-  AND {_deployed_module_database_filter(prefix, 'DatabaseName')}
+  AND {layout.module_scope_filter('DatabaseName')}
   AND {backup_object_exclusion_sql('TableName')}
 ORDER BY DatabaseName, TableName
 """.strip()
-
-
-def _deployed_module_database_filter(prefix: str, database_expression: str) -> str:
-    sem_db = f"{prefix}_SEM_STD_V"
-    return f"""
-EXISTS (
-    SELECT 1
-    FROM {sem_db}.data_product_map module_scope
-    WHERE COALESCE(module_scope.is_active, 1) = 1
-      AND UPPER(COALESCE(TRIM(module_scope.deployment_status), 'DEPLOYED')) = 'DEPLOYED'
-      AND (
-          UPPER(TRIM(module_scope.database_name)) = UPPER(TRIM({database_expression}))
-          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_STD_V'), '_BUS_V', '_STD_V'))
-                = UPPER(TRIM({database_expression}))
-          OR UPPER(OREPLACE(OREPLACE(TRIM(module_scope.database_name), '_STD_T', '_BUS_V'), '_STD_V', '_BUS_V'))
-                = UPPER(TRIM({database_expression}))
-      )
-)""".strip()
 
 
 def _standard_view_column_contract_sql(
@@ -686,9 +718,11 @@ def _business_view_source_violations(
     database_name: str,
     view_name: str,
     view_text: str,
+    layout: Layout | None = None,
 ) -> list[dict[str, object]]:
     normalised = " ".join(view_text.upper().split())
-    if "_STD_T" not in normalised:
+    evidence = _direct_storage_reference(normalised, layout)
+    if evidence is None:
         return []
     return [
         {
@@ -699,7 +733,7 @@ def _business_view_source_violations(
             ),
             "database_name": database_name,
             "view_name": view_name,
-            "evidence": "_STD_T",
+            "evidence": evidence,
         }
     ]
 
@@ -708,9 +742,10 @@ def _view_table_locking_violations(
     database_name: str,
     view_name: str,
     view_text: str,
+    layout: Layout | None = None,
 ) -> list[dict[str, object]]:
     normalised = " ".join(view_text.upper().split())
-    direct_tables = _direct_table_references(normalised)
+    direct_tables = _direct_table_references(normalised, layout)
     if not direct_tables:
         return []
     if _has_row_access_lock(normalised):
@@ -731,12 +766,36 @@ def _view_table_locking_violations(
     ]
 
 
-def _direct_table_references(normalised_view_text: str) -> list[str]:
+def _direct_table_references(
+    normalised_view_text: str, layout: Layout | None = None
+) -> list[str]:
+    if layout is not None and layout.uses_container_sets:
+        # Declared layout: a direct table reference names a STORAGE container.
+        storage = {name.upper() for name in layout.storage_containers}
+        references = re.finditer(
+            r"\b(?:FROM|JOIN)\s+([A-Z0-9_$#]+)\.([A-Z0-9_$#]+)\b", normalised_view_text
+        )
+        declared = [
+            f"{match.group(1)}.{match.group(2)}"
+            for match in references
+            if match.group(1) in storage
+        ]
+        return list(dict.fromkeys(declared))
     table_names = []
     table_pattern = r"\b(?:FROM|JOIN)\s+([A-Z0-9_]+_T)\.([A-Z0-9_]+)\b"
     for match in re.finditer(table_pattern, normalised_view_text):
         table_names.append(f"{match.group(1)}.{match.group(2)}")
     return list(dict.fromkeys(table_names))
+
+
+def _direct_storage_reference(normalised_view_text: str, layout: Layout | None) -> str | None:
+    """Evidence that a CONSUMER view selects a STORAGE object directly, else None."""
+    if layout is not None and layout.uses_container_sets:
+        for name in layout.storage_containers:
+            if re.search(rf"(?<![A-Z0-9_$#]){re.escape(name.upper())}\.", normalised_view_text):
+                return name
+        return None
+    return "_STD_T" if "_STD_T" in normalised_view_text else None
 
 
 def _has_locking_table_for_reference(normalised_view_text: str, referenced_table: str) -> bool:
