@@ -191,8 +191,11 @@ class SqlAlchemyAdapter:
         engine = self._engine_or_create()
         from sqlalchemy import text
 
+        # execute() runs finished statements with no bind parameters. Escape colons
+        # so text() leaves literals alone: published evidence embeds JSON such as
+        # {"error_message":null}, whose ":null" would otherwise be read as a bind.
         with engine.begin() as connection:
-            connection.execute(text(sql))
+            connection.execute(text(sql.replace(":", "\\:")))
 
     def close(self) -> None:
         """Dispose the engine and release its pooled Teradata session."""

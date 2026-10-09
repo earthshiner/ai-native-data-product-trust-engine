@@ -92,6 +92,23 @@ def test_sqlalchemy_adapter_reuses_one_engine(monkeypatch):
     assert "max_overflow" not in created[0].kwargs
 
 
+def test_sqlalchemy_adapter_execute_does_not_treat_colons_in_literals_as_binds(tmp_path):
+    # Published evidence embeds JSON such as {"error_message":null}. SQLAlchemy's
+    # text() reads ":null" as a bind parameter and raises "A value is required for
+    # bind parameter 'null'". execute() runs finished statements, so it must pass
+    # literals through untouched.
+    pytest.importorskip("sqlalchemy")
+    database = tmp_path / "evidence.db"
+    payload = '[{"error_message":null,"note":"at 12:30 see :this and :that"}]'
+
+    with SqlAlchemyAdapter(f"sqlite:///{database}") as adapter:
+        adapter.execute("CREATE TABLE evidence (payload VARCHAR(200));")
+        adapter.execute(f"INSERT INTO evidence (payload) VALUES ('{payload}');")
+        rows = adapter.fetch_all("SELECT payload FROM evidence;")
+
+    assert rows == [{"payload": payload}]
+
+
 def test_sqlalchemy_adapter_builds_a_real_engine_with_the_teradatasql_dialect():
     # Guard the exact failure the fake-create_engine tests missed: create_engine
     # with the real teradatasql dialect must accept the pool options we pass
