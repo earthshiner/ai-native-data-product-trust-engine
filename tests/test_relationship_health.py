@@ -16,9 +16,9 @@ def test_duplicate_current_sql_scans_full_table_not_a_sample():
     sql = relationship_health._temporal_current_duplicate_sql(
         {
             "entity_name": "CallSummary",
-            "database_name": "CallCentre_DOM_STD_T",
-            "table_name": "Call_Summary_H",
-            "natural_key_column": "call_id",
+            "database_name": "ExampleProduct_DOM_STD_T",
+            "table_name": "Order_Summary_H",
+            "natural_key_column": "order_id",
             "current_flag_column": "is_current",
             "deleted_flag_column": "is_deleted",
         }
@@ -34,17 +34,17 @@ def test_duplicate_current_sql_scans_full_table_not_a_sample():
     # Still emits the issue code and keys on the declared business key
     assert "DUPLICATE_CURRENT_RECORD" in sql
     assert "is_deleted" in sql
-    assert '"CallCentre_DOM_STD_V"."Call_Summary_H"' in sql
-    assert '"CallCentre_DOM_STD_T"."Call_Summary_H"' not in sql
+    assert '"ExampleProduct_DOM_STD_V"."Order_Summary_H"' in sql
+    assert '"ExampleProduct_DOM_STD_T"."Order_Summary_H"' not in sql
 
 
 RELATIONSHIP_ROW = {
     "relationship_id": 1,
     "relationship_name": "Call to Customer",
-    "source_database": "CallCentre_DOM_STD_T",
-    "source_table": "Call_H",
+    "source_database": "ExampleProduct_DOM_STD_T",
+    "source_table": "Order_H",
     "source_column": "customer_id",
-    "target_database": "CallCentre_DOM_STD_T",
+    "target_database": "ExampleProduct_DOM_STD_T",
     "target_table": "Customer_H",
     "target_column": "customer_id",
     "cardinality": "M:1",
@@ -53,7 +53,7 @@ RELATIONSHIP_ROW = {
 TEMPORAL_ROW = {
     "entity_metadata_id": 1,
     "entity_name": "Customer",
-    "database_name": "CallCentre_DOM_STD_T",
+    "database_name": "ExampleProduct_DOM_STD_T",
     "table_name": "Customer_H",
     "view_name": "Customer_Current",
     "natural_key_column": "customer_id",
@@ -64,19 +64,19 @@ TEMPORAL_ROW = {
 
 
 def test_relationship_health_test_cases_are_listed_for_cli_generation():
-    tests = relationship_health_test_cases("CallCentre")
+    tests = relationship_health_test_cases("ExampleProduct")
 
     assert [test.test_id for test in tests] == [
-        "CALLCENTRE-REL-ORPHANS",
-        "CALLCENTRE-REL-CARDINALITY",
-        "CALLCENTRE-TEMPORAL-CURRENT",
+        "EXAMPLEPRODUCT-REL-ORPHANS",
+        "EXAMPLEPRODUCT-REL-CARDINALITY",
+        "EXAMPLEPRODUCT-TEMPORAL-CURRENT",
     ]
     assert tests[0].category.value == "DATA_QUALITY"
 
 
 def test_relationship_metadata_queries_scope_to_deployed_modules():
-    relationship_sql = relationship_health._relationship_metadata_sql("CallCentre")
-    temporal_sql = relationship_health._temporal_entity_metadata_sql("CallCentre")
+    relationship_sql = relationship_health._relationship_metadata_sql("ExampleProduct")
+    temporal_sql = relationship_health._temporal_entity_metadata_sql("ExampleProduct")
 
     assert "deployment_status" in relationship_sql
     assert "data_product_map module_scope" in relationship_sql
@@ -99,7 +99,7 @@ def test_run_relationship_orphan_validations_reports_bounded_orphans():
         ],
     )
 
-    results = run_relationship_orphan_validations("CallCentre", adapter)
+    results = run_relationship_orphan_validations("ExampleProduct", adapter)
 
     assert len(results) == 1
     assert results[0].status.value == "FAILED"
@@ -113,13 +113,13 @@ def test_relationship_orphan_sql_queries_governed_access_views():
     sql = relationship_health._relationship_orphan_sql(
         {
             **RELATIONSHIP_ROW,
-            "source_database": "CallCentre_SCH_STD_T",
-            "source_table": "call_embedding",
+            "source_database": "ExampleProduct_SCH_STD_T",
+            "source_table": "order_embedding",
         }
     )
 
-    assert '"CallCentre_SCH_STD_V"."call_embedding"' in sql
-    assert '"CallCentre_DOM_STD_V"."Customer_H"' in sql
+    assert '"ExampleProduct_SCH_STD_V"."order_embedding"' in sql
+    assert '"ExampleProduct_DOM_STD_V"."Customer_H"' in sql
     assert "_STD_T" not in sql
 
 
@@ -135,7 +135,7 @@ def test_run_relationship_cardinality_validations_reports_declared_mismatch():
         ],
     )
 
-    results = run_relationship_cardinality_validations("CallCentre", adapter)
+    results = run_relationship_cardinality_validations("ExampleProduct", adapter)
 
     assert results[0].status.value == "FAILED"
     assert results[0].sample_rows[0]["issue_code"] == "CARDINALITY_TARGET_NOT_UNIQUE"
@@ -146,9 +146,9 @@ def test_relationship_checks_report_missing_endpoint_without_sampling_it():
     endpoint_finding = {
         "relationship_name": "Embedding_to_Call",
         "affected_side": "source",
-        "database_name": "CallCentre_SCH_STD_V",
-        "object_name": "call_embedding",
-        "column_name": "call_id",
+        "database_name": "ExampleProduct_SCH_STD_V",
+        "object_name": "order_embedding",
+        "column_name": "order_id",
         "issue_code": "RELATIONSHIP_SOURCE_OBJECT_NOT_DEPLOYED",
     }
     adapter = RelationshipStubAdapter(
@@ -156,20 +156,20 @@ def test_relationship_checks_report_missing_endpoint_without_sampling_it():
             {
                 **RELATIONSHIP_ROW,
                 "relationship_name": "Embedding_to_Call",
-                "source_database": "CallCentre_SCH_STD_T",
-                "source_table": "call_embedding",
-                "source_column": "call_id",
+                "source_database": "ExampleProduct_SCH_STD_T",
+                "source_table": "order_embedding",
+                "source_column": "order_id",
             }
         ],
         endpoint_rows=[endpoint_finding],
     )
 
-    results = run_relationship_cardinality_validations("CallCentre", adapter)
+    results = run_relationship_cardinality_validations("ExampleProduct", adapter)
 
     assert results[0].status.value == "FAILED"
     assert results[0].sample_rows == [endpoint_finding]
     assert len(adapter.executed_sql) == 2
-    assert '"CallCentre_SCH_STD_V"."call_embedding"' not in adapter.executed_sql[1]
+    assert '"ExampleProduct_SCH_STD_V"."order_embedding"' not in adapter.executed_sql[1]
     assert "FROM DBC.TablesV tv" in adapter.executed_sql[1]
 
 
@@ -177,15 +177,15 @@ def test_relationship_cardinality_sql_preserves_existing_view_databases():
     sql = relationship_health._relationship_cardinality_sql(
         {
             **RELATIONSHIP_ROW,
-            "source_database": "CallCentre_SCH_BUS_V",
-            "source_table": "call_embedding",
-            "target_database": "CallCentre_DOM_STD_V",
+            "source_database": "ExampleProduct_SCH_BUS_V",
+            "source_table": "order_embedding",
+            "target_database": "ExampleProduct_DOM_STD_V",
         },
         "M:1",
     )
 
-    assert '"CallCentre_SCH_BUS_V"."call_embedding"' in sql
-    assert '"CallCentre_DOM_STD_V"."Customer_H"' in sql
+    assert '"ExampleProduct_SCH_BUS_V"."order_embedding"' in sql
+    assert '"ExampleProduct_DOM_STD_V"."Customer_H"' in sql
 
 
 def test_run_temporal_current_validations_reports_duplicate_current_records():
@@ -201,7 +201,7 @@ def test_run_temporal_current_validations_reports_duplicate_current_records():
         view_rows=[{"view_text": "SELECT * FROM Customer_H WHERE is_current = 1"}],
     )
 
-    results = run_temporal_current_validations("CallCentre", adapter)
+    results = run_temporal_current_validations("ExampleProduct", adapter)
 
     assert results[0].status.value == "FAILED"
     assert results[0].sample_rows[0]["issue_code"] == "DUPLICATE_CURRENT_RECORD"
@@ -214,7 +214,7 @@ def test_run_temporal_current_validations_reports_missing_current_view_filter():
         view_rows=[{"view_text": "SELECT * FROM Customer_H"}],
     )
 
-    results = run_temporal_current_validations("CallCentre", adapter)
+    results = run_temporal_current_validations("ExampleProduct", adapter)
 
     assert results[0].status.value == "FAILED"
     assert results[0].sample_rows[0]["issue_code"] == "CURRENT_VIEW_MISSING_CURRENT_FILTER"
@@ -230,7 +230,7 @@ def test_run_relationship_health_validations_combines_all_check_families():
         view_rows=[{"view_text": "SELECT * FROM Customer_H WHERE is_current = 1"}],
     )
 
-    results = run_relationship_health_validations("CallCentre", adapter)
+    results = run_relationship_health_validations("ExampleProduct", adapter)
 
     assert len(results) == 3
     assert all(result.status.value == "PASSED" for result in results)
@@ -258,9 +258,9 @@ class RelationshipStubAdapter:
 
     def fetch_all(self, sql):
         self.executed_sql.append(sql)
-        if "FROM CallCentre_SEM_STD_V.table_relationship" in sql:
+        if "FROM ExampleProduct_SEM_STD_V.table_relationship" in sql:
             return self.relationship_rows
-        if "FROM CallCentre_SEM_STD_V.entity_metadata" in sql:
+        if "FROM ExampleProduct_SEM_STD_V.entity_metadata" in sql:
             return self.temporal_rows
         if "RELATIONSHIP_SOURCE_OBJECT_NOT_DEPLOYED" in sql:
             return self.endpoint_rows

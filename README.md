@@ -213,10 +213,42 @@ The publish target resolves in precedence order: an explicit two-part table name
 `{prefix}_SEM_STD_T.trust_engine_run`. The flag itself remains the publish trigger — a config
 key alone never publishes. Products that home their validation evidence in the Observability
 module (per the AI-Native validation-results direction) pin the target in their rules config
-so every scheduled run lands in the right table. Agents should read the product's registered
-trust view (by default `{prefix}_SEM_BUS_V.trust_engine_latest`) and treat
-`agent_use_allowed = 0` or `trust_status = 'UNTRUSTED'` as a stop signal before generating SQL
-over the product.
+so every scheduled run lands in the right table.
+
+### Standard validation results and the per-area trust map (wire schema 2.1)
+
+`--publish-trust-table` is the **legacy** single-row publish, kept for existing consumers. The
+standard binding is `--publish-validation`, which appends one `validation_run` row plus the
+**per-area trust map** (`validation_area`, one row per area) to the product's Observability
+database (default `{prefix}_OBS_STD_T`; override with the flag value or the rules-config
+`publish_validation_database` key). Deploy the standard's `validation_run` / `validation_area`
+tables and `validation_latest` / `validation_trust_map` views first. The engine generates that
+DDL for any product, so nothing is hand-edited per prefix:
+
+```powershell
+python -m ai_native_data_product_trust_engine validation-ddl --prefix ProductPrefix --output validation-ddl\ProductPrefix_validation_ddl.sql
+```
+
+Tables go to `{prefix}_OBS_STD_T` and views to `{prefix}_OBS_STD_V` by default. The same file also
+creates an access-layer `validation_trust_map` in `{prefix}_OBS_ACL_V`, the view consumers and agents
+are granted, as a thin projection of the STD_V one. Override with
+`--table-database` / `--view-database` / `--acl-view-database`; the table database also follows the rules-config
+`publish_validation_database` key, so the DDL and `--publish-validation` always agree. Generated
+files are per-product deployment artefacts and are not committed.
+
+```powershell
+python -m ai_native_data_product_trust_engine validate --prefix ProductPrefix --output reports\productprefix-validation.json --publish-validation
+```
+
+The map informs; it does not block. Each area (module, pattern or product) carries its coverage
+(`checks_ran / checks_expected`), `area_status`, `confidence`, `open_gaps` and
+`recommended_action`. A check belongs to the area that owns it (`SEM-*` is the Semantic module,
+`QUERY-*` the Memory cookbook, `OPS-*` Observability, view contracts the object-placement
+pattern). Modules the product declares in `data_product_map` that no check reached are
+published as `no-evidence` / `unknown`, never left out. `agent_use_allowed` is deprecated and
+always published as `1`. Agents should read `validation_trust_map` for the areas they are about
+to use, proceed, and disclose each area's confidence; `trust_status` is an advisory summary
+only. See [CONTRACT.md](CONTRACT.md).
 
 Optional rule configuration can disable specific generated tests or scanner families, and pin
 the publish target, without changing code (all keys optional):

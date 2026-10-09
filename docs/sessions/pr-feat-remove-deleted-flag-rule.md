@@ -1,7 +1,7 @@
 # PR: Retire SEM-009 ENTITY_DELETED_FLAG rule
 
 ## Summary
-SEM-009 ("Entity deleted flag metadata is populated and deployed") required every active SCD2 entity to declare and deploy an `is_deleted` column via `entity_metadata.deleted_flag_column`. In practice it duplicates the product-wide `is_active` soft-delete convention and fires false positives on entities that legitimately don't track deletes (e.g. derived feature stores: `call_behaviour_features`, `model_prediction`).
+SEM-009 ("Entity deleted flag metadata is populated and deployed") required every active SCD2 entity to declare and deploy an `is_deleted` column via `entity_metadata.deleted_flag_column`. In practice it duplicates the product-wide `is_active` soft-delete convention and fires false positives on entities that legitimately don't track deletes (e.g. derived feature stores: `order_behaviour_features`, `model_prediction`).
 
 ## Changes
 - **`src/.../test_generation.py`** — removed the SEM-009 `TestCase` block; left a comment explaining the retirement. SEM-010 and SEM-011 keep their numbers so historical trust-engine reports remain valid.
@@ -9,4 +9,4 @@ SEM-009 ("Entity deleted flag metadata is populated and deployed") required ever
 
 ## Test plan
 - [x] `uv run pytest -q` — 103 passed.
-- [ ] Re-run trust engine against CallCentre — CALLCENTRE-SEM-009 no longer appears in the failed-checks list.
+- [ ] Re-run trust engine against ExampleProduct — EXAMPLEPRODUCT-SEM-009 no longer appears in the failed-checks list.

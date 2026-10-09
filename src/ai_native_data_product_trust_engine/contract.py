@@ -20,6 +20,7 @@ producer/consumer boundary.
 from __future__ import annotations
 
 from ai_native_data_product_trust_engine.models import (
+    ExcludedCheck,
     ExpectedResult,
     RepairMode,
     TestCase,
@@ -30,14 +31,21 @@ from ai_native_data_product_trust_engine.models import (
     ValidationRun,
 )
 from ai_native_data_product_trust_engine.repairs import RepairCandidate
-from ai_native_data_product_trust_engine.trust_publish import _publish_row
+from ai_native_data_product_trust_engine.trust_publish import (
+    _publish_row,
+    validation_area_rows,
+    validation_run_row,
+)
 
 # Bump when the row columns or the failed_checks_json / repair_candidates_json
 # object shapes change incompatibly. The Browser asserts the version it supports.
 # 2.0: started_at/completed_at (VARCHAR ISO-8601) became started_dts/
 # completed_dts (TIMESTAMP(6) WITH TIME ZONE) — canonical temporal names and
 # types; latest-run ordering is chronological rather than lexicographic.
-PAYLOAD_SCHEMA_VERSION = "2.0"
+# 2.1: additive. Adds the per-area trust map (``validation_area``), producer
+# identity on the run record, ``scope_kind``/``scope_id`` on failed-check items,
+# and deprecates ``agent_use_allowed`` (always 1; never a decision).
+PAYLOAD_SCHEMA_VERSION = "2.1"
 
 # Deterministic timestamps — the module must not call datetime.now() so the
 # generated fixture is stable across runs (byte-for-byte golden comparison).
@@ -70,7 +78,7 @@ def _example_results() -> list[TestResult]:
     return [
         TestResult(
             test_case=_case(
-                "CALLCENTRE-SEM-001",
+                "EXAMPLEPRODUCT-SEM-001",
                 "Entity metadata references deployed objects",
                 TestCategory.SEMANTIC,
                 TestSeverity.CRITICAL,
@@ -82,7 +90,7 @@ def _example_results() -> list[TestResult]:
         ),
         TestResult(
             test_case=_case(
-                "CALLCENTRE-SEM-008",
+                "EXAMPLEPRODUCT-SEM-008",
                 "Entity metadata publishes BUS_V view names",
                 TestCategory.SEMANTIC,
                 TestSeverity.CRITICAL,
@@ -93,22 +101,22 @@ def _example_results() -> list[TestResult]:
             sample_rows=[
                 {
                     "entity_name": "Agent",
-                    "view_name": "CallCentre_DOM_BUS_V.Agent_Current",
-                    "business_database_name": "CallCentre_DOM_BUS_V",
+                    "view_name": "ExampleProduct_DOM_BUS_V.Customer_Current",
+                    "business_database_name": "ExampleProduct_DOM_BUS_V",
                     "issue_code": "ENTITY_VIEW_NAME_NOT_DEPLOYED",
                     "repair_hint": "Deploy the BUS_V view for agent access.",
                 },
                 {
                     "entity_name": "AgentInteraction",
                     "view_name": None,
-                    "business_database_name": "CallCentre_MEM_BUS_V",
+                    "business_database_name": "ExampleProduct_MEM_BUS_V",
                     "issue_code": "ENTITY_VIEW_NAME_MISSING",
                     "repair_hint": "Populate entity_metadata.view_name.",
                 },
                 {
                     "entity_name": "Call",
-                    "view_name": "CallCentre_DOM_BUS_V.Call_Current",
-                    "business_database_name": "CallCentre_DOM_BUS_V",
+                    "view_name": "ExampleProduct_DOM_BUS_V.Order_Current",
+                    "business_database_name": "ExampleProduct_DOM_BUS_V",
                     "issue_code": "ENTITY_VIEW_NAME_NOT_DEPLOYED",
                     "repair_hint": "Deploy the BUS_V view for agent access.",
                 },
@@ -116,7 +124,7 @@ def _example_results() -> list[TestResult]:
         ),
         TestResult(
             test_case=_case(
-                "CALLCENTRE-DISCOVERY-002",
+                "EXAMPLEPRODUCT-DISCOVERY-002",
                 "Central registry matches orientation metadata",
                 TestCategory.SEMANTIC,
                 TestSeverity.CRITICAL,
@@ -126,7 +134,7 @@ def _example_results() -> list[TestResult]:
             row_count=1,
             sample_rows=[
                 {
-                    "product_id": "callcentre",
+                    "product_id": "exampleproduct",
                     "issue_code": "MISSING_ORIENTATION_MANIFEST",
                     "issue_detail": "manifest_json is required for the MCP orientation layer.",
                     "repair_hint": "Populate manifest_json with the discovery manifest.",
@@ -135,7 +143,7 @@ def _example_results() -> list[TestResult]:
         ),
         TestResult(
             test_case=_case(
-                "CALLCENTRE-QUERY-BOUNDS-BQ-COMP-ALL-HIT-RATE",
+                "EXAMPLEPRODUCT-QUERY-BOUNDS-BQ-COMP-ALL-HIT-RATE",
                 "Interactive recipe is bounded: Quality all-hit rate by category",
                 TestCategory.PERFORMANCE,
                 TestSeverity.CRITICAL,
@@ -158,7 +166,7 @@ def _example_results() -> list[TestResult]:
         ),
         TestResult(
             test_case=_case(
-                "CALLCENTRE-STRUCT-001",
+                "EXAMPLEPRODUCT-STRUCT-001",
                 "Similar table column names use consistent datatypes",
                 TestCategory.STRUCTURAL,
                 TestSeverity.WARNING,
@@ -168,8 +176,8 @@ def _example_results() -> list[TestResult]:
             row_count=31,
             sample_rows=[
                 {
-                    "database_name": "CallCentre_DOM_STD_T",
-                    "table_name": "Agent_H",
+                    "database_name": "ExampleProduct_DOM_STD_T",
+                    "table_name": "Customer_H",
                     "column_name": "agent_key",
                     "issue_code": "COLUMN_TYPE_DRIFT",
                     "repair_hint": "Align datatype/length for same-named columns.",
@@ -178,7 +186,7 @@ def _example_results() -> list[TestResult]:
         ),
         TestResult(
             test_case=_case(
-                "CALLCENTRE-OPS-002",
+                "EXAMPLEPRODUCT-OPS-002",
                 "Observability evidence objects are deployed",
                 TestCategory.OPERATIONAL,
                 TestSeverity.WARNING,
@@ -189,7 +197,7 @@ def _example_results() -> list[TestResult]:
             sample_rows=[
                 {
                     "object_name": "data_lineage",
-                    "observability_database": "CallCentre_OBS_STD_T",
+                    "observability_database": "ExampleProduct_OBS_STD_T",
                     "issue_code": "MISSING_OBSERVABILITY_TABLE",
                     "issue_detail": "Required Observability table is not deployed.",
                     "repair_hint": "Deploy the Observability table.",
@@ -202,7 +210,7 @@ def _example_results() -> list[TestResult]:
 def _example_repairs() -> list[RepairCandidate]:
     return [
         RepairCandidate(
-            candidate_id="CALLCENTRE-STRUCT-001-COLUMN-TYPE-DRIFT",
+            candidate_id="EXAMPLEPRODUCT-STRUCT-001-COLUMN-TYPE-DRIFT",
             issue_code="COLUMN_TYPE_DRIFT",
             summary="Align datatype, length, precision and scale for same/similar columns.",
             mode=RepairMode.PROPOSAL,
@@ -210,7 +218,7 @@ def _example_repairs() -> list[RepairCandidate]:
             sql="-- review and align column datatypes",
         ),
         RepairCandidate(
-            candidate_id="CALLCENTRE-SEM-008-ENTITY-VIEW-NAME",
+            candidate_id="EXAMPLEPRODUCT-SEM-008-ENTITY-VIEW-NAME",
             issue_code="ENTITY_VIEW_NAME_MISSING",
             summary="Populate entity_metadata.view_name for the flagged entities.",
             mode=RepairMode.PROPOSAL,
@@ -230,12 +238,47 @@ def example_payload() -> dict[str, object]:
     ISO-8601 string forms because JSON has no timestamp type.
     """
     run = ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at=_STARTED_AT,
         completed_at=_COMPLETED_AT,
         results=_example_results(),
     )
     return _publish_row(run, _example_repairs())
+
+
+def _example_run() -> ValidationRun:
+    return ValidationRun(
+        prefix="ExampleProduct",
+        started_at=_STARTED_AT,
+        completed_at=_COMPLETED_AT,
+        results=_example_results(),
+        excluded_checks=[
+            ExcludedCheck(
+                check_id="EXAMPLEPRODUCT-CAP-001",
+                name="Capability claims match deployed features",
+                category="CAPABILITY",
+                reason="Disabled by rules config.",
+            )
+        ],
+    )
+
+
+# Modules the example product declares as deployed. ``domain`` has no checks, so
+# the map publishes it as ``no-evidence`` rather than leaving it out (VAL-18).
+_EXAMPLE_MODULES = ["domain", "memory", "observability", "semantic"]
+
+
+def example_validation_run() -> dict[str, object]:
+    """The canonical ``validation_run`` row (wire schema 2.1)."""
+    row = validation_run_row(_example_run(), _example_repairs())
+    # The installed package version varies by environment; pin it so the golden is stable.
+    row["producer_version"] = "fixture"
+    return row
+
+
+def example_validation_areas() -> list[dict[str, object]]:
+    """The canonical ``validation_area`` rows: the per-area trust map."""
+    return validation_area_rows(_example_run(), _EXAMPLE_MODULES)
 
 
 def contract_fixture() -> dict[str, object]:
@@ -244,8 +287,11 @@ def contract_fixture() -> dict[str, object]:
     return {
         "payload_schema_version": PAYLOAD_SCHEMA_VERSION,
         "description": (
-            "Canonical trust_engine_latest row + JSON blob shapes. Generated by "
-            "trust_publish/contract.example_payload(); do not hand-edit. See CONTRACT.md."
+            "Canonical validation_run + validation_area rows (wire schema 2.1) and the "
+            "legacy trust_engine_latest row + JSON blob shapes. Generated by "
+            "trust_publish/contract.example_*(); do not hand-edit. See CONTRACT.md."
         ),
         "trust_engine_latest": example_payload(),
+        "validation_run": example_validation_run(),
+        "validation_area": example_validation_areas(),
     }

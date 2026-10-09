@@ -38,7 +38,7 @@ def test_classify_sql_error_detects_nested_ordered_analytic():
 
 def test_extract_sql_error_evidence_returns_missing_object_name():
     evidence = extract_sql_error_evidence(
-        "Object 'CallCentre_DOM_BUS_V.Call_H' does not exist."
+        "Object 'ExampleProduct_DOM_BUS_V.Order_H' does not exist."
     )
 
     assert evidence == {
@@ -47,7 +47,7 @@ def test_extract_sql_error_evidence_returns_missing_object_name():
             "Update the SQL template to a deployed object, create the missing view, or quarantine "
             "the recipe."
         ),
-        "missing_object": "CallCentre_DOM_BUS_V.Call_H",
+        "missing_object": "ExampleProduct_DOM_BUS_V.Order_H",
     }
 
 
@@ -72,7 +72,7 @@ def test_extract_sql_error_evidence_explains_nested_ordered_analytic():
 
 def test_extract_sql_error_evidence_marks_native_vector_capability():
     evidence = extract_sql_error_evidence(
-        "Object 'CallCentre_SCH_STD_V.call_embedding' does not exist.",
+        "Object 'ExampleProduct_SCH_STD_V.order_embedding' does not exist.",
         "SELECT * FROM TD_VECTORDISTANCE(ON t AS TargetTable)",
     )
 
@@ -87,17 +87,17 @@ def test_extract_sql_error_evidence_marks_native_vector_capability():
 def test_referenced_sql_objects_extracts_views_from_recipe_sql():
     objects = referenced_sql_objects(
         """
-        SELECT c.call_id
-        FROM CallCentre_DOM_BUS_V.Call_H AS c
-        INNER JOIN CallCentre_SCH_BUS_V.call_embedding AS e
-          ON c.call_id = e.call_id
-        WHERE c.call_id = :call_id
+        SELECT c.order_id
+        FROM ExampleProduct_DOM_BUS_V.Order_H AS c
+        INNER JOIN ExampleProduct_SCH_BUS_V.order_embedding AS e
+          ON c.order_id = e.order_id
+        WHERE c.order_id = :order_id
         """
     )
 
     assert objects == [
-        "CallCentre_DOM_BUS_V.Call_H",
-        "CallCentre_SCH_BUS_V.call_embedding",
+        "ExampleProduct_DOM_BUS_V.Order_H",
+        "ExampleProduct_SCH_BUS_V.order_embedding",
     ]
 
 
@@ -157,8 +157,8 @@ def test_explain_performance_findings_extracts_helpstats_suggestions():
             {
                 "Explain": (
                     "BEGIN RECOMMENDED STATS "
-                    "COLLECT STATISTICS COLUMN (agent_id) "
-                    "ON CallCentre_DOM_BUS_V.Call_Current; END RECOMMENDED STATS"
+                    "COLLECT STATISTICS COLUMN (customer_id) "
+                    "ON ExampleProduct_DOM_BUS_V.Order_Current; END RECOMMENDED STATS"
                 )
             }
         ]
@@ -169,7 +169,7 @@ def test_explain_performance_findings_extracts_helpstats_suggestions():
         for finding in findings
         if finding["issue_code"] == "EXPLAIN_HELPSTATS_SUGGESTION"
     )
-    assert "COLLECT STATISTICS COLUMN (agent_id)" in helpstats["finding"]
+    assert "COLLECT STATISTICS COLUMN (customer_id)" in helpstats["finding"]
     assert "advisory" in helpstats["repair_hint"]
 
 
@@ -179,19 +179,19 @@ def test_run_query_template_validations_reports_recipe_failures():
             {
                 "recipe_id": "QC-001",
                 "recipe_title": "Broken recipe",
-                "sql_template": "SELECT missing_column FROM db.table WHERE id = :call_id",
+                "sql_template": "SELECT missing_column FROM db.table WHERE id = :order_id",
             }
         ],
         explain_error=RuntimeError("Column missing_column not found in db.table"),
     )
 
-    results = run_query_template_validations("CallCentre", adapter)
+    results = run_query_template_validations("ExampleProduct", adapter)
 
     assert len(results) == 2
     assert results[0].status.value == "FAILED"
     assert results[0].sample_rows[0]["issue_code"] == "MISSING_COLUMN"
     assert results[0].sample_rows[0]["missing_column"] == "missing_column"
-    assert results[0].sample_rows[0]["parameters"] == ["call_id"]
+    assert results[0].sample_rows[0]["parameters"] == ["order_id"]
     assert results[0].sample_rows[0]["referenced_objects"] == ["db.table"]
     assert results[1].status.value == "PASSED"
 
@@ -199,17 +199,17 @@ def test_run_query_template_validations_reports_recipe_failures():
 def test_run_query_template_validations_reports_attempted_explain_sql():
     sql_template = """
     SELECT
-        ah.agent_name
-       ,COUNT(ch.call_id) AS call_count
-       ,ROUND(100.0 * COUNT(ch.call_id) / SUM(COUNT(ch.call_id)) OVER (), 2) AS pct_of_total
-       ,ROUND(SUM(100.0 * COUNT(ch.call_id) / SUM(COUNT(ch.call_id)) OVER ())
-                  OVER (ORDER BY COUNT(ch.call_id) DESC ROWS UNBOUNDED PRECEDING), 2)
+        ah.customer_name
+       ,COUNT(ch.order_id) AS order_count
+       ,ROUND(100.0 * COUNT(ch.order_id) / SUM(COUNT(ch.order_id)) OVER (), 2) AS pct_of_total
+       ,ROUND(SUM(100.0 * COUNT(ch.order_id) / SUM(COUNT(ch.order_id)) OVER ())
+                  OVER (ORDER BY COUNT(ch.order_id) DESC ROWS UNBOUNDED PRECEDING), 2)
         AS cumulative_pct
-    FROM CallCentre_DOM_BUS_V.Call_Current ch
-    INNER JOIN CallCentre_DOM_BUS_V.Agent_Current ah
-        ON ch.agent_id = ah.agent_id
-    GROUP BY ah.agent_name
-    ORDER BY call_count DESC
+    FROM ExampleProduct_DOM_BUS_V.Order_Current ch
+    INNER JOIN ExampleProduct_DOM_BUS_V.Customer_Current ah
+        ON ch.customer_id = ah.customer_id
+    GROUP BY ah.customer_name
+    ORDER BY order_count DESC
     """
     adapter = StubAdapter(
         recipe_rows=[
@@ -222,15 +222,15 @@ def test_run_query_template_validations_reports_attempted_explain_sql():
         explain_error=RuntimeError("[5480] Ordered Analytical Functions can not be nested."),
     )
 
-    results = run_query_template_validations("CallCentre", adapter)
+    results = run_query_template_validations("ExampleProduct", adapter)
 
     evidence = results[0].sample_rows[0]
     assert evidence["issue_code"] == "NESTED_ORDERED_ANALYTIC"
     assert evidence["source_module"] == "query_templates.py"
     assert evidence["attempted_sql"].startswith("EXPLAIN SELECT")
     assert evidence["referenced_objects"] == [
-        "CallCentre_DOM_BUS_V.Call_Current",
-        "CallCentre_DOM_BUS_V.Agent_Current",
+        "ExampleProduct_DOM_BUS_V.Order_Current",
+        "ExampleProduct_DOM_BUS_V.Customer_Current",
     ]
 
 
@@ -246,7 +246,7 @@ def test_run_query_template_validations_flags_unbounded_interactive_recipe():
         ],
     )
 
-    results = run_query_template_validations("CallCentre", adapter)
+    results = run_query_template_validations("ExampleProduct", adapter)
 
     bounds_result = next(result for result in results if "QUERY-BOUNDS" in result.test_case.test_id)
     assert bounds_result.status.value == "FAILED"
@@ -269,7 +269,7 @@ def test_run_query_template_validations_allows_unbounded_batch_recipe():
         ],
     )
 
-    results = run_query_template_validations("CallCentre", adapter)
+    results = run_query_template_validations("ExampleProduct", adapter)
 
     bounds_result = next(result for result in results if "QUERY-BOUNDS" in result.test_case.test_id)
     assert bounds_result.status.value == "PASSED"
@@ -295,7 +295,7 @@ def test_run_query_template_validations_reports_explain_performance_risk():
         ],
     )
 
-    results = run_query_template_validations("CallCentre", adapter)
+    results = run_query_template_validations("ExampleProduct", adapter)
 
     performance_result = next(
         result for result in results if "QUERY-EXPLAIN-PERF" in result.test_case.test_id
@@ -319,7 +319,7 @@ def test_run_query_template_validations_enables_helpstats_in_explain_session():
         ]
     )
 
-    results = run_query_template_validations("CallCentre", adapter, enable_helpstats=True)
+    results = run_query_template_validations("ExampleProduct", adapter, enable_helpstats=True)
 
     assert adapter.session_queries == [
         (
@@ -331,7 +331,7 @@ def test_run_query_template_validations_enables_helpstats_in_explain_session():
     explain_result = next(
         result
         for result in results
-        if result.test_case.test_id == "CALLCENTRE-QUERY-EXPLAIN-QC-005"
+        if result.test_case.test_id == "EXAMPLEPRODUCT-QUERY-EXPLAIN-QC-005"
     )
     assert explain_result.sample_rows[0]["helpstats_enabled"] is True
 

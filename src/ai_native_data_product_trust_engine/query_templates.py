@@ -428,11 +428,7 @@ def _literal_for_parameter(parameter_name: str) -> str:
         return "0.5"
     if lowered.startswith("is_") or lowered.endswith("_flag"):
         return "1"
-    if lowered == "topic":
-        return "'__ADP_TRUST_TOPIC__'"
-    if lowered == "day_of_week":
-        return "'Monday'"
-    if lowered.endswith("_id") or lowered in {"query_call_id", "call_id"}:
+    if lowered.endswith("_id"):
         return "'__ADP_TRUST_SAMPLE_ID__'"
     return "'__ADP_TRUST_VALUE__'"
 

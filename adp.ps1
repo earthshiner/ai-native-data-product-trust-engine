@@ -18,7 +18,7 @@
     advanced-function param block would try to bind '--prefix' and fail.
 
 .EXAMPLE
-    .\adp.ps1 validate --prefix CallCentre --output reports\CallCentre-validation.json --html-output reports\CallCentre-validation.html
+    .\adp.ps1 validate --prefix ExampleProduct --output reports\ExampleProduct-validation.json --html-output reports\ExampleProduct-validation.html
 
 .EXAMPLE
     .\adp.ps1 mcp-server --transport streamable-http --host 127.0.0.1 --port 8002

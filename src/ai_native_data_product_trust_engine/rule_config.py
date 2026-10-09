@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,6 +67,9 @@ class RuleConfig:
     # valueless --publish-trust-table writes; publishing still requires the
     # CLI flag, and an explicit CLI value overrides this.
     publish_trust_table: str | None = None
+    # Single-database target for the standard validation results (validation_run
+    # and validation_area). Sets WHERE a valueless --publish-validation writes.
+    publish_validation_database: str | None = None
 
     def filter_tests(self, tests: Iterable[TestCase]) -> list[TestCase]:
         return [test for test in tests if test.test_id.upper() not in self.disabled_test_ids]
@@ -142,7 +146,27 @@ def load_rule_config(path: Path | None) -> RuleConfig:
         disabled_test_ids=frozenset(disabled_test_ids),
         disabled_scanners=frozenset(disabled_scanners),
         publish_trust_table=_publish_trust_table(payload.get("publish_trust_table")),
+        publish_validation_database=_publish_validation_database(
+            payload.get("publish_validation_database")
+        ),
     )
+
+
+def _publish_validation_database(value: object) -> str | None:
+    """Validate the optional validation publish target: one database name."""
+    if value is None:
+        return None
+    target = str(value).strip()
+    if not target:
+        return None
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", target):
+        msg = (
+            f"[ADPTrust.InvalidRuleConfig] publish_validation_database must be a single "
+            f"Teradata database name, got: {target!r}. "
+            "Suggested action: set it like 'ProductPrefix_OBS_STD_T'."
+        )
+        raise ValueError(msg)
+    return target
 
 
 def _publish_trust_table(value: object) -> str | None:

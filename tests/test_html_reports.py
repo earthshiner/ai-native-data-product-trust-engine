@@ -16,7 +16,7 @@ from ai_native_data_product_trust_engine.scoring import scorecards
 
 TERADATA_DRIVER_STACK_ERROR = (
     "[Version 20.0.0.56] [Session 5405] [Teradata Database] [Error 3807] "
-    "Object 'CallCentre_SEM_STD_T.data_product_registry' does not exist. "
+    "Object 'ExampleProduct_SEM_STD_T.data_product_registry' does not exist. "
     "at gosqldriver/teradatasql.MakeError ErrorUtil.go:100 at "
     "gosqldriver/teradatasql.formatError ErrorUtil.go:106 at "
     "database/sql.(*DB).queryDC sql.go:1781 at runtime.goexit asm_amd64.s:1771"
@@ -26,41 +26,41 @@ TERADATA_DRIVER_STACK_ERROR = (
 def test_write_html_report_creates_branded_interactive_report(tmp_path):
     output_path = tmp_path / "trust.html"
     run = ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at="2026-05-29T00:00:00+00:00",
         completed_at="2026-05-29T00:00:01+00:00",
         results=[
-            _result("CALLCENTRE-SEM-001", TestStatus.PASSED),
+            _result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED),
             _result(
-                "CALLCENTRE-PERF-001",
+                "EXAMPLEPRODUCT-PERF-001",
                 TestStatus.FAILED,
                 category=TestCategory.PERFORMANCE,
             ),
             _result(
-                "CALLCENTRE-QUERY-EXPLAIN-QC-001",
+                "EXAMPLEPRODUCT-QUERY-EXPLAIN-QC-001",
                 TestStatus.FAILED,
                 sample_rows=[
                     {
                         "issue_code": "MISSING_COLUMN",
-                        "missing_column": "CallCentre_DOM_STD_T.Call_H.start_ts",
+                        "missing_column": "ExampleProduct_DOM_STD_T.Order_H.start_ts",
                         "repair_hint": "Refresh the view contract.",
                     }
                 ],
                 error_message=(
                     "[Version 20.0.0.56] [Session 2822] [Teradata Database] [Error 3810] "
-                    "Column/Parameter 'CallCentre_DOM_STD_T.Call_H.start_ts' does not exist. "
+                    "Column/Parameter 'ExampleProduct_DOM_STD_T.Order_H.start_ts' does not exist. "
                     "at gosqldriver/teradatasql.MakeError ErrorUtil.go:100"
                 ),
             ),
             _result(
-                "CALLCENTRE-VIEW-COLUMNS-CallCentre_DOM_BUS_V.Call_Enriched",
+                "EXAMPLEPRODUCT-VIEW-COLUMNS-ExampleProduct_DOM_BUS_V.Order_Enriched",
                 TestStatus.FAILED,
                 sample_rows=[
                     {
                         "issue_code": "MISSING_COLUMN",
-                        "missing_column": "CallCentre_DOM_STD_T.Call_H.start_ts",
-                        "database_name": "CallCentre_DOM_BUS_V",
-                        "view_name": "Call_Enriched",
+                        "missing_column": "ExampleProduct_DOM_STD_T.Order_H.start_ts",
+                        "database_name": "ExampleProduct_DOM_BUS_V",
+                        "view_name": "Order_Enriched",
                     }
                 ],
             ),
@@ -87,7 +87,7 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     write_html_report(run, output_path, repairs)
 
     html = output_path.read_text(encoding="utf-8")
-    assert "CallCentre trust report" in html
+    assert "ExampleProduct trust report" in html
     assert "Data product trust score" in html
     assert "Performance readiness score" in html
     assert "Operational readiness score" in html
@@ -139,7 +139,7 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert '<div class="metric-value">4</div>' in html
     assert "Excluded" in html
     assert '<span class="metric-suffix">/100</span>' in html
-    assert "CALLCENTRE-SEM-001" in html
+    assert "EXAMPLEPRODUCT-SEM-001" in html
     assert "Returns zero rows." in html
     assert "statusFilter" in html
     assert "elementValue(id)" in html
@@ -157,18 +157,18 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
     assert "Potential consequence" in html
     assert "Generated SQL, views or recipes that depend on this column may fail at runtime." in html
     assert (
-        "Column/Parameter &#x27;CallCentre_DOM_STD_T.Call_H.start_ts&#x27; does not exist."
+        "Column/Parameter &#x27;ExampleProduct_DOM_STD_T.Order_H.start_ts&#x27; does not exist."
         in html
     )
-    assert "ALTER TABLE CallCentre_DOM_STD_T.Call_H ADD start_ts &lt;data_type&gt;" in html
+    assert "ALTER TABLE ExampleProduct_DOM_STD_T.Order_H ADD start_ts &lt;data_type&gt;" in html
     assert "Recreate or test these dependent objects first" in html
-    assert "CallCentre_DOM_BUS_V.Call_Enriched" in html
+    assert "ExampleProduct_DOM_BUS_V.Order_Enriched" in html
     assert "Object repair list" in html
     assert "Objects with missing columns" in html
-    assert "CallCentre_DOM_STD_T.Call_H" in html
+    assert "ExampleProduct_DOM_STD_T.Order_H" in html
     assert "<code>start_ts</code>" in html
     assert "Root cause groups" in html
-    assert "Missing column: CallCentre_DOM_STD_T.Call_H.start_ts" in html
+    assert "Missing column: ExampleProduct_DOM_STD_T.Order_H.start_ts" in html
     assert "2 downstream failures" in html
     assert ".root-cause-card p," in html
     assert "overflow-wrap: anywhere" in html
@@ -177,12 +177,12 @@ def test_write_html_report_creates_branded_interactive_report(tmp_path):
 def test_html_report_never_displays_raw_backend_stack_as_evidence(tmp_path):
     output_path = tmp_path / "trust.html"
     run = ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at="2026-05-29T00:00:00+00:00",
         completed_at="2026-05-29T00:00:01+00:00",
         results=[
             _result(
-                "CALLCENTRE-DISCOVERY-002",
+                "EXAMPLEPRODUCT-DISCOVERY-002",
                 TestStatus.ERROR,
                 error_message=TERADATA_DRIVER_STACK_ERROR,
             )
@@ -195,7 +195,7 @@ def test_html_report_never_displays_raw_backend_stack_as_evidence(tmp_path):
     assert "Backend error" in html
     assert "Potential consequence" in html
     assert "Agents may misunderstand product meaning" in html
-    assert "Object &#x27;CallCentre_SEM_STD_T.data_product_registry&#x27; does not exist." in html
+    assert "Object &#x27;ExampleProduct_SEM_STD_T.data_product_registry&#x27; does not exist." in html
     assert "gosqldriver" not in html
     assert "database/sql" not in html
     assert "runtime.goexit" not in html
@@ -204,12 +204,12 @@ def test_html_report_never_displays_raw_backend_stack_as_evidence(tmp_path):
 def test_html_report_explains_relationship_datatype_mismatch_consequence(tmp_path):
     output_path = tmp_path / "trust.html"
     run = ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at="2026-05-29T00:00:00+00:00",
         completed_at="2026-05-29T00:00:01+00:00",
         results=[
             _result(
-                "CALLCENTRE-SEM-004",
+                "EXAMPLEPRODUCT-SEM-004",
                 TestStatus.FAILED,
                 sample_rows=[
                     {
@@ -231,32 +231,32 @@ def test_html_report_explains_relationship_datatype_mismatch_consequence(tmp_pat
 def test_html_report_lists_missing_objects_and_missing_columns_without_opening_evidence(tmp_path):
     output_path = tmp_path / "trust.html"
     run = ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at="2026-05-29T00:00:00+00:00",
         completed_at="2026-05-29T00:00:01+00:00",
         results=[
             _result(
-                "CALLCENTRE-QUERY-EXPLAIN-QC-005",
+                "EXAMPLEPRODUCT-QUERY-EXPLAIN-QC-005",
                 TestStatus.FAILED,
                 category=TestCategory.QUERY,
                 sample_rows=[
                     {
                         "issue_code": "MISSING_OBJECT",
-                        "missing_object": "CallCentre_DOM_BUS_V.Call_H",
+                        "missing_object": "ExampleProduct_DOM_BUS_V.Order_H",
                         "recipe_id": "QC-TOPIC-005",
                         "recipe_title": "Cumulative call share Pareto analysis",
                     }
                 ],
             ),
             _result(
-                "CALLCENTRE-VIEW-COLUMNS-CallCentre_DOM_BUS_V.Call_Enriched",
+                "EXAMPLEPRODUCT-VIEW-COLUMNS-ExampleProduct_DOM_BUS_V.Order_Enriched",
                 TestStatus.FAILED,
                 sample_rows=[
                     {
                         "issue_code": "MISSING_COLUMN",
-                        "missing_column": "CallCentre_DOM_STD_T.Call_H.start_ts",
-                        "database_name": "CallCentre_DOM_BUS_V",
-                        "view_name": "Call_Enriched",
+                        "missing_column": "ExampleProduct_DOM_STD_T.Order_H.start_ts",
+                        "database_name": "ExampleProduct_DOM_BUS_V",
+                        "view_name": "Order_Enriched",
                     }
                 ],
             ),
@@ -271,32 +271,32 @@ def test_html_report_lists_missing_objects_and_missing_columns_without_opening_e
     assert "Missing objects/views" in html
     assert "Objects with missing columns" in html
     assert 'id="objectIssueBody"' in html
-    assert "CallCentre_DOM_BUS_V.Call_H" in html
+    assert "ExampleProduct_DOM_BUS_V.Order_H" in html
     assert "Missing object/view" in html
-    assert "Deploy CallCentre_DOM_BUS_V.Call_H" in html
-    assert "CallCentre_DOM_STD_T.Call_H" in html
+    assert "Deploy ExampleProduct_DOM_BUS_V.Order_H" in html
+    assert "ExampleProduct_DOM_STD_T.Order_H" in html
     assert "<code>start_ts</code>" in html
     assert "Missing column" in html
     assert "QC-TOPIC-005: Cumulative call share Pareto analysis" in html
-    assert "CALLCENTRE-VIEW-COLUMNS-CallCentre_DOM_BUS_V.Call_Enriched" in html
+    assert "EXAMPLEPRODUCT-VIEW-COLUMNS-ExampleProduct_DOM_BUS_V.Order_Enriched" in html
     assert "applyObjectIssueFilters" in html
 
 
 def test_html_report_explains_recipe_bounds_and_explain_consequences(tmp_path):
     output_path = tmp_path / "trust.html"
     run = ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at="2026-05-29T00:00:00+00:00",
         completed_at="2026-05-29T00:00:01+00:00",
         results=[
             _result(
-                "CALLCENTRE-QUERY-BOUNDS-QC-001",
+                "EXAMPLEPRODUCT-QUERY-BOUNDS-QC-001",
                 TestStatus.FAILED,
                 category=TestCategory.PERFORMANCE,
                 sample_rows=[{"issue_code": "UNBOUNDED_INTERACTIVE_RECIPE"}],
             ),
             _result(
-                "CALLCENTRE-QUERY-EXPLAIN-PERF-QC-001",
+                "EXAMPLEPRODUCT-QUERY-EXPLAIN-PERF-QC-001",
                 TestStatus.FAILED,
                 category=TestCategory.PERFORMANCE,
                 sample_rows=[{"issue_code": "EXPLAIN_PRODUCT_JOIN"}],
@@ -314,12 +314,12 @@ def test_html_report_explains_recipe_bounds_and_explain_consequences(tmp_path):
 def test_html_report_explains_nested_ordered_analytic_recipe_failure(tmp_path):
     output_path = tmp_path / "trust.html"
     run = ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at="2026-05-29T00:00:00+00:00",
         completed_at="2026-05-29T00:00:01+00:00",
         results=[
             _result(
-                "CALLCENTRE-QUERY-EXPLAIN-QC-TOPIC-005",
+                "EXAMPLEPRODUCT-QUERY-EXPLAIN-QC-TOPIC-005",
                 TestStatus.FAILED,
                 category=TestCategory.QUERY,
                 sample_rows=[
@@ -328,8 +328,8 @@ def test_html_report_explains_nested_ordered_analytic_recipe_failure(tmp_path):
                         "recipe_id": "QC-TOPIC-005",
                         "recipe_title": "Cumulative call share Pareto analysis",
                         "referenced_objects": [
-                            "CallCentre_DOM_BUS_V.Call_Current",
-                            "CallCentre_DOM_BUS_V.Agent_Current",
+                            "ExampleProduct_DOM_BUS_V.Order_Current",
+                            "ExampleProduct_DOM_BUS_V.Customer_Current",
                         ],
                         "attempted_sql": "EXPLAIN SELECT ...",
                     }
@@ -345,20 +345,20 @@ def test_html_report_explains_nested_ordered_analytic_recipe_failure(tmp_path):
     assert "NESTED_ORDERED_ANALYTIC" in html
     assert "Teradata rejects during EXPLAIN and execution" in html
     assert "Rewrite the recipe with staged CTEs" in html
-    assert "CallCentre_DOM_BUS_V.Call_Current" in html
+    assert "ExampleProduct_DOM_BUS_V.Order_Current" in html
     assert "attempted_sql" in html
 
 
 def test_scorecards_keep_trust_performance_and_operational_separate():
     results = [
-        _result("CALLCENTRE-SEM-001", TestStatus.PASSED, category=TestCategory.SEMANTIC),
+        _result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED, category=TestCategory.SEMANTIC),
         _result(
-            "CALLCENTRE-PERF-001",
+            "EXAMPLEPRODUCT-PERF-001",
             TestStatus.FAILED,
             category=TestCategory.PERFORMANCE,
         ),
         _result(
-            "CALLCENTRE-OPS-001",
+            "EXAMPLEPRODUCT-OPS-001",
             TestStatus.ERROR,
             category=TestCategory.OPERATIONAL,
         ),
@@ -373,8 +373,8 @@ def test_scorecards_keep_trust_performance_and_operational_separate():
 
 def test_scorecards_assess_operational_readiness_when_operational_checks_run():
     results = [
-        _result("CALLCENTRE-OPS-001", TestStatus.PASSED, category=TestCategory.OPERATIONAL),
-        _result("CALLCENTRE-OPS-002", TestStatus.PASSED, category=TestCategory.OPERATIONAL),
+        _result("EXAMPLEPRODUCT-OPS-001", TestStatus.PASSED, category=TestCategory.OPERATIONAL),
+        _result("EXAMPLEPRODUCT-OPS-002", TestStatus.PASSED, category=TestCategory.OPERATIONAL),
     ]
 
     scores = scorecards(results)
@@ -386,13 +386,13 @@ def test_scorecards_assess_operational_readiness_when_operational_checks_run():
 
 def test_json_report_includes_separate_score_families():
     run = ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at="2026-05-29T00:00:00+00:00",
         completed_at="2026-05-29T00:00:01+00:00",
         results=[
-            _result("CALLCENTRE-SEM-001", TestStatus.PASSED, category=TestCategory.SEMANTIC),
+            _result("EXAMPLEPRODUCT-SEM-001", TestStatus.PASSED, category=TestCategory.SEMANTIC),
             _result(
-                "CALLCENTRE-PERF-001",
+                "EXAMPLEPRODUCT-PERF-001",
                 TestStatus.FAILED,
                 category=TestCategory.PERFORMANCE,
             ),
@@ -421,12 +421,12 @@ def test_json_report_includes_separate_score_families():
 
 def test_json_report_uses_friendly_backend_error_message():
     run = ValidationRun(
-        prefix="CallCentre",
+        prefix="ExampleProduct",
         started_at="2026-05-29T00:00:00+00:00",
         completed_at="2026-05-29T00:00:01+00:00",
         results=[
             _result(
-                "CALLCENTRE-DISCOVERY-002",
+                "EXAMPLEPRODUCT-DISCOVERY-002",
                 TestStatus.ERROR,
                 error_message=TERADATA_DRIVER_STACK_ERROR,
             )

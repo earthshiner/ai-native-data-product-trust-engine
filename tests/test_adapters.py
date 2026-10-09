@@ -186,7 +186,7 @@ def test_cli_releases_session_even_when_run_aborts(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "adapter_from_environment", lambda url: adapter)
 
     code = cli.main(
-        ["validate", "--prefix", "CallCentre", "--database-url", "teradatasql://x",
+        ["validate", "--prefix", "ExampleProduct", "--database-url", "teradatasql://x",
          "--output", str(tmp_path / "report.json")]
     )
 

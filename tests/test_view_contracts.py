@@ -16,24 +16,24 @@ _ROW_ACCESS_LOCK_SPELLINGS = [
 
 
 def test_view_contract_test_cases_include_inventory_sql():
-    tests = view_contract_test_cases("CallCentre")
+    tests = view_contract_test_cases("ExampleProduct")
 
     assert len(tests) == 6
-    assert tests[0].test_id == "CALLCENTRE-VIEW-COLUMNS"
+    assert tests[0].test_id == "EXAMPLEPRODUCT-VIEW-COLUMNS"
     assert "DBC.TablesV" in tests[0].sql
     assert "TableKind = 'V'" in tests[0].sql
-    assert tests[1].test_id == "CALLCENTRE-STD-VIEW-1TO1"
-    assert tests[2].test_id == "CALLCENTRE-STD-TABLE-VIEW-COVERAGE"
+    assert tests[1].test_id == "EXAMPLEPRODUCT-STD-VIEW-1TO1"
+    assert tests[2].test_id == "EXAMPLEPRODUCT-STD-TABLE-VIEW-COVERAGE"
     assert "MISSING_STANDARD_LOCKING_VIEW" in tests[2].sql
     assert "expected_view_database_name" in tests[2].sql
-    assert tests[3].test_id == "CALLCENTRE-STD-VIEW-COLUMN-CONTRACT"
+    assert tests[3].test_id == "EXAMPLEPRODUCT-STD-VIEW-COLUMN-CONTRACT"
     assert "ColumnId order" in tests[3].expected_result
-    assert tests[4].test_id == "CALLCENTRE-BUS-VIEW-SOURCES"
-    assert tests[5].test_id == "CALLCENTRE-VIEW-TABLE-LOCKING"
+    assert tests[4].test_id == "EXAMPLEPRODUCT-BUS-VIEW-SOURCES"
+    assert tests[5].test_id == "EXAMPLEPRODUCT-VIEW-TABLE-LOCKING"
 
 
 def test_view_contract_inventory_sql_excludes_backup_objects():
-    tests = view_contract_test_cases("CallCentre")
+    tests = view_contract_test_cases("ExampleProduct")
 
     for test in tests:
         if "DBC.TablesV" in test.sql:
@@ -47,8 +47,8 @@ def test_run_view_contract_validations_resolves_each_product_view():
     adapter = StubAdapter(
         view_rows=[
             {
-                "database_name": "CallCentre_DOM_BUS_V",
-                "view_name": "Call_Enriched",
+                "database_name": "ExampleProduct_DOM_BUS_V",
+                "view_name": "Order_Enriched",
             }
         ],
         std_view_rows=[],
@@ -57,17 +57,17 @@ def test_run_view_contract_validations_resolves_each_product_view():
         table_view_coverage_rows=[],
     )
 
-    results = run_view_contract_validations("CallCentre", adapter)
+    results = run_view_contract_validations("ExampleProduct", adapter)
 
     assert len(results) == 2
     assert results[0].status.value == "PASSED"
     assert results[1].status.value == "PASSED"
-    assert results[1].test_case.test_id == "CALLCENTRE-STD-TABLE-VIEW-COVERAGE"
+    assert results[1].test_case.test_id == "EXAMPLEPRODUCT-STD-TABLE-VIEW-COVERAGE"
     assert adapter.help_column_sql == [
         (
             'HELP COLUMN dt01.* FROM (\n'
             '    SELECT viw.*\n'
-            '    FROM "CallCentre_DOM_BUS_V"."Call_Enriched" AS viw\n'
+            '    FROM "ExampleProduct_DOM_BUS_V"."Order_Enriched" AS viw\n'
             '    WHERE 1 = 2\n'
             ') AS dt01'
         )
@@ -80,13 +80,13 @@ def test_run_view_contract_validations_checks_std_view_contract():
         view_rows=[],
         std_view_rows=[
             {
-                "database_name": "CallCentre_DOM_STD_V",
-                "view_name": "Call_H",
+                "database_name": "ExampleProduct_DOM_STD_V",
+                "view_name": "Order_H",
                 "view_text": (
-                    "CREATE VIEW CallCentre_DOM_STD_V.Call_H "
-                    "(call_id, start_ts) AS "
+                    "CREATE VIEW ExampleProduct_DOM_STD_V.Order_H "
+                    "(order_id, start_ts) AS "
                     "LOCKING ROW FOR ACCESS "
-                    "SELECT call_id, start_ts FROM CallCentre_DOM_STD_T.Call_H;"
+                    "SELECT order_id, start_ts FROM ExampleProduct_DOM_STD_T.Order_H;"
                 ),
             }
         ],
@@ -107,11 +107,11 @@ def test_run_view_contract_validations_reports_std_view_logic():
         view_rows=[],
         std_view_rows=[
             {
-                "database_name": "CallCentre_DOM_STD_V",
-                "view_name": "Call_H",
+                "database_name": "ExampleProduct_DOM_STD_V",
+                "view_name": "Order_H",
                 "view_text": (
-                    "CREATE VIEW CallCentre_DOM_STD_V.Call_H AS "
-                    "SELECT * FROM CallCentre_DOM_STD_T.Call_H WHERE is_current = 1;"
+                    "CREATE VIEW ExampleProduct_DOM_STD_V.Order_H AS "
+                    "SELECT * FROM ExampleProduct_DOM_STD_T.Order_H WHERE is_current = 1;"
                 ),
             }
         ],
@@ -136,13 +136,13 @@ def test_run_view_contract_validations_reports_std_view_column_contract_drift():
         view_rows=[],
         std_view_rows=[
             {
-                "database_name": "CallCentre_DOM_STD_V",
-                "view_name": "Call_H",
+                "database_name": "ExampleProduct_DOM_STD_V",
+                "view_name": "Order_H",
                 "view_text": (
-                    "CREATE VIEW CallCentre_DOM_STD_V.Call_H "
-                    "(call_id, topic) AS "
+                    "CREATE VIEW ExampleProduct_DOM_STD_V.Order_H "
+                    "(order_id, topic) AS "
                     "LOCKING ROW FOR ACCESS "
-                    "SELECT call_id, topic FROM CallCentre_DOM_STD_T.Call_H;"
+                    "SELECT order_id, topic FROM ExampleProduct_DOM_STD_T.Order_H;"
                 ),
             }
         ],
@@ -163,12 +163,12 @@ def test_run_view_contract_validations_reports_std_view_column_contract_drift():
     assert len(results) == 1
     assert results[0].status.value == "FAILED"
     assert results[0].test_case.test_id.startswith(
-        "CALLCENTRE-STD-VIEW-COLUMN-CONTRACT-"
+        "EXAMPLEPRODUCT-STD-VIEW-COLUMN-CONTRACT-"
     )
     assert results[0].sample_rows[0]["issue_code"] == "STD_VIEW_COLUMN_ORDER_MISMATCH"
     assert results[0].sample_rows[0]["view_column_name"] == "topic"
     assert results[0].sample_rows[0]["table_column_name"] == "start_ts"
-    assert "Call_H" in adapter.column_contract_sql[0]
+    assert "Order_H" in adapter.column_contract_sql[0]
 
 
 def test_run_view_contract_validations_reports_bus_view_selecting_table():
@@ -177,11 +177,11 @@ def test_run_view_contract_validations_reports_bus_view_selecting_table():
         std_view_rows=[],
         bus_view_rows=[
             {
-                "database_name": "CallCentre_DOM_BUS_V",
-                "view_name": "Call_Enriched",
+                "database_name": "ExampleProduct_DOM_BUS_V",
+                "view_name": "Order_Enriched",
                 "view_text": (
-                    "CREATE VIEW CallCentre_DOM_BUS_V.Call_Enriched AS "
-                    "SELECT call_id FROM CallCentre_DOM_STD_T.Call_H WHERE is_current = 1;"
+                    "CREATE VIEW ExampleProduct_DOM_BUS_V.Order_Enriched AS "
+                    "SELECT order_id FROM ExampleProduct_DOM_STD_T.Order_H WHERE is_current = 1;"
                 ),
             }
         ],
@@ -202,10 +202,10 @@ def test_run_view_contract_validations_reports_std_table_missing_locking_view():
         locking_view_rows=[],
         table_view_coverage_rows=[
             {
-                "table_database_name": "CallCentre_DOM_STD_T",
-                "table_name": "Call_H",
-                "expected_view_database_name": "CallCentre_DOM_STD_V",
-                "expected_view_name": "Call_H",
+                "table_database_name": "ExampleProduct_DOM_STD_T",
+                "table_name": "Order_H",
+                "expected_view_database_name": "ExampleProduct_DOM_STD_V",
+                "expected_view_name": "Order_H",
                 "issue_code": "MISSING_STANDARD_LOCKING_VIEW",
                 "repair_hint": (
                     "Create a same-named %_STD_V access view with LOCKING ROW FOR ACCESS."
@@ -219,8 +219,8 @@ def test_run_view_contract_validations_reports_std_table_missing_locking_view():
     assert len(results) == 1
     assert results[0].status.value == "FAILED"
     assert results[0].sample_rows[0]["issue_code"] == "MISSING_STANDARD_LOCKING_VIEW"
-    assert results[0].sample_rows[0]["expected_view_database_name"] == "CallCentre_DOM_STD_V"
-    assert results[0].sample_rows[0]["expected_view_name"] == "Call_H"
+    assert results[0].sample_rows[0]["expected_view_database_name"] == "ExampleProduct_DOM_STD_V"
+    assert results[0].sample_rows[0]["expected_view_name"] == "Order_H"
 
 
 def test_run_view_contract_validations_reports_direct_table_view_without_locking():
@@ -230,11 +230,11 @@ def test_run_view_contract_validations_reports_direct_table_view_without_locking
         bus_view_rows=[],
         locking_view_rows=[
             {
-                "database_name": "CallCentre_DOM_BUS_V",
-                "view_name": "Call_Enriched",
+                "database_name": "ExampleProduct_DOM_BUS_V",
+                "view_name": "Order_Enriched",
                 "view_text": (
-                    "CREATE VIEW CallCentre_DOM_BUS_V.Call_Enriched AS "
-                    "SELECT call_id FROM CallCentre_DOM_STD_T.Call_H;"
+                    "CREATE VIEW ExampleProduct_DOM_BUS_V.Order_Enriched AS "
+                    "SELECT order_id FROM ExampleProduct_DOM_STD_T.Order_H;"
                 ),
             }
         ],
@@ -245,7 +245,7 @@ def test_run_view_contract_validations_reports_direct_table_view_without_locking
     assert len(results) == 1
     assert results[0].status.value == "FAILED"
     assert results[0].sample_rows[0]["issue_code"] == "DIRECT_TABLE_VIEW_MISSING_LOCK"
-    assert results[0].sample_rows[0]["referenced_table"] == "CALLCENTRE_DOM_STD_T.CALL_H"
+    assert results[0].sample_rows[0]["referenced_table"] == "EXAMPLEPRODUCT_DOM_STD_T.ORDER_H"
 
 
 def test_run_view_contract_validations_accepts_direct_table_view_with_locking():
@@ -255,21 +255,21 @@ def test_run_view_contract_validations_accepts_direct_table_view_with_locking():
         bus_view_rows=[],
         locking_view_rows=[
             {
-                "database_name": "CallCentre_DOM_STD_V",
-                "view_name": "Call_H",
+                "database_name": "ExampleProduct_DOM_STD_V",
+                "view_name": "Order_H",
                 "view_text": (
-                    "CREATE VIEW CallCentre_DOM_STD_V.Call_H AS "
+                    "CREATE VIEW ExampleProduct_DOM_STD_V.Order_H AS "
                     "LOCKING ROW FOR ACCESS "
-                    "SELECT call_id FROM CallCentre_DOM_STD_T.Call_H;"
+                    "SELECT order_id FROM ExampleProduct_DOM_STD_T.Order_H;"
                 ),
             },
             {
-                "database_name": "CallCentre_DOM_BUS_V",
-                "view_name": "Call_Enriched",
+                "database_name": "ExampleProduct_DOM_BUS_V",
+                "view_name": "Order_Enriched",
                 "view_text": (
-                    "CREATE VIEW CallCentre_DOM_BUS_V.Call_Enriched AS "
-                    "LOCKING TABLE CallCentre_DOM_STD_T.Call_H FOR ACCESS "
-                    "SELECT call_id FROM CallCentre_DOM_STD_T.Call_H;"
+                    "CREATE VIEW ExampleProduct_DOM_BUS_V.Order_Enriched AS "
+                    "LOCKING TABLE ExampleProduct_DOM_STD_T.Order_H FOR ACCESS "
+                    "SELECT order_id FROM ExampleProduct_DOM_STD_T.Order_H;"
                 ),
             },
         ],
@@ -284,8 +284,8 @@ def test_run_view_contract_validations_reports_compile_failures():
     adapter = StubAdapter(
         view_rows=[
             {
-                "database_name": "CallCentre_PRE_BUS_V",
-                "view_name": "call_features_current",
+                "database_name": "ExampleProduct_PRE_BUS_V",
+                "view_name": "order_features_current",
             }
         ],
         std_view_rows=[],
@@ -294,19 +294,19 @@ def test_run_view_contract_validations_reports_compile_failures():
         explain_error=RuntimeError("Column overall_quality_score not found in db.table"),
     )
 
-    results = run_view_contract_validations("CallCentre", adapter)
+    results = run_view_contract_validations("ExampleProduct", adapter)
 
     assert len(results) == 2
     assert results[0].status.value == "FAILED"
     assert results[0].sample_rows[0]["issue_code"] == "MISSING_COLUMN"
     assert results[0].sample_rows[0]["missing_column"] == "overall_quality_score"
     assert results[1].status.value == "PASSED"
-    assert results[1].test_case.test_id == "CALLCENTRE-STD-TABLE-VIEW-COVERAGE"
+    assert results[1].test_case.test_id == "EXAMPLEPRODUCT-STD-TABLE-VIEW-COVERAGE"
 
 
 def test_run_view_contract_validations_reports_missing_view_inventory():
     results = run_view_contract_validations(
-        "CallCentre",
+        "ExampleProduct",
         StubAdapter(view_rows=[], std_view_rows=[], bus_view_rows=[], locking_view_rows=[]),
     )
 
@@ -314,26 +314,26 @@ def test_run_view_contract_validations_reports_missing_view_inventory():
     assert results[0].status.value == "FAILED"
     assert results[0].sample_rows[0]["issue_code"] == "NO_PRODUCT_VIEWS_FOUND"
     assert results[1].status.value == "PASSED"
-    assert results[1].test_case.test_id == "CALLCENTRE-STD-TABLE-VIEW-COVERAGE"
+    assert results[1].test_case.test_id == "EXAMPLEPRODUCT-STD-TABLE-VIEW-COVERAGE"
 
 
 @pytest.mark.parametrize("lock_clause", _ROW_ACCESS_LOCK_SPELLINGS)
 def test_std_view_accepts_all_row_access_lock_spellings(lock_clause):
     # Regression: LOCK ROW FOR ACCESS (and the MODE variants) must not be
     # mis-flagged as MISSING_LOCKING_ROW — this is what false-flagged
-    # CallCentre_SCH_STD_V.call_embedding, whose DDL uses "LOCK ROW FOR ACCESS".
+    # ExampleProduct_SCH_STD_V.order_embedding, whose DDL uses "LOCK ROW FOR ACCESS".
     adapter = StubAdapter(
         view_rows=[],
         std_view_rows=[
             {
-                "database_name": "CallCentre_SCH_STD_V",
-                "view_name": "call_embedding",
+                "database_name": "ExampleProduct_SCH_STD_V",
+                "view_name": "order_embedding",
                 "view_text": (
-                    "REPLACE VIEW CallCentre_SCH_STD_V.call_embedding "
-                    "(call_id, embedding_source) AS "
+                    "REPLACE VIEW ExampleProduct_SCH_STD_V.order_embedding "
+                    "(order_id, embedding_source) AS "
                     f"{lock_clause} "
-                    "SELECT call_id, embedding_source "
-                    "FROM CallCentre_SCH_STD_T.call_embedding;"
+                    "SELECT order_id, embedding_source "
+                    "FROM ExampleProduct_SCH_STD_T.order_embedding;"
                 ),
             }
         ],
@@ -355,13 +355,13 @@ def test_std_view_still_flags_when_no_access_lock():
         view_rows=[],
         std_view_rows=[
             {
-                "database_name": "CallCentre_SCH_STD_V",
-                "view_name": "call_embedding",
+                "database_name": "ExampleProduct_SCH_STD_V",
+                "view_name": "order_embedding",
                 "view_text": (
-                    "REPLACE VIEW CallCentre_SCH_STD_V.call_embedding "
-                    "(call_id, embedding_source) AS "
-                    "SELECT call_id, embedding_source "
-                    "FROM CallCentre_SCH_STD_T.call_embedding;"
+                    "REPLACE VIEW ExampleProduct_SCH_STD_V.order_embedding "
+                    "(order_id, embedding_source) AS "
+                    "SELECT order_id, embedding_source "
+                    "FROM ExampleProduct_SCH_STD_T.order_embedding;"
                 ),
             }
         ],
@@ -385,12 +385,12 @@ def test_direct_table_view_accepts_all_row_access_lock_spellings(lock_clause):
         bus_view_rows=[],
         locking_view_rows=[
             {
-                "database_name": "CallCentre_DOM_STD_V",
-                "view_name": "Call_H",
+                "database_name": "ExampleProduct_DOM_STD_V",
+                "view_name": "Order_H",
                 "view_text": (
-                    "REPLACE VIEW CallCentre_DOM_STD_V.Call_H AS "
+                    "REPLACE VIEW ExampleProduct_DOM_STD_V.Order_H AS "
                     f"{lock_clause} "
-                    "SELECT call_id FROM CallCentre_DOM_STD_T.Call_H;"
+                    "SELECT order_id FROM ExampleProduct_DOM_STD_T.Order_H;"
                 ),
             }
         ],
@@ -404,10 +404,10 @@ def test_direct_table_view_accepts_all_row_access_lock_spellings(lock_clause):
 @pytest.mark.parametrize(
     "lock_clause",
     [
-        "LOCKING TABLE CallCentre_DOM_STD_T.Call_H FOR ACCESS",
-        "LOCK TABLE CallCentre_DOM_STD_T.Call_H FOR ACCESS",
-        "LOCK TABLE CallCentre_DOM_STD_T.Call_H FOR ACCESS MODE",
-        "LOCKING TABLE Call_H FOR ACCESS MODE",
+        "LOCKING TABLE ExampleProduct_DOM_STD_T.Order_H FOR ACCESS",
+        "LOCK TABLE ExampleProduct_DOM_STD_T.Order_H FOR ACCESS",
+        "LOCK TABLE ExampleProduct_DOM_STD_T.Order_H FOR ACCESS MODE",
+        "LOCKING TABLE Order_H FOR ACCESS MODE",
     ],
 )
 def test_direct_table_view_accepts_table_lock_spellings(lock_clause):
@@ -417,12 +417,12 @@ def test_direct_table_view_accepts_table_lock_spellings(lock_clause):
         bus_view_rows=[],
         locking_view_rows=[
             {
-                "database_name": "CallCentre_DOM_BUS_V",
-                "view_name": "Call_Enriched",
+                "database_name": "ExampleProduct_DOM_BUS_V",
+                "view_name": "Order_Enriched",
                 "view_text": (
-                    "REPLACE VIEW CallCentre_DOM_BUS_V.Call_Enriched AS "
+                    "REPLACE VIEW ExampleProduct_DOM_BUS_V.Order_Enriched AS "
                     f"{lock_clause} "
-                    "SELECT call_id FROM CallCentre_DOM_STD_T.Call_H;"
+                    "SELECT order_id FROM ExampleProduct_DOM_STD_T.Order_H;"
                 ),
             }
         ],
@@ -459,42 +459,42 @@ class StubAdapter:
             _run_standard_view_contract_validations,
         )
 
-        return _run_standard_view_contract_validations("CallCentre", self)
+        return _run_standard_view_contract_validations("ExampleProduct", self)
 
     def run_bus_only(self):
         from ai_native_data_product_trust_engine.view_contracts import (
             _run_business_view_source_validations,
         )
 
-        return _run_business_view_source_validations("CallCentre", self)
+        return _run_business_view_source_validations("ExampleProduct", self)
 
     def run_locking_only(self):
         from ai_native_data_product_trust_engine.view_contracts import (
             _run_view_table_locking_validations,
         )
 
-        return _run_view_table_locking_validations("CallCentre", self)
+        return _run_view_table_locking_validations("ExampleProduct", self)
 
     def run_coverage_only(self):
         from ai_native_data_product_trust_engine.view_contracts import (
             _run_standard_table_view_coverage_validation,
         )
 
-        return [_run_standard_table_view_coverage_validation("CallCentre", self)]
+        return [_run_standard_table_view_coverage_validation("ExampleProduct", self)]
 
     def run_columns_only(self):
         from ai_native_data_product_trust_engine.view_contracts import (
             _run_standard_view_column_contract_validations,
         )
 
-        return _run_standard_view_column_contract_validations("CallCentre", self)
+        return _run_standard_view_column_contract_validations("ExampleProduct", self)
 
     def fetch_all(self, sql):
         if sql.startswith("HELP COLUMN"):
             self.help_column_sql.append(sql)
             if self.explain_error:
                 raise self.explain_error
-            return [{"Column Name": "call_id"}]
+            return [{"Column Name": "order_id"}]
         if "FULL OUTER JOIN table_cols" in sql:
             self.column_contract_sql.append(sql)
             return self.column_contract_rows
@@ -505,7 +505,7 @@ class StubAdapter:
                 return self.bus_view_rows
             if "_STD\\_V" in sql:
                 return self.std_view_rows
-            if "DatabaseName LIKE 'CallCentre\\_%' ESCAPE '\\'" in sql:
+            if "DatabaseName LIKE 'ExampleProduct\\_%' ESCAPE '\\'" in sql:
                 return self.locking_view_rows
             return self.std_view_rows
         return self.view_rows

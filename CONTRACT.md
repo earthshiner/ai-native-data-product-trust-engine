@@ -13,7 +13,28 @@ enforced by `tests/test_contract.py` (producer) and the Browser's
 golden fixture `contract/trust_payload_example.json` (generated from the real
 serialiser — do not hand-edit).
 
-**Schema version: `2.0`** (`contract.PAYLOAD_SCHEMA_VERSION`).
+**Schema version: `2.1`** (`contract.PAYLOAD_SCHEMA_VERSION`).
+
+**2.1 change (additive over 2.0):** the engine now publishes the standard validation results
+(design standard: validation pattern) as well as the legacy row.
+
+* `validation_run` (`<prefix>_OBS_STD_T`) carries the run summary plus `producer_id`
+  (`adp-trust-engine`), `producer_version`, `profile_id`/`profile_version`, `source_format`
+  (`NATIVE`), `payload_schema_version` and `evidence_expires_dts` (null: the 7-day default
+  window applies). Its `run_id` hashes `prefix|producer_id|started|completed|count`.
+* `validation_area` is the **per-area trust map**: one row per run per area (`scope_kind`,
+  `scope_id`, `checks_expected`, `checks_ran`, outcome and severity counts, `area_status`,
+  `confidence`, `open_gaps`, `recommended_action`). Every area the profile covers has a row,
+  including `no-evidence` areas for deployed modules no check reached.
+* `failed_checks_json` items gain `scope_kind` / `scope_id`, naming the map entry the failure
+  landed on.
+* **`agent_use_allowed` is deprecated and always `1`.** Under 2.0 it was `0` when
+  `trust_status = 'UNTRUSTED'`; no consumer may branch on it now. `trust_status` remains as an
+  advisory summary of the map.
+
+The fixture's `validation_run` and `validation_area` sections pin these; `trust_engine_latest`
+stays for 2.0 consumers. Scope comes from check ownership (`trust_map.scope_for_check`), with
+`PRODUCT` as the fallback for a check family that has no narrower owner.
 
 **2.0 change:** `started_at` / `completed_at` (`VARCHAR(40)` ISO-8601 strings)
 became `started_dts` / `completed_dts` (`TIMESTAMP(6) WITH TIME ZONE`) —
@@ -32,7 +53,7 @@ Source of truth: `trust_publish._PUBLISH_COLUMNS` / `trust_table_ddl()`.
 
 | Column | Type | Notes |
 |---|---|---|
-| `product_prefix` | VARCHAR(128) | Data product prefix, e.g. `CallCentre` |
+| `product_prefix` | VARCHAR(128) | Data product prefix, e.g. `ExampleProduct` |
 | `run_id` | VARCHAR(64) | Stable hash of prefix + the canonical ISO timestamp strings + check count |
 | `started_dts` / `completed_dts` | TIMESTAMP(6) WITH TIME ZONE | Run instants; UTC persistence |
 | `trust_status` | VARCHAR(16) | `TRUSTED` \| `DEGRADED` \| `UNTRUSTED` |
