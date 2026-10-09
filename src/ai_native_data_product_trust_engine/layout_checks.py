@@ -2,7 +2,8 @@
 
 * ``{PREFIX}-LAYOUT-001`` reports ``LAYOUT_NOT_DECLARED`` when the product did not
   declare a value the run needed (Platform Layout Standard section 6, VAL-20). It
-  is a metadata gap, not a design failure, hence WARNING severity.
+  is a metadata gap, not a design failure, hence INFO severity; it is reported but
+  does not change the exit code of ``validate``.
 * Checks that depend on the ACCESS layer are excluded, with a reason, when the
   declared layout has no ACCESS container (section 7, rules 2 and 3, VAL-21).
 
@@ -62,7 +63,7 @@ def layout_test_cases(prefix: str, layout: Layout | None = None) -> list[TestCas
             test_id=layout_check_id(prefix),
             name="Product layout is declared in its Semantic metadata",
             category=TestCategory.SEMANTIC,
-            severity=TestSeverity.WARNING,
+            severity=TestSeverity.INFO,
             sql="-- Evaluated from the resolved layout; no database query is issued.",
             expected_result=(
                 "Passes when the product declares its platform, standard version and layer "

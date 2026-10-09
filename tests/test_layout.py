@@ -673,7 +673,7 @@ def test_layout_check_reports_undeclared_values_with_a_repair_candidate():
     result = next(r for r in run.results if r.test_case.test_id == "CALLCENTRE-LAYOUT-001")
 
     assert result.status == TestStatus.FAILED
-    assert result.test_case.severity.value == "WARNING"
+    assert result.test_case.severity.value == "INFO"
     assert result.test_case.category.value == "SEMANTIC"
     assert {row["value_name"] for row in result.sample_rows} == {"platform_profile"}
     assert {row["issue_code"] for row in result.sample_rows} == {"LAYOUT_NOT_DECLARED"}

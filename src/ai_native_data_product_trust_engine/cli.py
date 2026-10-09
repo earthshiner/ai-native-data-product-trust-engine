@@ -24,7 +24,7 @@ from ai_native_data_product_trust_engine.layout import (
     resolve_layout,
 )
 from ai_native_data_product_trust_engine.layout_checks import layout_test_cases
-from ai_native_data_product_trust_engine.models import TestCase
+from ai_native_data_product_trust_engine.models import TestCase, TestStatus
 from ai_native_data_product_trust_engine.query_templates import query_template_test_cases
 from ai_native_data_product_trust_engine.relationship_health import (
     relationship_health_test_cases,
@@ -391,7 +391,15 @@ def _main(argv: list[str] | None = None) -> int:
                 f"{run.failed_count} failed, {run.error_count} errors. "
                 f"Report: {args.output}"
             )
-            return 0 if run.failed_count == 0 and run.error_count == 0 else 1
+            # LAYOUT-001 reports a gap in the product's metadata, not a design failure
+            # (Platform Layout Standard VAL-20), so it does not fail the run.
+            blocking = [
+                result
+                for result in run.results
+                if result.status != TestStatus.PASSED
+                and not result.test_case.test_id.upper().endswith("-LAYOUT-001")
+            ]
+            return 0 if not blocking else 1
         finally:
             # Always release the pooled Teradata session — even when validation
             # aborts (e.g. the database is unreachable) — so a failed run never
