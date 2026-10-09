@@ -5,5 +5,20 @@
   "disabled_scanners": [
     "VIEW",
     "TEXT"
-  ]
+  ],
+  "layout": {
+    "semantic_database": "ProductPrefix_SEM_ACL_V",
+    "observability_database": "ProductPrefix_OBS_ACL_V",
+    "memory_database": "ProductPrefix_MEM_ACL_V",
+    "registry_database": "DataProductCatalog_STD_V",
+    "registry_view": "active_data_product_registry",
+    "graph_catalogue_database": "Graphs_CAT_STD_0_T",
+    "governance_database": "DataProductCatalog_GOV_STD_V",
+    "layer_code_map": {
+      "BASE": "STORAGE",
+      "VIEW": "ACCESS",
+      "ACCESS": "CONSUMER",
+      "BUSINESS": "CONSUMER"
+    }
+  }
 }

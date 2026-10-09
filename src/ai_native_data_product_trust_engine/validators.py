@@ -12,7 +12,10 @@ from typing import Protocol
 
 from ai_native_data_product_trust_engine.capabilities import run_capability_validations
 from ai_native_data_product_trust_engine.layout import Layout
-from ai_native_data_product_trust_engine.layout_checks import layout_excluded_checks
+from ai_native_data_product_trust_engine.layout_checks import (
+    layout_check_result,
+    layout_excluded_checks,
+)
 from ai_native_data_product_trust_engine.models import (
     ExcludedCheck,
     ExpectedResult,
@@ -99,9 +102,13 @@ def run_validation(
     enable_helpstats: bool = False,
     excluded_checks: list[ExcludedCheck] | None = None,
     layout: Layout | None = None,
+    include_layout_check: bool = True,
 ) -> ValidationRun:
     started_at = _utc_now()
     results = [run_test_case(adapter, test_case) for test_case in tests]
+    if layout is not None and include_layout_check and layout.product_found:
+        # LAYOUT-001 reports values the product left for the engine to infer.
+        results.append(layout_check_result(prefix, layout))
     if include_capability_scans:
         results.extend(
             _run_scanner(

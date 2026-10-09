@@ -20,7 +20,7 @@ from ai_native_data_product_trust_engine.scoring import (
 
 def validation_run_to_dict(run: ValidationRun) -> dict[str, object]:
     duration_seconds = validation_run_duration_seconds(run)
-    return {
+    payload: dict[str, object] = {
         "prefix": run.prefix,
         "started_at": run.started_at,
         "completed_at": run.completed_at,
@@ -39,6 +39,10 @@ def validation_run_to_dict(run: ValidationRun) -> dict[str, object]:
         "excluded_checks": [asdict(check) for check in run.excluded_checks],
         "results": [_result_to_dict(result) for result in run.results],
     }
+    if run.layout is not None:
+        # How the product's physical names were resolved (Platform Layout Standard).
+        payload["layout"] = run.layout.to_dict()
+    return payload
 
 
 def write_json_report(run: ValidationRun, output_path: Path) -> None:

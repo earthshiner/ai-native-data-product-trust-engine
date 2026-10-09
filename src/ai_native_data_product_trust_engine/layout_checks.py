@@ -5,6 +5,9 @@
   is a metadata gap, not a design failure, hence WARNING severity.
 * Checks that depend on the ACCESS layer are excluded, with a reason, when the
   declared layout has no ACCESS container (section 7, rules 2 and 3, VAL-21).
+
+LAYOUT-001 is evaluated from the resolved layout rather than by a database query:
+the evidence is how the names were resolved, which only the engine knows.
 """
 
 from __future__ import annotations
@@ -15,30 +18,19 @@ from ai_native_data_product_trust_engine.layout import (
     PLATFORM_TERADATA,
     Layout,
     access_layer_exclusion_reason,
-    sql_string,
+    derive_layout,
 )
 from ai_native_data_product_trust_engine.models import (
     ExcludedCheck,
+    ExpectedResult,
     TestCase,
     TestCategory,
+    TestResult,
     TestSeverity,
+    TestStatus,
 )
 
 LAYOUT_CHECK_SUFFIX = "LAYOUT-001"
-
-_COLUMNS = (
-    ("product_id", 128),
-    ("value_name", 64),
-    ("resolved_value", 512),
-    ("resolved_source", 32),
-    ("issue_code", 64),
-    ("issue_detail", 1000),
-    ("repair_hint", 1000),
-    ("registry_database", 128),
-    ("registry_view", 128),
-    ("inferred_platform_profile", 64),
-    ("inferred_standard_version", 64),
-)
 
 _VALUE_DETAIL = {
     "platform_profile": "The registry row does not record platform_profile.",
@@ -52,6 +44,11 @@ _VALUE_DETAIL = {
     "memory_database": "The Memory database was inferred from the product prefix.",
 }
 
+_REPAIR_HINT = (
+    "Record the product layout declaration (see the repair candidate) so readers resolve "
+    "names from the product instead of inferring them."
+)
+
 
 def layout_check_id(prefix: str) -> str:
     return f"{prefix.upper()}-{LAYOUT_CHECK_SUFFIX}"
@@ -59,8 +56,6 @@ def layout_check_id(prefix: str) -> str:
 
 def layout_test_cases(prefix: str, layout: Layout | None = None) -> list[TestCase]:
     """The layout check. Kept out of ``generate_metadata_tests`` so that list is stable."""
-    from ai_native_data_product_trust_engine.layout import derive_layout
-
     resolved = layout or derive_layout(prefix)
     return [
         TestCase(
@@ -68,11 +63,12 @@ def layout_test_cases(prefix: str, layout: Layout | None = None) -> list[TestCas
             name="Product layout is declared in its Semantic metadata",
             category=TestCategory.SEMANTIC,
             severity=TestSeverity.WARNING,
-            sql=_layout_sql(prefix, resolved),
+            sql="-- Evaluated from the resolved layout; no database query is issued.",
             expected_result=(
-                "Returns zero rows when the product declares its platform, standard version and "
-                "layer bindings, so no physical name has to be inferred."
+                "Passes when the product declares its platform, standard version and layer "
+                "bindings, so no physical name has to be inferred."
             ),
+            expected=ExpectedResult.ZERO_ROWS,
             repair_strategy=(
                 "Record platform_profile and standard_version on the registry row and the layer "
                 "bindings in governance.data_product_container / access_object. Until then the "
@@ -85,6 +81,36 @@ def layout_test_cases(prefix: str, layout: Layout | None = None) -> list[TestCas
             ),
         )
     ]
+
+
+def layout_check_result(prefix: str, layout: Layout) -> TestResult:
+    """LAYOUT-001: one evidence row per value the product left for the engine to infer."""
+    case = layout_test_cases(prefix, layout)[0]
+    undeclared = layout.undeclared_values()
+    if not undeclared:
+        return TestResult(test_case=case, status=TestStatus.PASSED, row_count=0)
+    rows = [
+        {
+            "product_id": prefix,
+            "value_name": name,
+            "resolved_value": _resolved_value(layout, name),
+            "resolved_source": layout.source_of(name),
+            "issue_code": ISSUE_LAYOUT_NOT_DECLARED,
+            "issue_detail": _VALUE_DETAIL.get(name, f"{name} was not declared by the product."),
+            "repair_hint": _REPAIR_HINT,
+            "registry_database": layout.registry_database,
+            "registry_view": layout.registry_view,
+            "inferred_platform_profile": layout.platform_profile or PLATFORM_TERADATA,
+            "inferred_standard_version": layout.standard_version,
+        }
+        for name in undeclared
+    ]
+    return TestResult(
+        test_case=case,
+        status=TestStatus.FAILED,
+        row_count=len(rows),
+        sample_rows=rows[:10],
+    )
 
 
 def layout_excluded_checks(prefix: str, layout: Layout | None) -> list[ExcludedCheck]:
@@ -104,49 +130,8 @@ def layout_excluded_checks(prefix: str, layout: Layout | None) -> list[ExcludedC
     ]
 
 
-def _layout_sql(prefix: str, layout: Layout) -> str:
-    undeclared = layout.undeclared_values()
-    cast_columns = ", ".join(f"CAST(NULL AS VARCHAR({size})) AS {name}" for name, size in _COLUMNS)
-    if not undeclared:
-        return f"SELECT {cast_columns}\nWHERE 1 = 0;"
-    profile = layout.platform_profile or PLATFORM_TERADATA
-    version = layout.standard_version
-    selects = []
-    for index, name in enumerate(undeclared):
-        values = {
-            "product_id": prefix,
-            "value_name": name,
-            "resolved_value": _resolved_value(layout, name),
-            "resolved_source": layout.source_of(name),
-            "issue_code": ISSUE_LAYOUT_NOT_DECLARED,
-            "issue_detail": _VALUE_DETAIL.get(name, f"{name} was not declared by the product."),
-            "repair_hint": (
-                "Record the product layout declaration (see the repair candidate) so readers "
-                "resolve names from the product instead of inferring them."
-            ),
-            "registry_database": layout.registry_database,
-            "registry_view": layout.registry_view,
-            "inferred_platform_profile": profile,
-            "inferred_standard_version": version,
-        }
-        rendered = []
-        for column, size in _COLUMNS:
-            value = values[column]
-            literal = "NULL" if value is None else sql_string(value)
-            if index == 0:
-                literal = f"CAST({literal} AS VARCHAR({size}))"
-            rendered.append(f"{literal} AS {column}" if index == 0 else literal)
-        selects.append(
-            "SELECT\n    "
-            + "\n   ,".join(rendered)
-            + "\nFROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'"
-        )
-    return "\nUNION ALL\n".join(selects) + "\nORDER BY 2;"
-
-
 def _resolved_value(layout: Layout, name: str) -> str | None:
     if name == "layer_bindings":
         return "legacy suffix derivation (_STD_T storage, _STD_V access, _BUS_V consumer)"
-    if name in {"platform_profile", "standard_version"}:
-        return getattr(layout, name)
-    return getattr(layout, name, None)
+    value = getattr(layout, name, None)
+    return None if value is None else str(value)

@@ -16,6 +16,15 @@ from ai_native_data_product_trust_engine.adapters import (
 )
 from ai_native_data_product_trust_engine.capabilities import capability_test_cases
 from ai_native_data_product_trust_engine.html_reports import write_html_report
+from ai_native_data_product_trust_engine.layout import (
+    Layout,
+    LayoutOverrides,
+    apply_overrides,
+    derive_layout,
+    resolve_layout,
+)
+from ai_native_data_product_trust_engine.layout_checks import layout_test_cases
+from ai_native_data_product_trust_engine.models import TestCase
 from ai_native_data_product_trust_engine.query_templates import query_template_test_cases
 from ai_native_data_product_trust_engine.relationship_health import (
     relationship_health_test_cases,
@@ -59,6 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
                 type=Path,
                 help="Optional JSON file with disabled_test_ids and disabled_scanners arrays.",
             )
+            _add_layout_arguments(subparser)
         if command == "validate":
             subparser.add_argument(
                 "--database-url",
@@ -218,6 +228,41 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _add_layout_arguments(subparser: argparse.ArgumentParser) -> None:
+    """Priority-1 layout overrides (Platform Layout Standard section 6)."""
+    for flag, help_text in (
+        ("--semantic-namespace", "Database the Semantic metadata is read from."),
+        ("--observability-namespace", "Database the Observability evidence is read from."),
+        ("--memory-namespace", "Database the Memory module (cookbook, glossary) is read from."),
+        ("--registry-database", "Database holding the central data product registry view."),
+        ("--registry-view", "Name of the central data product registry view."),
+    ):
+        subparser.add_argument(
+            flag,
+            help=(
+                f"{help_text} Overrides the rules config and the product's own layout "
+                "declaration for this run; never written into the product."
+            ),
+        )
+
+
+def _invocation_overrides(args: argparse.Namespace) -> LayoutOverrides:
+    return LayoutOverrides(
+        semantic_database=args.semantic_namespace,
+        observability_database=args.observability_namespace,
+        memory_database=args.memory_namespace,
+        registry_database=args.registry_database,
+        registry_view=args.registry_view,
+    )
+
+
+def _metadata_tests(prefix: str, layout: Layout) -> list[TestCase]:
+    # A layout that is plain derivation generates the legacy checks unchanged.
+    if layout.names_match_derivation():
+        return generate_metadata_tests(prefix)
+    return generate_metadata_tests(prefix, layout)
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         return _main(argv)
@@ -236,17 +281,22 @@ def _main(argv: list[str] | None = None) -> int:
 
     if args.command == "generate-tests":
         rule_config = load_rule_config(args.rules_config)
-        tests = [*generate_metadata_tests(args.prefix)]
+        # No database here, so only invocation, configuration and derivation apply.
+        layout = apply_overrides(
+            derive_layout(args.prefix), rule_config.layout, _invocation_overrides(args)
+        )
+        tests = [*_metadata_tests(args.prefix, layout)]
         if "CAPABILITY" not in rule_config.disabled_scanners:
-            tests.extend(capability_test_cases(args.prefix))
+            tests.extend(capability_test_cases(args.prefix, layout))
         if "QUERY" not in rule_config.disabled_scanners:
-            tests.extend(query_template_test_cases(args.prefix))
+            tests.extend(query_template_test_cases(args.prefix, layout))
         if "RELATIONSHIP" not in rule_config.disabled_scanners:
-            tests.extend(relationship_health_test_cases(args.prefix))
+            tests.extend(relationship_health_test_cases(args.prefix, layout))
         if "TEXT" not in rule_config.disabled_scanners:
-            tests.extend(text_reference_test_cases(args.prefix))
+            tests.extend(text_reference_test_cases(args.prefix, layout))
         if "VIEW" not in rule_config.disabled_scanners:
-            tests.extend(view_contract_test_cases(args.prefix))
+            tests.extend(view_contract_test_cases(args.prefix, layout))
+        tests.extend(layout_test_cases(args.prefix, layout))
         tests = rule_config.filter_tests(tests)
         for test in tests:
             print(f"{test.test_id}\t{test.category.value}\t{test.name}")
@@ -256,22 +306,30 @@ def _main(argv: list[str] | None = None) -> int:
         configure_logging(args.log_level, args.log_file)
         LOGGER.info("Starting validation for product prefix %s.", args.prefix)
         rule_config = load_rule_config(args.rules_config)
-        generated_tests = generate_metadata_tests(args.prefix)
-        tests = rule_config.filter_tests(generated_tests)
-        excluded_checks = rule_config.excluded_checks(generated_tests)
-        LOGGER.info(
-            "Prepared %s checks; %s checks excluded by configuration.",
-            len(tests),
-            len(excluded_checks),
-        )
         adapter = LoggingAdapter(adapter_from_environment(args.database_url))
         try:
+            # Resolve the layout once, with the live adapter, and use it everywhere.
+            layout = resolve_layout(
+                adapter, args.prefix, rule_config.layout, _invocation_overrides(args)
+            )
+            LOGGER.info("Resolved product %s.", layout.summary())
+            generated_tests = _metadata_tests(args.prefix, layout)
+            layout_tests = layout_test_cases(args.prefix, layout)
+            tests = rule_config.filter_tests(generated_tests)
+            excluded_checks = rule_config.excluded_checks([*generated_tests, *layout_tests])
+            LOGGER.info(
+                "Prepared %s checks; %s checks excluded by configuration.",
+                len(tests),
+                len(excluded_checks),
+            )
             run = run_validation(
                 args.prefix,
                 adapter,
                 tests,
                 excluded_checks=excluded_checks,
                 enable_helpstats=args.enable_helpstats,
+                layout=layout,
+                include_layout_check=bool(rule_config.filter_tests(layout_tests)),
                 **rule_config.scanner_kwargs(),
             )
             LOGGER.info(
@@ -307,7 +365,7 @@ def _main(argv: list[str] | None = None) -> int:
                 trust_table = (
                     args.publish_trust_table
                     or rule_config.publish_trust_table
-                    or default_trust_table(args.prefix)
+                    or default_trust_table(args.prefix, layout)
                 )
                 published_table = publish_trust_result(adapter, run, repair_candidates, trust_table)
                 print(f"Trust summary published: {published_table}")
@@ -315,14 +373,14 @@ def _main(argv: list[str] | None = None) -> int:
                 validation_db = (
                     args.publish_validation
                     or rule_config.publish_validation_database
-                    or default_validation_database(args.prefix)
+                    or default_validation_database(args.prefix, layout)
                 )
                 published_db, area_count = publish_validation_result(
                     adapter,
                     run,
                     repair_candidates,
                     validation_db,
-                    declared_modules(adapter, args.prefix),
+                    declared_modules(adapter, args.prefix, layout),
                 )
                 print(
                     f"Validation results published: {published_db} "
@@ -347,6 +405,7 @@ def _main(argv: list[str] | None = None) -> int:
             table_database=args.table_database or rule_config.publish_validation_database,
             view_database=args.view_database,
             acl_view_database=args.acl_view_database,
+            layout=apply_overrides(derive_layout(args.prefix), rule_config.layout),
         )
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)

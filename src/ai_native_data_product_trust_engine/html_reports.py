@@ -249,6 +249,11 @@ _ISSUE_CONSEQUENCES = {
     "PRIMARY_INDEX_SKEW_HIGH": (
         "The observed distribution suggests the primary index may be creating uneven AMP storage."
     ),
+    "LAYOUT_NOT_DECLARED": (
+        "Readers must infer this product's physical names from a naming convention instead of "
+        "reading them from the product, so a renamed or differently laid out product may be "
+        "misjudged. This is a metadata gap, not a design failure."
+    ),
     "SELECT_STAR": (
         "Column order and shape may change when source tables evolve, breaking generated SQL "
         "contracts."
@@ -848,6 +853,7 @@ def render_html_report(
         <span class="meta-chip"><b>{run.passed_count}</b>&nbsp;passed&nbsp;&middot;&nbsp;<b>{run.failed_count}</b>&nbsp;failed&nbsp;&middot;&nbsp;<b>{run.error_count}</b>&nbsp;errors</span>
         <span class="meta-chip">Last run <b>{_h(last_run_at)}</b></span>
         <span class="meta-chip">Run duration <b>{_h(duration)}</b></span>
+        {_layout_chip(run)}
       </div>
     </div>
   </header>
@@ -1220,6 +1226,23 @@ def _check_row(result: TestResult) -> str:
       <td><span class="status {result.status.value.lower()}">{_h(result.status.value)}</span></td>
       <td>{_h(description)}</td>
     </tr>"""
+
+
+def _layout_chip(run: ValidationRun) -> str:
+    """Header chip: how the product's physical names were resolved."""
+    layout = run.layout
+    if layout is None:
+        return ""
+    state = "declared" if layout.declared else "not declared"
+    sources = ", ".join(f"{name}: {source}" for name, source in sorted(layout.sources.items()))
+    title = f"Resolution sources (invocation, configuration, declaration, derivation): {sources}"
+    detail = (
+        f"{state}; platform {layout.platform_profile or 'unknown'}; "
+        f"standard {layout.standard_version or 'unknown'}"
+    )
+    return (
+        f'<span class="meta-chip" title="{_h(title)}">Layout <b>{_h(detail)}</b></span>'
+    )
 
 
 def _excluded_check_table(excluded_checks: list[ExcludedCheck]) -> str:

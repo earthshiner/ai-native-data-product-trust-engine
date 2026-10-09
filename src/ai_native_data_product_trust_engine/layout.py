@@ -184,6 +184,10 @@ class Layout:
     platform_profile: str | None = None
     standard_version: str | None = None
     declared: bool = False
+    # True when the declaration reader located the product (a registry row or a
+    # Semantic data_product_map). Without it there is nothing to infer a
+    # declaration from, so LAYOUT-001 has nothing to report.
+    product_found: bool = False
     sources: Mapping[str, str] = field(default_factory=dict)
     source_detail: Mapping[str, str] = field(default_factory=dict)
     notes: tuple[str, ...] = ()
@@ -406,6 +410,7 @@ EXISTS (
         return {
             "prefix": self.prefix,
             "declared": self.declared,
+            "product_found": self.product_found,
             "platform_profile": self.platform_profile,
             "standard_version": self.standard_version,
             "resolution_order": [
@@ -435,6 +440,33 @@ EXISTS (
             "undeclared_values": self.undeclared_values(),
             "notes": list(self.notes),
         }
+
+    def names_match_derivation(self) -> bool:
+        """True when every name and binding is what plain derivation would produce.
+
+        Such a layout generates exactly the legacy SQL, so callers may use the
+        legacy entry points unchanged.
+        """
+        derived = derive_layout(self.prefix)
+        return (
+            not self.uses_container_sets
+            and not self.current_views
+            and all(
+                getattr(self, name) == getattr(derived, name)
+                for name in (
+                    "semantic_database",
+                    "semantic_storage_database",
+                    "semantic_consumer_database",
+                    "observability_database",
+                    "observability_storage_database",
+                    "observability_consumer_database",
+                    "memory_database",
+                    "registry_database",
+                    "registry_view",
+                    "graph_catalogue_database",
+                )
+            )
+        )
 
     def summary(self) -> str:
         profile = self.platform_profile or "undeclared"
@@ -1002,6 +1034,7 @@ def _merge_declaration(
         platform_profile=profile,
         standard_version=version,
         declared=declared,
+        product_found=bool(registry is not None or declaration.semantic_read_database),
         sources=sources,
         source_detail=detail,
         notes=tuple(declaration.notes),
