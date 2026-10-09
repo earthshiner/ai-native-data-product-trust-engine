@@ -45,11 +45,11 @@ def test_validation_ddl_accepts_explicit_table_and_view_databases():
 
 
 def test_validation_ddl_comments_fit_teradata_comment_limit():
-    # Teradata rejects a COMMENT string over 255 characters (error 5550).
+    # Teradata rejects an over-length COMMENT string (error 5550); 254 is the standing limit.
     comments = re.findall(r"COMMENT ON \w+ [\w.]+ IS\s*'((?:[^']|'')*)';", validation_ddl("SamplePrefix"))
 
     assert comments
-    assert [c for c in comments if len(c.replace("''", "'")) > 255] == []
+    assert [c for c in comments if len(c.replace("''", "'")) > 254] == []
 
 
 def test_validation_ddl_adds_an_access_layer_trust_map_over_the_std_view():
