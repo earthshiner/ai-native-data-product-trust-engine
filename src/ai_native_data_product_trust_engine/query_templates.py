@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ai_native_data_product_trust_engine.layout import Layout, derive_layout
 from ai_native_data_product_trust_engine.models import (
     ExpectedResult,
     TestCase,
@@ -95,8 +96,9 @@ def run_query_template_validations(
     prefix: str,
     adapter,
     enable_helpstats: bool = False,
+    layout: Layout | None = None,
 ) -> list[TestResult]:
-    recipe_rows = adapter.fetch_all(_active_recipes_sql(prefix))
+    recipe_rows = adapter.fetch_all(_active_recipes_sql(prefix, layout))
     results: list[TestResult] = []
     for row in recipe_rows:
         results.extend(_run_recipe_validations(prefix, adapter, row, enable_helpstats))
@@ -173,14 +175,14 @@ def extract_sql_error_evidence(
     return evidence
 
 
-def query_template_test_cases(prefix: str) -> list[TestCase]:
+def query_template_test_cases(prefix: str, layout: Layout | None = None) -> list[TestCase]:
     return [
         TestCase(
             test_id=f"{prefix.upper()}-QUERY-EXPLAIN",
             name="Active Query_Cookbook SQL templates explain successfully",
             category=TestCategory.QUERY,
             severity=TestSeverity.CRITICAL,
-            sql=_active_recipes_sql(prefix),
+            sql=_active_recipes_sql(prefix, layout),
             expected_result="Every active SQL template can be parameter-bound and explained.",
             expected=ExpectedResult.NON_EMPTY,
             repair_strategy="Repair recipe SQL, update stale metadata, or quarantine failed recipes.",
@@ -190,7 +192,7 @@ def query_template_test_cases(prefix: str) -> list[TestCase]:
             name="Interactive Query_Cookbook recipes are bounded for safe agent use",
             category=TestCategory.PERFORMANCE,
             severity=TestSeverity.CRITICAL,
-            sql=_active_recipes_sql(prefix),
+            sql=_active_recipes_sql(prefix, layout),
             expected_result=(
                 "Interactive recipes include a parameterised predicate or row-limiting clause."
             ),
@@ -205,7 +207,7 @@ def query_template_test_cases(prefix: str) -> list[TestCase]:
             name="Query_Cookbook EXPLAIN plans avoid known performance-risk patterns",
             category=TestCategory.PERFORMANCE,
             severity=TestSeverity.WARNING,
-            sql=_active_recipes_sql(prefix),
+            sql=_active_recipes_sql(prefix, layout),
             expected_result="EXPLAIN output contains no product joins, all-AMP scan warnings, duplicated large table access, missing statistics or low-confidence estimates.",
             expected=ExpectedResult.NON_EMPTY,
             repair_strategy=(
@@ -401,7 +403,8 @@ def _failed_result(
     )
 
 
-def _active_recipes_sql(prefix: str) -> str:
+def _active_recipes_sql(prefix: str, layout: Layout | None = None) -> str:
+    layout = layout or derive_layout(prefix)
     return f"""
 SELECT
     recipe_id
@@ -412,7 +415,7 @@ SELECT
    ,complexity
    ,is_batch
    ,sql_template
-FROM {prefix}_MEM_STD_V.Query_Cookbook
+FROM {layout.memory_database}.Query_Cookbook
 WHERE COALESCE(is_active, 1) = 1
 ORDER BY recipe_id
 """.strip()
