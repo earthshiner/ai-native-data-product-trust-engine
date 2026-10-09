@@ -271,6 +271,8 @@ def test_declaration_overrides_derivation():
         "CallCentre_MEM_ACL_V",
     )
     assert layout.current_views["CALL"].qualified_name == "CallCentre_DOM_ACL_V.Call_Current"
+    # Access objects are attributed to the module that declares their container.
+    assert "*" not in layout.modules
 
 
 def test_configuration_overrides_declaration():

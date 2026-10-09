@@ -628,6 +628,7 @@ class _DeclarationReader:
         self.configuration = configuration
         self.invocation = invocation
         self.declaration = _Declaration()
+        self._access_columns: set[str] = set()
 
     # -- helpers -------------------------------------------------------------
 
@@ -670,6 +671,10 @@ class _DeclarationReader:
         if semantic:
             self._read_semantic(semantic)
         self._read_containers(registry_database)
+        # Access objects last: their containers are attributed to modules by the
+        # container declaration read above.
+        if semantic and {"database_name", "object_name"} <= self._access_columns:
+            self._read_access_objects(semantic, self._access_columns)
         return self.declaration
 
     def _read_registry(self, database: str, view: str) -> None:
@@ -787,9 +792,7 @@ class _DeclarationReader:
                 "data_product_map",
             ):
                 self._add_unclassified(row.get("module_name"), row.get("database_name"))
-        access_columns = columns.get("access_object", set())
-        if {"database_name", "object_name"} <= access_columns:
-            self._read_access_objects(semantic, access_columns)
+        self._access_columns = columns.get("access_object", set())
 
     def _read_access_objects(self, semantic: str, columns: set[str]) -> None:
         wanted = [
