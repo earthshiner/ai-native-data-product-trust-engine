@@ -1,0 +1,41 @@
+# Force LF line endings for all text files
+* text=auto eol=lf
+
+# Teradata DDL — always LF
+*.tbl  text eol=lf
+*.viw  text eol=lf
+*.spl  text eol=lf
+*.mcr  text eol=lf
+*.trg  text eol=lf
+*.grt  text eol=lf
+*.cmt  text eol=lf
+*.db   text eol=lf
+*.sql  text eol=lf
+*.bteq text eol=lf
+*.stat text eol=lf
+*.rol  text eol=lf
+*.fk   text eol=lf
+*.auth text eol=lf
+
+# Code and config
+*.py   text eol=lf
+*.ps1  text eol=lf
+*.sh   text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.conf text eol=lf
+
+# True binaries — never convert
+*.png  binary
+*.jpg  binary
+*.gif  binary
+*.pdf  binary
+*.zip  binary
+*.xlsx binary
+*.pptx binary
+*.docx binary
+*.potx binary
