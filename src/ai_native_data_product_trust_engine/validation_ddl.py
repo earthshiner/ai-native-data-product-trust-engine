@@ -24,21 +24,30 @@ _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 # braces, but a literal replace keeps the template readable as plain SQL.
 _TABLE_DB = "__TABLE_DB__"
 _VIEW_DB = "__VIEW_DB__"
+_ACL_DB = "__ACL_DB__"
 
 
 def default_validation_view_database(prefix: str) -> str:
     return f"{prefix}_OBS_STD_V"
 
 
+def default_validation_acl_database(prefix: str) -> str:
+    return f"{prefix}_OBS_ACL_V"
+
+
 def validation_ddl(
     prefix: str,
     table_database: str | None = None,
     view_database: str | None = None,
+    acl_view_database: str | None = None,
 ) -> str:
     """Render the validation_run / validation_area tables and their views for ``prefix``."""
     table_db = _database_identifier(table_database or default_validation_database(prefix))
     view_db = _database_identifier(view_database or default_validation_view_database(prefix))
-    return _TEMPLATE.replace(_TABLE_DB, table_db).replace(_VIEW_DB, view_db)
+    acl_db = _database_identifier(acl_view_database or default_validation_acl_database(prefix))
+    return (
+        _TEMPLATE.replace(_TABLE_DB, table_db).replace(_VIEW_DB, view_db).replace(_ACL_DB, acl_db)
+    )
 
 
 def _database_identifier(value: str) -> str:
@@ -397,4 +406,43 @@ COMMENT ON VIEW __VIEW_DB__.validation_trust_map IS
 -- producer designated in the product's orientation metadata; other producers' rows are evidence.
 -- Absent a designation, take the most cautious entry per area across producers and say so
 -- (see consumer-queries.sql).
+
+-- ======================================================================
+-- 05-acl-trust-map-view.sql  (access-layer view in __ACL_DB__)
+-- ======================================================================
+-- Access-layer exposure of the trust map. Consumers and agents are granted the ACL_V tier, so
+-- this is the view they read to learn which areas of the product may be relied on. A thin
+-- projection of __VIEW_DB__.validation_trust_map: no logic lives here, so staleness and
+-- coverage stay defined in one place.
+
+REPLACE VIEW __ACL_DB__.validation_trust_map
+AS
+LOCKING ROW FOR ACCESS
+SELECT
+      product_prefix
+    , producer_id
+    , run_id
+    , scope_kind
+    , scope_id
+    , checks_expected
+    , checks_ran
+    , coverage_ratio
+    , passed_count
+    , failed_count
+    , error_count
+    , critical_failure_count
+    , error_failure_count
+    , area_status
+    , confidence
+    , recorded_confidence
+    , evidence_is_stale
+    , open_gaps
+    , recommended_action
+    , recorded_recommended_action
+    , completed_dts
+    , map_source
+FROM __VIEW_DB__.validation_trust_map;
+
+COMMENT ON VIEW __ACL_DB__.validation_trust_map IS
+'Trust map for agents and consumers - latest entry per product, producer and area. Before using an area, read its area_status, confidence, open_gaps and recommended_action; stale evidence reads as unknown. Advisory: it informs how far to rely on an area and never withholds use.';
 """

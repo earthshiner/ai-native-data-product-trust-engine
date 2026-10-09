@@ -42,6 +42,22 @@ def test_validation_ddl_accepts_explicit_table_and_view_databases():
     assert "SamplePrefix_OBS_STD_T" not in ddl
 
 
+def test_validation_ddl_adds_an_access_layer_trust_map_over_the_std_view():
+    ddl = validation_ddl("SamplePrefix")
+
+    assert "REPLACE VIEW SamplePrefix_OBS_ACL_V.validation_trust_map" in ddl
+    assert "FROM SamplePrefix_OBS_STD_V.validation_trust_map;" in ddl
+    assert "COMMENT ON VIEW SamplePrefix_OBS_ACL_V.validation_trust_map" in ddl
+    assert "__ACL_DB__" not in ddl
+
+
+def test_validation_ddl_accepts_explicit_acl_view_database():
+    ddl = validation_ddl("SamplePrefix", acl_view_database="SamplePrefix_Acl")
+
+    assert "REPLACE VIEW SamplePrefix_Acl.validation_trust_map" in ddl
+    assert "SamplePrefix_OBS_ACL_V" not in ddl
+
+
 def test_validation_ddl_defaults_view_database_to_obs_std_v():
     assert default_validation_view_database("SamplePrefix") == "SamplePrefix_OBS_STD_V"
 
