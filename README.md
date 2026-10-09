@@ -230,8 +230,9 @@ python -m ai_native_data_product_trust_engine validation-ddl --prefix ProductPre
 ```
 
 Tables go to `{prefix}_OBS_STD_T` and views to `{prefix}_OBS_STD_V` by default. The same file also
-creates an access-layer `validation_trust_map` in `{prefix}_OBS_ACL_V`, the view consumers and agents
-are granted, as a thin projection of the STD_V one. Override with
+creates access-layer `validation_latest` and `validation_trust_map` views in `{prefix}_OBS_ACL_V`, the
+tier consumers, agents and the Data Product Browser read, as thin projections of the STD_V ones (the
+Browser's Trust page renders only when it finds the `validation_latest` row). Override with
 `--table-database` / `--view-database` / `--acl-view-database`; the table database also follows the rules-config
 `publish_validation_database` key, so the DDL and `--publish-validation` always agree. Generated
 files are per-product deployment artefacts and are not committed.
