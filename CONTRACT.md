@@ -105,6 +105,30 @@ should read to answer "which objects?" are, per issue_code:
 | `SOURCE_TO_TARGET_ORPHAN` / `TARGET_TO_SOURCE_ORPHAN` | `relationship_name` | `affected_side`, `orphan_count`, `orphan_rate_percent`, `sample_count` |
 | `DUPLICATE_CURRENT_RECORD` | `entity_name` | `natural_key`, `current_row_count` |
 | `BUS_VIEW_SELECTS_TABLE_DIRECTLY` / `MISSING_LOCKING_ROW` / `DIRECT_TABLE_VIEW_MISSING_LOCK` | `database_name`, `view_name` | `referenced_table`, `evidence` |
+| `LAYOUT_NOT_DECLARED` | `product_id`, `value_name` | `resolved_value`, `resolved_source`, `registry_database`, `registry_view`, `inferred_platform_profile`, `inferred_standard_version`, `issue_detail` |
+
+`LAYOUT_NOT_DECLARED` (check `{PREFIX}-LAYOUT-001`, Semantic, WARNING) is a metadata gap, not a
+design failure: the product did not declare a value the engine then inferred from the legacy naming
+convention (Platform Layout Standard section 6, priority 4). One row is emitted per undeclared
+`value_name`, and its repair candidate is a single approval-required `proposal` whose `sql` updates the
+registry row. It is additive: `PAYLOAD_SCHEMA_VERSION` is unchanged.
+
+## Layout in the JSON report
+
+The wire contract above is unchanged. The local JSON report (`--output`) gains a `layout` object
+describing how the run resolved the product's physical names, and each `excluded_checks` item gains
+`counts_as_expected`:
+
+- `layout.declared`, `layout.platform_profile`, `layout.standard_version`
+- `layout.sources`: for every resolved value, which priority supplied it (`invocation`,
+  `configuration`, `declaration` or `derivation`), with `layout.source_detail` naming the table or
+  column when it was read from the product
+- `layout.names`, `layout.modules` (containers by layer role), `layout.consumer_containers`,
+  `layout.current_views`, `layout.undeclared_values`, `layout.notes`
+- `excluded_checks[].counts_as_expected` is `false` for a check excluded because the declared layout
+  has no ACCESS container. Such a check is reported with its reason but is not counted in the
+  `checks_expected` of its `validation_area` row; a check disabled by configuration is still
+  counted, as before.
 
 **When you add a new check with new `sample_rows` keys:** if it introduces a new
 object-identifying key, add it to the Browser's `offenderLabels()` vocabulary

@@ -290,6 +290,82 @@ catalogue but exclude it from module-owned object checks, set `deployment_status
 state such as `NOT_DEPLOYED` or set `is_active = 0`. Query cookbook rows remain governed by their own
 `is_active` metadata because a recipe can intentionally be unavailable even when its module exists.
 
+### Layout resolution
+
+A product's physical names are not guessed from suffixes. The engine resolves them from the
+product's declared layout, by layer role and binding, following the Platform Layout Standard
+(`design/core/PLATFORM_LAYOUT.md`). The layer roles are `STORAGE` (the base table), `ACCESS` (an
+optional governed 1:1 view) and `CONSUMER` (the governed interface for agents and tools). On
+Teradata the legacy conventions are `_STD_T`, `_STD_V` and `_BUS_V`.
+
+Every name resolves from the first source that supplies it:
+
+1. **Invocation.** `validate` and `generate-tests` accept `--semantic-namespace`,
+   `--observability-namespace`, `--memory-namespace`, `--registry-database` and `--registry-view`.
+2. **Rules config.** An optional `layout` object (below).
+3. **The product's own declaration**, read at the start of `validate` (see "What is read").
+4. **Derivation.** The naming convention the engine used before layout resolution existed:
+   `{prefix}_SEM_STD_V`, `{prefix}_OBS_STD_V`, `{prefix}_MEM_STD_V`, `{prefix}_SEM_STD_T`,
+   `{prefix}_OBS_BUS_V` and `DataProductsMaster_GOV_BUS_V.active_data_product_registry`. With no
+   declaration and no override the generated SQL is byte for byte what it was before.
+
+An override at 1 or 2 is local to the run and is never written into the product. The resolved
+layout, with the source of each value, is written to the JSON report (`layout`), shown in the HTML
+report header and returned by the MCP `describe_data_product` tool.
+
+```json
+{
+  "layout": {
+    "semantic_database": "ProductPrefix_SEM_ACL_V",
+    "observability_database": "ProductPrefix_OBS_ACL_V",
+    "memory_database": "ProductPrefix_MEM_ACL_V",
+    "registry_database": "DataProductCatalog_STD_V",
+    "registry_view": "active_data_product_registry",
+    "graph_catalogue_database": "Graphs_CAT_STD_0_T",
+    "governance_database": "DataProductCatalog_GOV_STD_V",
+    "layer_code_map": { "BASE": "STORAGE", "VIEW": "ACCESS", "ACCESS": "CONSUMER", "BUSINESS": "CONSUMER" }
+  }
+}
+```
+
+All keys are optional. Names must be single object names; `layer_code_map` maps a governance
+`layer_code` to `STORAGE`, `ACCESS` or `CONSUMER` and is merged over the defaults shown.
+`governance_database` is only needed when `data_product_container` is not found next to the
+registry.
+
+**What is read from the product.** Every table and column is probed in `DBC.TablesV` /
+`DBC.ColumnsV` first, and anything absent degrades to derivation instead of failing:
+
+- the product's row in the registry view (`semantic_database`, `semantic_view_database`,
+  `memory_*`, `observability_*`, and the optional `platform_profile` and `standard_version`),
+  matched by `product_id` equal to the prefix, `product_name` starting with it, or a known Semantic
+  container;
+- the Semantic `data_product_map` (`module_name`, `database_name`);
+- `data_product_container` (`module_name`, `layer_code`, `container_name`, `is_active`, `is_current`,
+  `is_deleted`), whose layer codes are mapped to layer roles;
+- the Semantic `access_object` (`database_name`, `object_name`, `object_type`, `consumer_audience`,
+  `access_semantics`, `represents_entity`). The `CONSUMER` object whose `access_semantics` is
+  `CURRENT_ONLY` is the entity's current-state view, replacing the `_H` to `_Current` derivation.
+
+When layer bindings are declared, module scope, the consumer database of an entity and the
+"is this a consumer endpoint" tests are membership in the declared container sets rather than
+`OREPLACE` rewrites and `LIKE '%\_BUS\_V'` patterns.
+
+**`LAYOUT_NOT_DECLARED`.** Check `{PREFIX}-LAYOUT-001` (Semantic, WARNING) reports each value the
+product left for the engine to infer (`platform_profile`, `standard_version`, `layer_bindings`,
+`semantic_database`, `observability_database`, `memory_database`). It is a metadata gap, not a design
+failure. The repair candidate is an approval-required proposal: an `UPDATE` of the registry row that
+records `platform_profile = 'teradata'` and the `standard_version` read from the registry (or a
+placeholder to complete when none can be read). It is not evaluated when no registry row or Semantic
+`data_product_map` could be found at all. A value supplied by an override is not reported.
+
+**Exclusions.** When the declared layout has no `ACCESS` container for any module, the checks that
+depend on that layer (`STD-VIEW-1TO1`, `STD-TABLE-VIEW-COVERAGE`, `STD-VIEW-COLUMN-CONTRACT`,
+`BUS-VIEW-SOURCES`, `VIEW-TABLE-LOCKING`) are reported under `excluded_checks` with their reason
+and are not counted as expected checks in the trust map, so exclusion neither lowers coverage nor
+raises confidence. They still run and fail when an `ACCESS` layer is declared and broken. Nothing is
+excluded under the derived layout.
+
 ## Agent-Friendly MCP Orientation Layer
 
 The Trust Engine can expose local report evidence through an optional MCP server so agents do not
