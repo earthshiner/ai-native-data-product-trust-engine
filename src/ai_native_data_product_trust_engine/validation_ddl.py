@@ -444,5 +444,5 @@ SELECT
 FROM __VIEW_DB__.validation_trust_map;
 
 COMMENT ON VIEW __ACL_DB__.validation_trust_map IS
-'Trust map for agents and consumers - latest entry per product, producer and area. Before using an area, read its area_status, confidence, open_gaps and recommended_action; stale evidence reads as unknown. Advisory: it informs how far to rely on an area and never withholds use.';
+'Trust map for agents - latest entry per product, producer and area. Read area_status, confidence, open_gaps and recommended_action before using an area; stale evidence reads as unknown. Advisory: informs reliance, never withholds use.';
 """
