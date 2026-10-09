@@ -410,10 +410,46 @@ COMMENT ON VIEW __VIEW_DB__.validation_trust_map IS
 -- ======================================================================
 -- 05-acl-trust-map-view.sql  (access-layer view in __ACL_DB__)
 -- ======================================================================
--- Access-layer exposure of the trust map. Consumers and agents are granted the ACL_V tier, so
--- this is the view they read to learn which areas of the product may be relied on. A thin
--- projection of __VIEW_DB__.validation_trust_map: no logic lives here, so staleness and
--- coverage stay defined in one place.
+-- Access-layer exposure of the validation results. Consumers and agents (and the Data Product
+-- Browser, via the registry's observability_view_database) are granted the ACL_V tier, so these
+-- are the views they read: validation_latest for the run-level summary (the Browser's Trust page
+-- renders only when it finds this row) and validation_trust_map for which areas may be relied on.
+-- Thin projections of the __VIEW_DB__ views: no logic lives here, so staleness and coverage
+-- stay defined in one place.
+
+REPLACE VIEW __ACL_DB__.validation_latest
+AS
+LOCKING ROW FOR ACCESS
+SELECT
+      product_prefix
+    , producer_id
+    , producer_version
+    , profile_id
+    , profile_version
+    , source_format
+    , payload_schema_version
+    , run_id
+    , started_dts
+    , completed_dts
+    , trust_status
+    , agent_use_allowed
+    , total_checks
+    , passed_count
+    , failed_count
+    , error_count
+    , critical_failure_count
+    , error_failure_count
+    , data_product_trust_score
+    , performance_readiness_score
+    , operational_readiness_score
+    , repair_candidate_count
+    , failed_checks_json
+    , repair_candidates_json
+    , evidence_expires_dts
+FROM __VIEW_DB__.validation_latest;
+
+COMMENT ON VIEW __ACL_DB__.validation_latest IS
+'Latest validation run per product and producer - advisory run summary (scores, check counts, failed checks). For area-level trust read validation_trust_map. Informs use, never blocks it.';
 
 REPLACE VIEW __ACL_DB__.validation_trust_map
 AS

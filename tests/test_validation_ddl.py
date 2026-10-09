@@ -61,6 +61,16 @@ def test_validation_ddl_adds_an_access_layer_trust_map_over_the_std_view():
     assert "__ACL_DB__" not in ddl
 
 
+def test_validation_ddl_exposes_validation_latest_in_the_access_layer():
+    # The Data Product Browser renders its Trust page only when it finds this run-level row
+    # in the registry's observability view database, so the ACL tier needs it as well as the map.
+    ddl = validation_ddl("SamplePrefix")
+
+    assert "REPLACE VIEW SamplePrefix_OBS_ACL_V.validation_latest" in ddl
+    assert "FROM SamplePrefix_OBS_STD_V.validation_latest;" in ddl
+    assert "COMMENT ON VIEW SamplePrefix_OBS_ACL_V.validation_latest" in ddl
+
+
 def test_validation_ddl_accepts_explicit_acl_view_database():
     ddl = validation_ddl("SamplePrefix", acl_view_database="SamplePrefix_Acl")
 
