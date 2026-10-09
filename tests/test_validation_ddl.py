@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from ai_native_data_product_trust_engine.cli import main
@@ -40,6 +42,14 @@ def test_validation_ddl_accepts_explicit_table_and_view_databases():
     assert "REPLACE VIEW SamplePrefix_Obs_V.validation_trust_map" in ddl
     assert "FROM SamplePrefix_Observability.validation_area AS la" in ddl
     assert "SamplePrefix_OBS_STD_T" not in ddl
+
+
+def test_validation_ddl_comments_fit_teradata_comment_limit():
+    # Teradata rejects an over-length COMMENT string (error 5550); 254 is the standing limit.
+    comments = re.findall(r"COMMENT ON \w+ [\w.]+ IS\s*'((?:[^']|'')*)';", validation_ddl("SamplePrefix"))
+
+    assert comments
+    assert [c for c in comments if len(c.replace("''", "'")) > 254] == []
 
 
 def test_validation_ddl_adds_an_access_layer_trust_map_over_the_std_view():
